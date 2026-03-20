@@ -1,0 +1,20 @@
+{
+  "status": "success",
+  "result": {
+    "artist": "Imagine Dragons",
+    "title": "Warriors",
+    "album": "Smoke + Mirrors (Deluxe)",
+    "song_link": "https://lis.tn/Warriors",
+    "spotify": {
+      "external_ids": {
+        "isrc": "USUM71414163"
+      },
+      "external_urls": {
+        "spotify": "https://open.spotify.com/track/1lgN0A2Vki2FTON5PYq42m"
+      }
+    },
+    "apple_music": {
+      "url": "https://music.apple.com/us/album/warriors/1440831203?i=1440831624"
+    }
+  }
+}

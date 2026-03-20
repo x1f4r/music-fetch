@@ -1,0 +1,8 @@
+.DS_Store
+.pytest_cache/
+.venv/
+dist/
+macos/.build/
+__pycache__/
+*.pyc
+*.pyo
