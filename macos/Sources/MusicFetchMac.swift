@@ -219,6 +219,20 @@ enum AppViewState: Equatable {
     case error(String)
 }
 
+enum CaptureState: Equatable {
+    case idle
+    case startingMic
+    case recordingMic
+    case stoppingMic
+    case startingSystem
+    case recordingSystem
+    case stoppingSystem
+
+    var isBusy: Bool {
+        self != .idle
+    }
+}
+
 struct SegmentViewModel: Identifiable, Hashable {
     let id: String
     let payload: SegmentPayload
@@ -254,6 +268,7 @@ final class AppModel: ObservableObject {
     @Published var selectedLibraryJobID: String?
     @Published var selectedStorageJobID: String?
     @Published var languageCode: String
+    @Published var captureState: CaptureState = .idle
 
     private let microphoneRecorder = MicrophoneRecorder()
     private let systemAudioRecorder = SystemAudioRecorder()
@@ -270,15 +285,26 @@ final class AppModel: ObservableObject {
     }
 
     var isBusy: Bool {
-        switch viewState {
-        case .recordingMic, .recordingSystem:
-            return true
-        default:
-            return false
-        }
+        captureState.isBusy
     }
 
     var statusTitle: String {
+        switch captureState {
+        case .startingMic:
+            return loc(languageCode, "Starting mic", "Mikro startet", "Iniciando mic", "Démarrage micro")
+        case .recordingMic:
+            return loc(languageCode, "Mic on", "Mikro an", "Micrófono activo", "Micro activé")
+        case .stoppingMic:
+            return loc(languageCode, "Stopping mic", "Mikro stoppt", "Deteniendo mic", "Arrêt micro")
+        case .startingSystem:
+            return loc(languageCode, "Starting system", "System startet", "Iniciando sistema", "Démarrage système")
+        case .recordingSystem:
+            return loc(languageCode, "System on", "System an", "Sistema activo", "Système actif")
+        case .stoppingSystem:
+            return loc(languageCode, "Stopping system", "System stoppt", "Deteniendo sistema", "Arrêt système")
+        case .idle:
+            break
+        }
         switch viewState {
         case .idle:
             return loc(languageCode, "Find music", "Musik finden", "Buscar música", "Trouver la musique")
@@ -338,26 +364,7 @@ final class AppModel: ObservableObject {
 
     func analyze() {
         let trimmed = inputValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard currentRecordingState == nil else { return }
-        Task {
-            do {
-                let response = try await runJSON(arguments: ["submit", trimmed, "--json"], as: AnalyzeResponse.self)
-                inputValue = ""
-                result = response
-                selectedSegmentID = response.segments.first?.id
-                cache(response: response, source: trimmed)
-                selectedLibraryJobID = response.job.id
-                selectedStorageJobID = response.job.id
-                selectedWorkspace = .analyze
-                updateViewState(for: response)
-                await refreshLibrary()
-                _ = try await refreshJobSnapshot(response.job.id)
-                await refreshStorage(jobID: response.job.id)
-            } catch {
-                viewState = .error(loc(languageCode, "Analysis failed", "Analyse fehlgeschlagen", "Falló el análisis", "Échec de l’analyse"))
-            }
-        }
+        submitInput(trimmed, switchToAnalyze: true)
     }
 
     func chooseFile() {
@@ -507,32 +514,36 @@ final class AppModel: ObservableObject {
     }
 
     func toggleMicrophoneRecording() {
-        if currentRecordingState == .recordingMic {
+        if captureState == .recordingMic {
             stopMicrophoneRecording()
             return
         }
-        guard currentRecordingState == nil else { return }
+        guard captureState == .idle else { return }
+        captureState = .startingMic
         Task {
             do {
                 _ = try await microphoneRecorder.start()
-                viewState = .recordingMic
+                captureState = .recordingMic
             } catch {
+                captureState = .idle
                 viewState = .error(error.localizedDescription)
             }
         }
     }
 
     func toggleSystemAudioRecording() {
-        if currentRecordingState == .recordingSystem {
+        if captureState == .recordingSystem {
             stopSystemAudioRecording()
             return
         }
-        guard currentRecordingState == nil else { return }
+        guard captureState == .idle else { return }
+        captureState = .startingSystem
         Task {
             do {
                 _ = try await systemAudioRecorder.start()
-                viewState = .recordingSystem
+                captureState = .recordingSystem
             } catch {
+                captureState = .idle
                 viewState = .error(error.localizedDescription)
             }
         }
@@ -544,38 +555,59 @@ final class AppModel: ObservableObject {
         pasteboard.setString(value, forType: .string)
     }
 
-    private var currentRecordingState: AppViewState? {
-        switch viewState {
-        case .recordingMic:
-            return .recordingMic
-        case .recordingSystem:
-            return .recordingSystem
-        default:
-            return nil
-        }
-    }
-
     private func stopMicrophoneRecording() {
+        captureState = .stoppingMic
         guard let url = microphoneRecorder.stop() else {
+            captureState = .idle
             viewState = .idle
             return
         }
         inputValue = url.path
-        analyze()
+        captureState = .idle
+        submitInput(url.path, switchToAnalyze: true)
     }
 
     private func stopSystemAudioRecording() {
+        captureState = .stoppingSystem
         Task {
             do {
                 let url = try await systemAudioRecorder.stop()
+                captureState = .idle
                 if let url {
                     inputValue = url.path
-                    analyze()
+                    submitInput(url.path, switchToAnalyze: true)
                 } else {
                     viewState = .idle
                 }
             } catch {
+                captureState = .idle
                 viewState = .error(error.localizedDescription)
+            }
+        }
+    }
+
+    private func submitInput(_ rawValue: String, switchToAnalyze: Bool) {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard captureState == .idle else { return }
+        Task {
+            do {
+                let response = try await runJSON(arguments: ["submit", trimmed, "--json"], as: AnalyzeResponse.self)
+                inputValue = ""
+                result = response
+                selectedSegmentID = response.segments.first?.id
+                cache(response: response, source: trimmed)
+                selectedLibraryJobID = response.job.id
+                selectedStorageJobID = response.job.id
+                if switchToAnalyze {
+                    selectedWorkspace = .analyze
+                }
+                updateViewState(for: response)
+                await refreshLibrary()
+                _ = try await refreshJobSnapshot(response.job.id)
+                await refreshStorage(jobID: response.job.id)
+            } catch {
+                viewState = .error(loc(languageCode, "Analysis failed", "Analyse fehlgeschlagen", "Falló el análisis", "Échec de l’analyse"))
             }
         }
     }
@@ -1136,20 +1168,20 @@ struct SearchHeroView: View {
                     .disabled(model.isBusy)
 
                 RecordingButton(
-                    title: model.viewState == .recordingMic ? loc(model.languageCode, "Stop Mic", "Mikro stoppen", "Detener mic", "Arrêter micro") : loc(model.languageCode, "Mic", "Mikro", "Mic", "Micro"),
+                    title: model.captureState == .recordingMic || model.captureState == .stoppingMic ? loc(model.languageCode, "Stop Mic", "Mikro stoppen", "Detener mic", "Arrêter micro") : loc(model.languageCode, "Mic", "Mikro", "Mic", "Micro"),
                     systemImage: "mic.fill",
-                    isActive: model.viewState == .recordingMic,
+                    isActive: model.captureState == .recordingMic || model.captureState == .stoppingMic,
                     action: model.toggleMicrophoneRecording
                 )
                 RecordingButton(
-                    title: model.viewState == .recordingSystem ? loc(model.languageCode, "Stop Sys", "System stoppen", "Detener sist.", "Arrêter sys.") : loc(model.languageCode, "System", "System", "Sistema", "Système"),
+                    title: model.captureState == .recordingSystem || model.captureState == .stoppingSystem ? loc(model.languageCode, "Stop Sys", "System stoppen", "Detener sist.", "Arrêter sys.") : loc(model.languageCode, "System", "System", "Sistema", "Système"),
                     systemImage: "waveform",
-                    isActive: model.viewState == .recordingSystem,
+                    isActive: model.captureState == .recordingSystem || model.captureState == .stoppingSystem,
                     action: model.toggleSystemAudioRecording
                 )
             }
 
-            StatusBannerView(state: model.viewState)
+            StatusBannerView(state: model.viewState, captureState: model.captureState)
         }
         .padding(22)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -1475,40 +1507,66 @@ struct RecordingButton: View {
 
 struct StatusBannerView: View {
     let state: AppViewState
+    let captureState: CaptureState
 
     var body: some View {
         HStack(spacing: 10) {
-            switch state {
-            case .idle:
-                Image(systemName: "sparkles")
-                    .foregroundStyle(.secondary)
-                Text(loc(modelLanguage(), "Paste a link or choose a file.", "Link einfügen oder Datei wählen.", "Pega un enlace o elige un archivo.", "Collez un lien ou choisissez un fichier."))
-                    .foregroundStyle(.secondary)
-            case let .analyzing(phase):
+            switch captureState {
+            case .startingMic:
                 ProgressView()
                     .controlSize(.small)
-                Text(phase)
+                Text(loc(modelLanguage(), "Starting mic…", "Mikro startet…", "Iniciando mic…", "Démarrage micro…"))
                     .foregroundStyle(.secondary)
             case .recordingMic:
                 Image(systemName: "mic.fill")
                     .foregroundStyle(.red)
                 Text(loc(modelLanguage(), "Mic is recording. Tap again to stop.", "Mikro läuft. Erneut tippen zum Stoppen.", "El micrófono graba. Pulsa otra vez para parar.", "Le micro enregistre. Touchez encore pour arrêter."))
                     .foregroundStyle(.secondary)
+            case .stoppingMic:
+                ProgressView()
+                    .controlSize(.small)
+                Text(loc(modelLanguage(), "Finishing mic clip…", "Mikroclip wird beendet…", "Finalizando clip de mic…", "Finalisation du clip micro…"))
+                    .foregroundStyle(.secondary)
+            case .startingSystem:
+                ProgressView()
+                    .controlSize(.small)
+                Text(loc(modelLanguage(), "Starting system audio…", "Systemaudio startet…", "Iniciando audio del sistema…", "Démarrage audio système…"))
+                    .foregroundStyle(.secondary)
             case .recordingSystem:
                 Image(systemName: "waveform")
                     .foregroundStyle(.orange)
                 Text(loc(modelLanguage(), "System audio is recording. Tap again to stop.", "Systemaudio läuft. Erneut tippen zum Stoppen.", "El audio del sistema graba. Pulsa otra vez para parar.", "L’audio système enregistre. Touchez encore pour arrêter."))
                     .foregroundStyle(.secondary)
-            case .showingResults:
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text(loc(modelLanguage(), "Analysis done.", "Analyse fertig.", "Análisis listo.", "Analyse terminée."))
+            case .stoppingSystem:
+                ProgressView()
+                    .controlSize(.small)
+                Text(loc(modelLanguage(), "Finishing system clip…", "Systemclip wird beendet…", "Finalizando clip del sistema…", "Finalisation du clip système…"))
                     .foregroundStyle(.secondary)
-            case let .error(message):
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text(message)
-                    .foregroundStyle(.secondary)
+            case .idle:
+                switch state {
+                case .idle:
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(.secondary)
+                    Text(loc(modelLanguage(), "Paste a link or choose a file.", "Link einfügen oder Datei wählen.", "Pega un enlace o elige un archivo.", "Collez un lien ou choisissez un fichier."))
+                        .foregroundStyle(.secondary)
+                case let .analyzing(phase):
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(phase)
+                        .foregroundStyle(.secondary)
+                case .recordingMic, .recordingSystem:
+                    EmptyView()
+                case .showingResults:
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text(loc(modelLanguage(), "Analysis done.", "Analyse fertig.", "Análisis listo.", "Analyse terminée."))
+                        .foregroundStyle(.secondary)
+                case let .error(message):
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(message)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
         }

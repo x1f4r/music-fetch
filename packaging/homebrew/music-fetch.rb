@@ -3,7 +3,7 @@ class MusicFetch < Formula
 
   desc "Local-first music recognition for noisy video and playlists"
   homepage "https://example.com/music-fetch"
-  url "file:///tmp/music-fetch-0.2.2.tar.gz"
+  url "file:///tmp/music-fetch-0.2.3.tar.gz"
   sha256 "CHANGE_ME"
   license "MIT"
 

@@ -22,7 +22,7 @@ class PinUpdate(BaseModel):
 
 
 def create_api(context: AppContext) -> FastAPI:
-    app = FastAPI(title="Music Fetch", version="0.2.2")
+    app = FastAPI(title="Music Fetch", version="0.2.3")
 
     def require_auth(authorization: str | None = Header(default=None)) -> None:
         token = context.settings.api_token
