@@ -8,7 +8,7 @@ INSTALL_DIR="/Applications/$APP_NAME.app"
 BUILD_DIR="$ROOT_DIR/macos/.build/release"
 EXECUTABLE="$BUILD_DIR/MusicFetchMac"
 BACKEND_BIN="$ROOT_DIR/.venv/bin/music-fetch"
-APP_BACKEND_COMMAND="${MUSIC_FETCH_BACKEND_COMMAND:-music-fetch}"
+APP_BACKEND_COMMAND="${MUSIC_FETCH_BACKEND_COMMAND:-$BACKEND_BIN}"
 ICON_SCRIPT="$ROOT_DIR/scripts/generate_app_icon.py"
 ICON_ICNS="$ROOT_DIR/assets/app_icon/MusicFetch.icns"
 INSTALL_APP=0
@@ -18,10 +18,10 @@ if [[ "${1:-}" == "--install" ]]; then
 fi
 
 if [[ "$APP_BACKEND_COMMAND" == /* || "$APP_BACKEND_COMMAND" == ~* ]]; then
-  if [[ ! -x "$APP_BACKEND_COMMAND" ]]; then
-    echo "Backend command path is not executable: $APP_BACKEND_COMMAND"
-    exit 1
-  fi
+    if [[ ! -x "$APP_BACKEND_COMMAND" ]]; then
+        echo "Backend command path is not executable: $APP_BACKEND_COMMAND"
+        exit 1
+    fi
 fi
 
 uv run python "$ICON_SCRIPT"
@@ -53,7 +53,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.3.2</string>
+  <string>0.3.3</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>

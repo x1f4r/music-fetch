@@ -150,7 +150,7 @@ def extract_feature_frames(
         total_frames = len(handle)
         duration_ms = int(total_frames / sr * 1000)
         chunk_frames = max(sr, int(params.chunk_seconds * sr))
-        overlap_frames = overlap_seconds * sr
+        overlap_frames = max(0, int(round(overlap_seconds * sr)))
         hop_length = max(1, int(sr * params.hop_seconds))
         offset = 0
         while offset < total_frames:

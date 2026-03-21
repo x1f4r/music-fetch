@@ -95,6 +95,7 @@ struct JobPayload: Codable, Hashable {
     let status: String
     let created_at: String
     let updated_at: String
+    let error: String?
 }
 
 struct JobEventPayload: Codable, Hashable, Identifiable {
@@ -339,7 +340,9 @@ final class AppModel: ObservableObject {
 
     init() {
         let savedBackend = UserDefaults.standard.string(forKey: backendCommandDefaultsKey)
-        self.backendCommand = savedBackend?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? savedBackend! : Self.defaultBackendCommand()
+        let resolvedBackend = Self.resolveInitialBackendCommand(saved: savedBackend)
+        self.backendCommand = resolvedBackend
+        UserDefaults.standard.set(resolvedBackend, forKey: backendCommandDefaultsKey)
         self.recentAnalyses = Self.loadRecentAnalyses()
         self.languageCode = UserDefaults.standard.string(forKey: languageDefaultsKey) ?? defaultUILanguageCode()
         terminationObserver = NotificationCenter.default.addObserver(
@@ -905,7 +908,12 @@ final class AppModel: ObservableObject {
             viewState = .analyzing(response.events?.last?.message ?? loc(languageCode, "Working", "Läuft", "Procesando", "En cours"))
         case "failed":
             stopAnalysisPhases()
-            viewState = .error(response.events?.last?.message ?? loc(languageCode, "Analysis failed", "Analyse fehlgeschlagen", "Falló el análisis", "Échec de l’analyse"))
+            let failureMessage =
+                response.job.error ??
+                response.events?.last(where: { $0.level == "error" })?.message ??
+                response.events?.last?.message ??
+                loc(languageCode, "Analysis failed", "Analyse fehlgeschlagen", "Falló el análisis", "Échec de l’analyse")
+            viewState = .error(failureMessage)
         case "canceled":
             stopAnalysisPhases()
             viewState = .error(loc(languageCode, "Analysis canceled", "Analyse abgebrochen", "Análisis cancelado", "Analyse annulée"))
@@ -1111,6 +1119,28 @@ final class AppModel: ObservableObject {
             return repoCandidate
         }
         return "/usr/local/bin/music-fetch"
+    }
+
+    private static func resolveInitialBackendCommand(saved: String?) -> String {
+        let bundled = defaultBackendCommand()
+        let trimmedSaved = saved?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmedSaved.isEmpty else {
+            return bundled
+        }
+        if shouldReplaceSavedBackend(trimmedSaved, bundled: bundled) {
+            return bundled
+        }
+        return trimmedSaved
+    }
+
+    private static func shouldReplaceSavedBackend(_ saved: String, bundled: String) -> Bool {
+        guard bundled != saved else {
+            return false
+        }
+        guard bundled.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: bundled) else {
+            return false
+        }
+        return saved == "music-fetch" || saved == "/usr/local/bin/music-fetch" || saved.contains("/.local/bin/music-fetch")
     }
 
     private static func loadRecentAnalyses() -> [RecentAnalysis] {
@@ -2125,6 +2155,7 @@ struct ResultsTimelineView: View {
     let selectedSegmentID: String?
     let onSelect: (String) -> Void
     @AppStorage(languageDefaultsKey) private var languageCode = defaultUILanguageCode()
+    private let trackInset: CGFloat = 4
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2133,10 +2164,13 @@ struct ResultsTimelineView: View {
                 .foregroundStyle(.secondary)
             GeometryReader { geometry in
                 let totalDuration = max(1, segments.map(\.endMs).max() ?? 1)
+                let trackWidth = max(0, geometry.size.width - (trackInset * 2))
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color.primary.opacity(0.06))
                     ForEach(segments) { segment in
+                        let segmentWidth = clampedWidth(for: segment, totalDuration: totalDuration, trackWidth: trackWidth)
+                        let segmentOffset = clampedOffset(for: segment, totalDuration: totalDuration, trackWidth: trackWidth, segmentWidth: segmentWidth)
                         Button {
                             onSelect(segment.id)
                         } label: {
@@ -2149,25 +2183,29 @@ struct ResultsTimelineView: View {
                         }
                         .buttonStyle(.plain)
                         .frame(
-                            width: max(6, width(for: segment, totalDuration: totalDuration, width: geometry.size.width)),
+                            width: segmentWidth,
                             height: selectedSegmentID == segment.id ? 24 : 18
                         )
-                        .offset(x: offset(for: segment, totalDuration: totalDuration, width: geometry.size.width))
+                        .offset(x: trackInset + segmentOffset)
                         .help(segment.title)
                     }
                 }
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .frame(height: 28)
         }
     }
 
-    private func width(for segment: SegmentViewModel, totalDuration: Int, width: CGFloat) -> CGFloat {
+    private func clampedWidth(for segment: SegmentViewModel, totalDuration: Int, trackWidth: CGFloat) -> CGFloat {
+        guard trackWidth > 0 else { return 0 }
         let fraction = CGFloat(segment.endMs - segment.startMs) / CGFloat(totalDuration)
-        return width * fraction
+        return min(trackWidth, max(6, trackWidth * fraction))
     }
 
-    private func offset(for segment: SegmentViewModel, totalDuration: Int, width: CGFloat) -> CGFloat {
-        CGFloat(segment.startMs) / CGFloat(totalDuration) * width
+    private func clampedOffset(for segment: SegmentViewModel, totalDuration: Int, trackWidth: CGFloat, segmentWidth: CGFloat) -> CGFloat {
+        guard trackWidth > 0 else { return 0 }
+        let rawOffset = CGFloat(segment.startMs) / CGFloat(totalDuration) * trackWidth
+        return min(max(0, rawOffset), max(0, trackWidth - segmentWidth))
     }
 }
 

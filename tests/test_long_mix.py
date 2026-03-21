@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from music_fetch.long_mix import SegmentDraft, analyze_long_mix, choose_probe_windows
+from music_fetch.long_mix import SegmentAnalysisParameters, SegmentDraft, analyze_long_mix, choose_probe_windows, extract_feature_frames
 from music_fetch.models import JobOptions, SegmentKind, SourceMetadata
 
 
@@ -104,3 +104,57 @@ def test_analyze_long_mix_segments_short_three_song_clip(tmp_path: Path) -> None
     boundaries = [segment.end_ms for segment in music_segments[:-1]]
     assert any(8_000 <= boundary <= 12_500 for boundary in boundaries)
     assert any(18_000 <= boundary <= 22_500 for boundary in boundaries)
+
+
+def test_extract_feature_frames_casts_overlap_frame_count_to_int(monkeypatch, tmp_path: Path) -> None:
+    fixture = tmp_path / "dummy.wav"
+    fixture.write_bytes(b"RIFF")
+
+    class FakeSoundFile:
+        samplerate = 16_000
+
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def __len__(self) -> int:
+            return 16_000 * 10
+
+        def seek(self, offset: int) -> None:
+            return None
+
+        def read(self, frames, dtype: str, always_2d: bool = False):
+            assert isinstance(frames, int)
+            return np.zeros(frames, dtype=np.float32)
+
+    monkeypatch.setitem(__import__("sys").modules, "soundfile", type("FakeSFModule", (), {"SoundFile": FakeSoundFile}))
+    monkeypatch.setitem(__import__("sys").modules, "librosa", object())
+    monkeypatch.setattr(
+        "music_fetch.long_mix.compute_frame_features",
+        lambda *args, **kwargs: [
+            {
+                "feature_vector": np.ones(4),
+                "chroma_vector": np.ones(4),
+                "music_score": 0.9,
+                "speech_score": 0.1,
+                "no_music_score": 0.0,
+                "label": SegmentKind.MUSIC_UNRESOLVED,
+            }
+        ],
+    )
+
+    params = SegmentAnalysisParameters(
+        hop_seconds=1.0,
+        chunk_seconds=5,
+        context_seconds=8.0,
+        min_segment_ms=5_000,
+        max_segment_ms=60_000,
+        novelty_percentile=80.0,
+    )
+    frames = extract_feature_frames(fixture, recall_profile=JobOptions().recall_profile, params=params, duration_ms=10_000)
+    assert frames

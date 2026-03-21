@@ -159,6 +159,7 @@ class JobManager:
         try:
             items: list[SourceItem] = []
             failures = 0
+            failure_messages: list[str] = []
             discovered_per_input = {raw: 0 for raw in job.inputs}
             for raw in job.inputs:
                 self.db.upsert_discovery_state(
@@ -217,6 +218,7 @@ class JobManager:
                         failures += 1
                         item.status = ItemStatus.FAILED
                         item.error = str(exc)
+                        failure_messages.append(f"{item.input_value}: {exc}")
                         self.db.update_source_item(item)
                         self.db.add_event(job_id, "error", f"{item.input_value}: {exc}")
             if self.db.is_cancel_requested(job_id):
@@ -229,7 +231,10 @@ class JobManager:
                 status = JobStatus.PARTIAL_FAILED
             else:
                 status = JobStatus.FAILED
-            self.db.update_job(job_id, status=status)
+            error_summary = None
+            if failure_messages:
+                error_summary = failure_messages[0] if len(failure_messages) == 1 else "\n".join(failure_messages[:3])
+            self.db.update_job(job_id, status=status, error=error_summary)
             if status in {JobStatus.SUCCEEDED, JobStatus.PARTIAL_FAILED} and not self.settings.retain_artifacts and not self.db.is_job_pinned(job_id):
                 try:
                     self.cleanup_job_artifacts(job_id, force=False)
