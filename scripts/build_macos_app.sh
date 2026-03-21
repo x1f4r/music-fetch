@@ -8,19 +8,13 @@ INSTALL_DIR="/Applications/$APP_NAME.app"
 BUILD_DIR="$ROOT_DIR/macos/.build/release"
 EXECUTABLE="$BUILD_DIR/MusicFetchMac"
 BACKEND_BIN="$ROOT_DIR/.venv/bin/music-fetch"
-APP_BACKEND_COMMAND="${MUSIC_FETCH_BACKEND_COMMAND:-$BACKEND_BIN}"
+APP_BACKEND_COMMAND="${MUSIC_FETCH_BACKEND_COMMAND:-music-fetch}"
 ICON_SCRIPT="$ROOT_DIR/scripts/generate_app_icon.py"
 ICON_ICNS="$ROOT_DIR/assets/app_icon/MusicFetch.icns"
 INSTALL_APP=0
 
 if [[ "${1:-}" == "--install" ]]; then
   INSTALL_APP=1
-fi
-
-if [[ "$APP_BACKEND_COMMAND" == "$BACKEND_BIN" && ! -x "$BACKEND_BIN" ]]; then
-  echo "Missing backend executable at $BACKEND_BIN"
-  echo "Run: uv sync --extra separation --extra test"
-  exit 1
 fi
 
 if [[ "$APP_BACKEND_COMMAND" == /* || "$APP_BACKEND_COMMAND" == ~* ]]; then
@@ -59,7 +53,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.3.0</string>
+  <string>0.3.1</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>

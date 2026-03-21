@@ -34,6 +34,8 @@ Build the native macOS app bundle:
 open "dist/Music Fetch.app"
 ```
 
+The packaged app uses the portable backend command `music-fetch` by default. To bake in a specific backend path for local-only builds, set `MUSIC_FETCH_BACKEND_COMMAND` before running the build script.
+
 Install or refresh the app in `/Applications`:
 
 ```bash
