@@ -68,7 +68,9 @@ class LocalCatalogProvider(BaseProvider):
             return []
         best_score = 0.0
         best_track = None
-        for row in self.db.list_catalog_tracks():
+        shortlist_ids = self.db.shortlist_catalog_track_ids(target_fp)
+        rows = self.db.get_catalog_tracks_by_ids(shortlist_ids) if shortlist_ids else self.db.list_catalog_tracks()
+        for row in rows:
             candidate = json.loads(row["fingerprint_json"])
             score = fingerprint_similarity(target_fp, candidate.get("fingerprint") or [])
             duration = float(candidate.get("duration") or 0.0)

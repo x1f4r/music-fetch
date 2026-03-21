@@ -87,6 +87,40 @@ def test_job_manager_runs_local_file(monkeypatch, app_env, tmp_path: Path) -> No
     assert segments[0].track.title == "ACIDO III (Super Slowed)"
 
 
+def test_run_existing_job_processes_created_job(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "tone.wav")
+
+    monkeypatch.setattr("music_fetch.service.normalize_media", lambda input_path, output_path: input_path)
+    monkeypatch.setattr(
+        JobManager,
+        "_select_windows",
+        lambda self, job, item, normalized, instrumental, profile: [
+            WindowPlan(start_ms=0, end_ms=12000, score=1.0, source_path=str(normalized), label="mix")
+        ],
+    )
+    monkeypatch.setattr(
+        "music_fetch.service.create_excerpt",
+        lambda source_path, start_ms, end_ms, output_path: (
+            output_path.parent.mkdir(parents=True, exist_ok=True),
+            output_path.write_bytes(source_path.read_bytes()),
+            output_path,
+        )[2],
+    )
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: "cache-key")
+    monkeypatch.setattr(JobManager, "_providers", lambda self: [FakeProvider()])
+
+    job = manager.create_job(JobCreate(inputs=[str(source)]))
+    manager.run_existing_job(job.id)
+
+    stored = db.get_job(job.id)
+    segments = db.get_segments(job.id)
+    assert stored is not None
+    assert stored.status.value == "succeeded"
+    assert len(segments) == 1
+    assert segments[0].track.title == "ACIDO III (Super Slowed)"
+
+
 def test_select_windows_keeps_long_mix_budget(monkeypatch, app_env) -> None:
     settings, db, manager = app_env
     plans = [
@@ -463,3 +497,153 @@ def test_cleanup_all_temporary_artifacts_skips_pinned_jobs(app_env, tmp_path: Pa
     assert any(entry.pinned for entry in summary.entries) or summary.total_size_bytes >= 0
     assert (settings.cache_dir / "normalized" / pinned.id).exists()
     assert not (settings.cache_dir / "normalized" / unpinned.id).exists()
+
+
+def test_cancel_request_marks_job_canceled(app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "cancel.wav")
+    job = manager.create_job(JobCreate(inputs=[str(source)]))
+    manager.cancel(job.id)
+    manager.run_existing_job(job.id)
+    stored = db.get_job(job.id)
+    assert stored is not None
+    assert stored.status == JobStatus.CANCELED
+
+
+def test_manual_correction_updates_segment_track_and_explanation(app_env) -> None:
+    settings, db, manager = app_env
+    job = db.create_job(["demo"], JobOptions())
+    db.add_source_items(
+        [
+            SourceItem(
+                id="item-1",
+                job_id=job.id,
+                input_value="demo",
+                kind=SourceKind.LOCAL_FILE,
+                status=ItemStatus.SUCCEEDED,
+                metadata=SourceMetadata(title="Demo", duration_ms=20_000),
+            )
+        ]
+    )
+    db.replace_segments(
+        job.id,
+        "item-1",
+        [
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=0,
+                end_ms=12_000,
+                kind=SegmentKind.MUSIC_UNRESOLVED,
+                confidence=0.0,
+                providers=[],
+                evidence_count=0,
+                explanation=["Music detected, but no candidate cleared the evidence threshold."],
+            )
+        ],
+    )
+
+    corrected = manager.correct_segment(
+        job.id,
+        source_item_id="item-1",
+        start_ms=0,
+        end_ms=12_000,
+        title="Manual Song",
+        artist="Manual Artist",
+    )
+
+    stored = db.get_segments(job.id)[0]
+    assert corrected.track is not None
+    assert stored.track is not None
+    assert stored.track.title == "Manual Song"
+    assert stored.track.artist == "Manual Artist"
+    assert stored.uncertainty == 0.0
+    assert stored.explanation[0] == "Manually corrected by the user."
+
+
+def test_retry_unresolved_segment_can_promote_match(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "retry.wav", seconds=20)
+    job = db.create_job([str(source)], JobOptions())
+    item = SourceItem(
+        id="item-1",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.SUCCEEDED,
+        metadata=SourceMetadata(title="Retry", duration_ms=20_000),
+        local_path=str(source),
+        normalized_path=str(source),
+    )
+    db.add_source_items([item])
+    db.replace_segments(
+        job.id,
+        item.id,
+        [
+            DetectedSegment(
+                source_item_id=item.id,
+                start_ms=0,
+                end_ms=12_000,
+                kind=SegmentKind.MUSIC_UNRESOLVED,
+                confidence=0.0,
+                providers=[],
+                evidence_count=0,
+                explanation=["Music detected, but no candidate cleared the evidence threshold."],
+            )
+        ],
+    )
+    monkeypatch.setattr("music_fetch.service.create_excerpt", lambda source_path, start_ms, end_ms, output_path: (output_path.parent.mkdir(parents=True, exist_ok=True), output_path.write_bytes(source_path.read_bytes()), output_path)[2])
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"retry:{clip_path}")
+    monkeypatch.setattr(manager.provider_registry, "active_providers_for_order", lambda order=None: [FakeProvider()])
+
+    result = manager.retry_unresolved_segments(job.id)
+
+    stored = db.get_segments(job.id)[0]
+    assert result["retried_segments"] == 1
+    assert result["matched_segments"] == 1
+    assert stored.kind == SegmentKind.MATCHED_TRACK
+    assert stored.track is not None
+    assert stored.track.title == "ACIDO III (Super Slowed)"
+    assert stored.explanation[0] == "Recovered by retrying an unresolved region."
+
+
+def test_export_job_supports_csv_and_chapters(app_env) -> None:
+    settings, db, manager = app_env
+    job = db.create_job(["demo"], JobOptions())
+    db.add_source_items(
+        [
+            SourceItem(
+                id="item-1",
+                job_id=job.id,
+                input_value="demo",
+                kind=SourceKind.LOCAL_FILE,
+                status=ItemStatus.SUCCEEDED,
+                metadata=SourceMetadata(title="Demo", duration_ms=20_000),
+            )
+        ]
+    )
+    db.replace_segments(
+        job.id,
+        "item-1",
+        [
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=0,
+                end_ms=12_000,
+                kind=SegmentKind.MATCHED_TRACK,
+                confidence=0.9,
+                providers=[ProviderName.VIBRA],
+                evidence_count=1,
+                track=TrackMatch(title="Song", artist="Artist"),
+                explanation=["Provider agreement: vibra."],
+            )
+        ],
+    )
+
+    csv_name, csv_content = manager.export_job(job.id, export_format="csv")
+    chapters_name, chapters_content = manager.export_job(job.id, export_format="chapters")
+
+    assert csv_name.endswith(".csv")
+    assert "source_item_id,start_ms,end_ms" in csv_content
+    assert "Song" in csv_content
+    assert chapters_name.endswith("-chapters.txt")
+    assert "00:00 Artist - Song" in chapters_content

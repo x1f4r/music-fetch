@@ -1,4 +1,4 @@
-from music_fetch.sources import _entry_download_url, _flatten_entries, is_direct_media_url, is_url
+from music_fetch.sources import _entry_download_url, _flatten_entries, is_direct_media_url, is_url, probe_direct_media_url
 
 
 def test_url_detection() -> None:
@@ -25,3 +25,24 @@ def test_entry_download_url_reconstructs_youtube_music_watch_url() -> None:
     entry = {"id": "track123", "extractor_key": "YoutubeTab"}
     url = _entry_download_url(entry, "https://music.youtube.com/playlist?list=PL123", "PL123")
     assert url == "https://music.youtube.com/watch?v=track123&list=PL123"
+
+
+def test_probe_direct_media_url_uses_head_content_type(monkeypatch) -> None:
+    class Response:
+        headers = {"content-type": "audio/mpeg"}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def head(self, value):
+            return Response()
+
+    monkeypatch.setattr("music_fetch.sources.httpx.Client", Client)
+    assert probe_direct_media_url("https://cdn.example.com/stream")

@@ -11,6 +11,8 @@ import httpx
 from .models import ItemStatus, SourceItem, SourceKind, SourceMetadata
 from .utils import run_command, sha1_text
 
+KNOWN_EXTRACTOR_HOST_TOKENS = ("youtube.", "youtu.be", "instagram.", "tiktok.", "vimeo.", "soundcloud.")
+
 
 def yt_dlp_base_args() -> list[str]:
     return [
@@ -45,24 +47,50 @@ def is_direct_media_url(value: str) -> bool:
     return bool(mime and (mime.startswith("audio/") or mime.startswith("video/")))
 
 
+def probe_direct_media_url(value: str) -> bool:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.netloc or "").lower()
+    if any(token in host for token in KNOWN_EXTRACTOR_HOST_TOKENS):
+        return False
+    if is_direct_media_url(value):
+        return True
+    try:
+        with httpx.Client(follow_redirects=True, timeout=5.0) as client:
+            response = client.head(value)
+            content_type = (response.headers.get("content-type") or "").lower()
+            if content_type.startswith(("audio/", "video/")):
+                return True
+    except Exception:
+        return False
+    return False
+
+
 class SourceResolver:
     def __init__(self, cache_dir: Path) -> None:
         self.cache_dir = cache_dir
 
     def resolve_inputs(self, job_id: str, inputs: list[str]) -> list[SourceItem]:
+        return list(self.iter_resolve_inputs(job_id, inputs))
+
+    def iter_resolve_inputs(self, job_id: str, inputs: list[str]):
         items: list[SourceItem] = []
         for raw in inputs:
             if is_url(raw):
-                if is_direct_media_url(raw):
-                    items.append(self._direct_http_item(job_id, raw))
+                if is_direct_media_url(raw) or probe_direct_media_url(raw):
+                    yield self._direct_http_item(job_id, raw)
                 else:
-                    items.extend(self._yt_dlp_items(job_id, raw))
+                    yield from self._yt_dlp_items(job_id, raw)
             else:
-                items.append(self._local_file_item(job_id, raw))
-        return items
+                yield self._local_file_item(job_id, raw)
 
     def _local_file_item(self, job_id: str, raw: str) -> SourceItem:
         path = Path(raw).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"Input file does not exist: {path}")
+        if not path.is_file():
+            raise IsADirectoryError(f"Input path is not a file: {path}")
         metadata = SourceMetadata(title=path.name, extra={"resolved_path": str(path)})
         return SourceItem(
             id=str(uuid.uuid4()),
@@ -92,15 +120,14 @@ class SourceResolver:
         info = yt_dlp_extract_info(raw)
         entries = _flatten_entries(info.get("entries") or [])
         if entries:
-            items: list[SourceItem] = []
             playlist_title = info.get("title")
             playlist_id = info.get("id")
             for index, entry in enumerate(entries, start=1):
                 if not entry:
                     continue
-                items.append(self._from_yt_entry(job_id, raw, entry, playlist_id, playlist_title, index))
-            return items
-        return [self._from_yt_entry(job_id, raw, info, None, None, None)]
+                yield self._from_yt_entry(job_id, raw, entry, playlist_id, playlist_title, index)
+            return
+        yield self._from_yt_entry(job_id, raw, info, None, None, None)
 
     def _from_yt_entry(
         self,

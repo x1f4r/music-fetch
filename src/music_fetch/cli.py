@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import typer
 import uvicorn
@@ -11,8 +14,9 @@ from rich.table import Table
 from .api import create_api
 from .context import create_context
 from .doctor import run_doctor
+from .eval import run_evaluation_manifest
 from .installer import install_dependencies
-from .models import JobCreate
+from .models import AnalysisMode, JobCreate, JobOptions, ProviderName, RecallProfile
 from .tui import launch_tui
 
 app = typer.Typer(help="Music Fetch CLI")
@@ -23,10 +27,66 @@ app.add_typer(storage_app, name="storage")
 console = Console()
 
 
+def _job_create(
+    inputs: list[str],
+    *,
+    prefer_separation: bool = True,
+    analysis_mode: AnalysisMode = AnalysisMode.AUTO,
+    recall_profile: RecallProfile = RecallProfile.MAX_RECALL,
+    metadata_hints: bool = True,
+    repeat_detection: bool = True,
+    max_windows: int = 24,
+    max_segments: int = 360,
+    max_probes_per_segment: int = 3,
+    max_provider_calls: int = 420,
+    provider_order: list[ProviderName] | None = None,
+) -> JobCreate:
+    options = JobOptions(
+        prefer_separation=prefer_separation,
+        analysis_mode=analysis_mode,
+        recall_profile=recall_profile,
+        enable_metadata_hints=metadata_hints,
+        enable_repeat_detection=repeat_detection,
+        max_windows=max_windows,
+        max_segments=max_segments,
+        max_probes_per_segment=max_probes_per_segment,
+        max_provider_calls=max_provider_calls,
+        provider_order=provider_order or JobOptions().provider_order,
+    )
+    return JobCreate(inputs=inputs, options=options)
+
+
 @app.command()
-def analyze(inputs: list[str], json_output: bool = typer.Option(False, "--json")) -> None:
+def analyze(
+    inputs: list[str],
+    json_output: bool = typer.Option(False, "--json"),
+    prefer_separation: bool = typer.Option(True, "--prefer-separation/--no-prefer-separation"),
+    analysis_mode: AnalysisMode = typer.Option(AnalysisMode.AUTO, "--analysis-mode"),
+    recall_profile: RecallProfile = typer.Option(RecallProfile.MAX_RECALL, "--recall-profile"),
+    metadata_hints: bool = typer.Option(True, "--metadata-hints/--no-metadata-hints"),
+    repeat_detection: bool = typer.Option(True, "--repeat-detection/--no-repeat-detection"),
+    max_windows: int = typer.Option(24, "--max-windows"),
+    max_segments: int = typer.Option(360, "--max-segments"),
+    max_probes_per_segment: int = typer.Option(3, "--max-probes-per-segment"),
+    max_provider_calls: int = typer.Option(420, "--max-provider-calls"),
+    provider_order: list[ProviderName] | None = typer.Option(None, "--provider-order"),
+) -> None:
     context = create_context()
-    job = context.manager.submit(JobCreate(inputs=inputs))
+    job = context.manager.submit(
+        _job_create(
+            inputs,
+            prefer_separation=prefer_separation,
+            analysis_mode=analysis_mode,
+            recall_profile=recall_profile,
+            metadata_hints=metadata_hints,
+            repeat_detection=repeat_detection,
+            max_windows=max_windows,
+            max_segments=max_segments,
+            max_probes_per_segment=max_probes_per_segment,
+            max_provider_calls=max_provider_calls,
+            provider_order=provider_order,
+        )
+    )
     final_job = context.manager.wait(job.id)
     payload = {
         "job": context.db.get_job(final_job.id).model_dump(),
@@ -60,9 +120,37 @@ def analyze(inputs: list[str], json_output: bool = typer.Option(False, "--json")
 
 
 @app.command("submit")
-def submit_job(inputs: list[str], json_output: bool = typer.Option(False, "--json")) -> None:
+def submit_job(
+    inputs: list[str],
+    json_output: bool = typer.Option(False, "--json"),
+    prefer_separation: bool = typer.Option(True, "--prefer-separation/--no-prefer-separation"),
+    analysis_mode: AnalysisMode = typer.Option(AnalysisMode.AUTO, "--analysis-mode"),
+    recall_profile: RecallProfile = typer.Option(RecallProfile.MAX_RECALL, "--recall-profile"),
+    metadata_hints: bool = typer.Option(True, "--metadata-hints/--no-metadata-hints"),
+    repeat_detection: bool = typer.Option(True, "--repeat-detection/--no-repeat-detection"),
+    max_windows: int = typer.Option(24, "--max-windows"),
+    max_segments: int = typer.Option(360, "--max-segments"),
+    max_probes_per_segment: int = typer.Option(3, "--max-probes-per-segment"),
+    max_provider_calls: int = typer.Option(420, "--max-provider-calls"),
+    provider_order: list[ProviderName] | None = typer.Option(None, "--provider-order"),
+) -> None:
     context = create_context()
-    job = context.manager.submit(JobCreate(inputs=inputs))
+    job = context.manager.create_job(
+        _job_create(
+            inputs,
+            prefer_separation=prefer_separation,
+            analysis_mode=analysis_mode,
+            recall_profile=recall_profile,
+            metadata_hints=metadata_hints,
+            repeat_detection=repeat_detection,
+            max_windows=max_windows,
+            max_segments=max_segments,
+            max_probes_per_segment=max_probes_per_segment,
+            max_provider_calls=max_provider_calls,
+            provider_order=provider_order,
+        )
+    )
+    _spawn_worker(job.id)
     payload = {
         "job": context.db.get_job(job.id).model_dump(),
         "items": [item.model_dump() for item in context.db.get_source_items(job.id)],
@@ -73,6 +161,27 @@ def submit_job(inputs: list[str], json_output: bool = typer.Option(False, "--jso
         console.print_json(json.dumps(payload))
         return
     console.print(job.id)
+
+
+@app.command("worker", hidden=True)
+def worker(job_id: str) -> None:
+    context = create_context()
+    job = context.db.get_job(job_id)
+    if not job:
+        raise typer.BadParameter(f"Unknown job: {job_id}")
+    context.manager.run_existing_job(job_id)
+
+
+@app.command("cancel")
+def cancel_job(job_id: str, json_output: bool = typer.Option(False, "--json")) -> None:
+    context = create_context()
+    context.manager.cancel(job_id)
+    job = context.db.get_job(job_id)
+    payload = {"job_id": job_id, "status": job.status.value if job else "canceled"}
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(f"{job_id}: {payload['status']}")
 
 
 @app.command()
@@ -135,6 +244,113 @@ def show_job(job_id: str, json_output: bool = typer.Option(False, "--json")) -> 
         console.print_json(json.dumps(payload))
         return
     console.print_json(json.dumps(payload))
+
+
+@app.command("retry")
+def retry_segments(
+    job_id: str,
+    source_item_id: str | None = typer.Option(None, "--source-item-id"),
+    json_output: bool = typer.Option(False, "--json"),
+    prefer_separation: bool = typer.Option(True, "--prefer-separation/--no-prefer-separation"),
+    analysis_mode: AnalysisMode = typer.Option(AnalysisMode.AUTO, "--analysis-mode"),
+    recall_profile: RecallProfile = typer.Option(RecallProfile.MAX_RECALL, "--recall-profile"),
+    metadata_hints: bool = typer.Option(True, "--metadata-hints/--no-metadata-hints"),
+    repeat_detection: bool = typer.Option(True, "--repeat-detection/--no-repeat-detection"),
+    max_windows: int = typer.Option(24, "--max-windows"),
+    max_segments: int = typer.Option(360, "--max-segments"),
+    max_probes_per_segment: int = typer.Option(3, "--max-probes-per-segment"),
+    max_provider_calls: int = typer.Option(420, "--max-provider-calls"),
+    provider_order: list[ProviderName] | None = typer.Option(None, "--provider-order"),
+) -> None:
+    context = create_context()
+    options = _job_create(
+        [],
+        prefer_separation=prefer_separation,
+        analysis_mode=analysis_mode,
+        recall_profile=recall_profile,
+        metadata_hints=metadata_hints,
+        repeat_detection=repeat_detection,
+        max_windows=max_windows,
+        max_segments=max_segments,
+        max_probes_per_segment=max_probes_per_segment,
+        max_provider_calls=max_provider_calls,
+        provider_order=provider_order,
+    ).options
+    result = context.manager.retry_unresolved_segments(job_id, source_item_id=source_item_id, options_override=options)
+    payload = {"job_id": job_id, **result}
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(
+        f"{job_id}: retried {result['retried_segments']} unresolved segment(s), "
+        f"matched {result['matched_segments']}, remaining {result['remaining_unresolved_segments']}"
+    )
+
+
+@app.command("correct")
+def correct_segment(
+    job_id: str,
+    source_item_id: str,
+    start_ms: int,
+    end_ms: int,
+    title: str = typer.Option(..., "--title"),
+    artist: str | None = typer.Option(None, "--artist"),
+    album: str | None = typer.Option(None, "--album"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    context = create_context()
+    segment = context.manager.correct_segment(
+        job_id,
+        source_item_id=source_item_id,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        title=title,
+        artist=artist,
+        album=album,
+    )
+    if json_output:
+        console.print_json(json.dumps({"job_id": job_id, "segment": segment.model_dump(mode="json")}))
+        return
+    console.print(f"{job_id}: corrected {source_item_id} {start_ms}-{end_ms} -> {title}")
+
+
+@app.command("export")
+def export_job(
+    job_id: str,
+    format: str = typer.Option("json", "--format"),
+    output: str | None = typer.Option(None, "--output"),
+) -> None:
+    context = create_context()
+    filename, content = context.manager.export_job(job_id, export_format=format)
+    if output:
+        Path(output).expanduser().write_text(content, encoding="utf-8")
+        console.print(Path(output).expanduser())
+        return
+    if format.lower() == "json":
+        console.print_json(content)
+        return
+    console.print(content)
+
+
+@app.command("eval")
+def evaluate(
+    manifest: str,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    context = create_context()
+    report = run_evaluation_manifest(context.manager, Path(manifest).expanduser().resolve())
+    if json_output:
+        console.print_json(report.model_dump_json())
+        return
+    table = Table(title="Music Fetch Evaluation")
+    table.add_column("Case")
+    table.add_column("Status")
+    table.add_column("Precision")
+    table.add_column("Recall")
+    table.add_column("Runtime")
+    for case in report.case_results:
+        table.add_row(case.case_id, case.status.value, f"{case.precision:.2f}", f"{case.recall:.2f}", f"{case.runtime_ms} ms")
+    console.print(table)
 
 
 @catalog_app.command("import")
@@ -248,6 +464,18 @@ def _format_size(size_bytes: int) -> str:
     if unit == "B":
         return f"{int(value)} {unit}"
     return f"{value:.1f} {unit}"
+
+
+def _spawn_worker(job_id: str) -> None:
+    command = [sys.executable, "-m", "music_fetch", "worker", job_id]
+    kwargs = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "cwd": os.getcwd(),
+        "start_new_session": True,
+    }
+    subprocess.Popen(command, **kwargs)
 
 
 def run() -> None:

@@ -12,6 +12,7 @@ class JobStatus(StrEnum):
     SUCCEEDED = "succeeded"
     PARTIAL_FAILED = "partial_failed"
     FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class ItemStatus(StrEnum):
@@ -19,6 +20,7 @@ class ItemStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class ProviderName(StrEnum):
@@ -132,6 +134,8 @@ class DetectedSegment(BaseModel):
     probe_count: int = 0
     provider_attempts: int = 0
     metadata_hints: list[str] = Field(default_factory=list)
+    uncertainty: float | None = None
+    explanation: list[str] = Field(default_factory=list)
 
 
 class SourceMetadata(BaseModel):
@@ -171,6 +175,7 @@ class Job(BaseModel):
     options: JobOptions
     inputs: list[str]
     error: str | None = None
+    cancel_requested: bool = False
 
 
 class ProviderConfig(BaseModel):
@@ -215,6 +220,31 @@ class ArtifactEntry(BaseModel):
     pinned: bool = False
 
 
+class RecognitionMetric(BaseModel):
+    id: str
+    job_id: str
+    source_item_id: str | None = None
+    provider_name: ProviderName | None = None
+    cache_hit: bool = False
+    matched: bool = False
+    call_count: int = 0
+    matched_segments: int = 0
+    unresolved_segments: int = 0
+    elapsed_ms: int = 0
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class DiscoveryState(BaseModel):
+    job_id: str
+    input_value: str
+    cursor: int = 0
+    total: int | None = None
+    completed: bool = False
+    payload: dict[str, Any] = Field(default_factory=dict)
+    updated_at: str
+
+
 class ArtifactCategorySummary(BaseModel):
     category: ArtifactCategory
     count: int
@@ -242,3 +272,33 @@ class LibraryEntry(BaseModel):
     matched_count: int
     pinned: bool = False
     artifact_size_bytes: int = 0
+
+
+class EvaluationCase(BaseModel):
+    id: str
+    input_value: str
+    expected_tracks: list[str] = Field(default_factory=list)
+    max_runtime_ms: int | None = None
+    notes: str | None = None
+
+
+class EvaluationCaseResult(BaseModel):
+    case_id: str
+    job_id: str
+    status: JobStatus
+    runtime_ms: int
+    provider_calls: int
+    cache_hits: int
+    matched_segments: int
+    unresolved_segments: int
+    precision: float
+    recall: float
+    expected_tracks: list[str] = Field(default_factory=list)
+    actual_tracks: list[str] = Field(default_factory=list)
+
+
+class EvaluationReport(BaseModel):
+    manifest_path: str
+    created_at: str
+    case_results: list[EvaluationCaseResult] = Field(default_factory=list)
+    summary: dict[str, float] = Field(default_factory=dict)

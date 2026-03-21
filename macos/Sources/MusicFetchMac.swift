@@ -1,11 +1,14 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
+import UserNotifications
 import UniformTypeIdentifiers
 
 private let backendCommandDefaultsKey = "musicFetch.backendCommand"
 private let recentAnalysesDefaultsKey = "musicFetch.recentAnalyses"
 private let openExternalLinksDefaultsKey = "musicFetch.openExternalLinks"
 private let languageDefaultsKey = "musicFetch.language"
+private let launchAtLoginDefaultsKey = "musicFetch.launchAtLogin"
 
 private func defaultUILanguageCode() -> String {
     let preferred = Locale.preferredLanguages.first?.lowercased() ?? "en"
@@ -75,6 +78,8 @@ struct SegmentPayload: Codable, Identifiable, Hashable {
     let probe_count: Int?
     let provider_attempts: Int?
     let metadata_hints: [String]?
+    let uncertainty: Double?
+    let explanation: [String]?
     var id: String { "\(source_item_id)-\(start_ms)-\(end_ms)-\(track?.title ?? kind ?? "segment")" }
 }
 
@@ -105,6 +110,57 @@ struct AnalyzeResponse: Codable {
     let items: [ItemPayload]
     let segments: [SegmentPayload]
     let events: [JobEventPayload]?
+}
+
+struct LibraryEnvelope: Codable {
+    let entries: [LibraryEntryPayload]
+}
+
+struct StorageEnvelope: Codable {
+    let storage: StorageSummaryPayload
+}
+
+struct PinResponse: Codable {
+    let job_id: String
+    let pinned: Bool
+}
+
+struct CancelResponse: Codable {
+    let job_id: String
+    let status: String
+}
+
+struct RetryResponse: Codable {
+    let job_id: String
+    let retried_segments: Int
+    let matched_segments: Int
+    let remaining_unresolved_segments: Int
+}
+
+struct ExportResponse: Codable {
+    let job_id: String
+    let format: String
+    let filename: String
+    let content: String
+}
+
+struct SegmentCorrectionRequest: Codable {
+    let source_item_id: String
+    let start_ms: Int
+    let end_ms: Int
+    let title: String
+    let artist: String?
+    let album: String?
+}
+
+struct SegmentCorrectionResponse: Codable {
+    let job_id: String
+    let segment: SegmentPayload
+}
+
+struct RetrySegmentsRequest: Codable {
+    let source_item_id: String?
+    let options: BackendJobOptions?
 }
 
 struct InstallResponse: Codable {
@@ -269,10 +325,13 @@ final class AppModel: ObservableObject {
     @Published var selectedStorageJobID: String?
     @Published var languageCode: String
     @Published var captureState: CaptureState = .idle
+    @Published var latestQuickCaptureSummary = ""
 
     private let microphoneRecorder = MicrophoneRecorder()
     private let systemAudioRecorder = SystemAudioRecorder()
+    private let backend = BackendController()
     private var analysisPhaseTask: Task<Void, Never>?
+    private var eventStreamTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
     private var cachedResults: [String: AnalyzeResponse] = [:]
     private var openedPrimaryLinkJobIDs: Set<String> = []
@@ -286,6 +345,16 @@ final class AppModel: ObservableObject {
 
     var isBusy: Bool {
         captureState.isBusy
+    }
+
+    var quickCaptureSummary: String {
+        if !latestQuickCaptureSummary.isEmpty {
+            return latestQuickCaptureSummary
+        }
+        guard let response = result else {
+            return loc(languageCode, "No quick result yet", "Noch kein Schnelltreffer", "Sin resultado rápido", "Pas encore de résultat rapide")
+        }
+        return Self.topMatchSummary(from: response) ?? loc(languageCode, "No quick result yet", "Noch kein Schnelltreffer", "Sin resultado rápido", "Pas encore de résultat rapide")
     }
 
     var statusTitle: String {
@@ -342,6 +411,9 @@ final class AppModel: ObservableObject {
     func updateBackendCommand(_ value: String) {
         backendCommand = value
         UserDefaults.standard.set(value, forKey: backendCommandDefaultsKey)
+        Task {
+            await backend.stop()
+        }
     }
 
     func refreshDoctor() {
@@ -356,8 +428,10 @@ final class AppModel: ObservableObject {
 
     func bootstrap() {
         Task {
+            _ = try? await backend.ensureServer(command: backendCommand)
             await refreshLibrary()
             await refreshStorage()
+            await requestNotificationAuthorization()
         }
         startPolling()
     }
@@ -420,7 +494,13 @@ final class AppModel: ObservableObject {
 
     func refreshLibrary() async {
         do {
-            libraryEntries = try await runJSON(arguments: ["library", "--limit", "60", "--json"], as: [LibraryEntryPayload].self)
+            let payload = try await backend.getJSON(
+                "/v1/library",
+                command: backendCommand,
+                queryItems: [URLQueryItem(name: "limit", value: "60")],
+                type: LibraryEnvelope.self
+            )
+            libraryEntries = payload.entries
             if selectedLibraryJobID == nil {
                 selectedLibraryJobID = libraryEntries.first?.job_id
             }
@@ -431,11 +511,12 @@ final class AppModel: ObservableObject {
 
     func refreshStorage(jobID: String? = nil) async {
         do {
-            var args = ["storage", "summary", "--json"]
+            var queryItems: [URLQueryItem] = []
             if let jobID {
-                args += ["--job-id", jobID]
+                queryItems.append(URLQueryItem(name: "job_id", value: jobID))
             }
-            storageSummary = try await runJSON(arguments: args, as: StorageSummaryPayload.self)
+            let payload = try await backend.getJSON("/v1/storage", command: backendCommand, queryItems: queryItems, type: StorageEnvelope.self)
+            storageSummary = payload.storage
         } catch {
             storageSummary = nil
         }
@@ -457,12 +538,12 @@ final class AppModel: ObservableObject {
                 }
             }
             do {
-                var args = ["storage", "cleanup", "--json"]
+                var queryItems: [URLQueryItem] = []
                 if let jobID {
-                    args += ["--job-id", jobID]
+                    queryItems.append(URLQueryItem(name: "job_id", value: jobID))
                 }
-                let summary = try await runJSON(arguments: args, as: StorageSummaryPayload.self)
-                storageSummary = summary
+                let payload = try await backend.deleteJSON("/v1/storage", command: backendCommand, queryItems: queryItems, type: StorageEnvelope.self)
+                storageSummary = payload.storage
                 await refreshLibrary()
                 if let jobID, result?.job.id == jobID {
                     await refreshStorage(jobID: jobID)
@@ -477,14 +558,110 @@ final class AppModel: ObservableObject {
     func setPinned(jobID: String, pinned: Bool) {
         Task {
             do {
-                struct PinResponse: Codable { let job_id: String; let pinned: Bool }
-                _ = try await runJSON(arguments: ["storage", "pin", jobID, pinned ? "--pinned" : "--unpinned", "--json"], as: PinResponse.self)
+                _ = try await backend.putJSON(
+                    "/v1/storage/jobs/\(jobID)/pin",
+                    command: backendCommand,
+                    body: ["pinned": pinned],
+                    type: PinResponse.self
+                )
                 await refreshLibrary()
                 await refreshStorage(jobID: selectedStorageJobID)
             } catch {
                 viewState = .error(loc(languageCode, "Pin failed", "Pinnen fehlgeschlagen", "Falló el anclaje", "Échec de l’épinglage"))
             }
         }
+    }
+
+    func cancelActiveJob() {
+        guard let jobID = result?.job.id ?? selectedLibraryJobID ?? selectedStorageJobID else { return }
+        Task {
+            do {
+                _ = try await backend.postJSON(
+                    "/v1/jobs/\(jobID)/cancel",
+                    command: backendCommand,
+                    body: [String: String](),
+                    type: CancelResponse.self
+                )
+                _ = try await refreshJobSnapshot(jobID)
+                await refreshLibrary()
+            } catch {
+                viewState = .error(loc(languageCode, "Cancel failed", "Abbruch fehlgeschlagen", "Falló la cancelación", "Échec de l’annulation"))
+            }
+        }
+    }
+
+    func retryUnresolvedSegments() {
+        guard let jobID = result?.job.id else { return }
+        viewState = .analyzing(loc(languageCode, "Retrying unresolved segments", "Unklare Segmente werden erneut geprüft", "Reintentando segmentos sin resolver", "Nouvelle tentative sur les segments non résolus"))
+        Task {
+            do {
+                let payload = RetrySegmentsRequest(source_item_id: nil, options: currentJobOptions())
+                _ = try await backend.postJSON(
+                    "/v1/jobs/\(jobID)/segments/retry",
+                    command: backendCommand,
+                    body: payload,
+                    type: RetryResponse.self
+                )
+                let response = try await refreshJobSnapshot(jobID)
+                cache(response: response, source: response.items.first?.input_value ?? jobID)
+                await refreshLibrary()
+            } catch {
+                viewState = .error(loc(languageCode, "Retry failed", "Erneuter Versuch fehlgeschlagen", "Falló el reintento", "Nouvelle tentative échouée"))
+            }
+        }
+    }
+
+    func correctSegment(_ segment: SegmentPayload, title: String, artist: String?, album: String?) {
+        guard let jobID = result?.job.id else { return }
+        Task {
+            do {
+                let payload = SegmentCorrectionRequest(
+                    source_item_id: segment.source_item_id,
+                    start_ms: segment.start_ms,
+                    end_ms: segment.end_ms,
+                    title: title,
+                    artist: artist,
+                    album: album
+                )
+                _ = try await backend.postJSON(
+                    "/v1/jobs/\(jobID)/segments/correct",
+                    command: backendCommand,
+                    body: payload,
+                    type: SegmentCorrectionResponse.self
+                )
+                let response = try await refreshJobSnapshot(jobID)
+                cache(response: response, source: response.items.first?.input_value ?? jobID)
+                await refreshLibrary()
+            } catch {
+                viewState = .error(loc(languageCode, "Correction failed", "Korrektur fehlgeschlagen", "Falló la corrección", "Échec de la correction"))
+            }
+        }
+    }
+
+    func exportCurrentResults(format: String) {
+        guard let jobID = result?.job.id else { return }
+        Task {
+            do {
+                let response = try await backend.getJSON(
+                    "/v1/jobs/\(jobID)/export",
+                    command: backendCommand,
+                    queryItems: [URLQueryItem(name: "format", value: format)],
+                    type: ExportResponse.self
+                )
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = response.filename
+                if panel.runModal() == .OK, let url = panel.url {
+                    try response.content.write(to: url, atomically: true, encoding: .utf8)
+                }
+            } catch {
+                viewState = .error(loc(languageCode, "Export failed", "Export fehlgeschlagen", "Falló la exportación", "Échec de l’export"))
+            }
+        }
+    }
+
+    func showMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        NotificationCenter.default.post(name: .musicFetchFocusInput, object: nil)
     }
 
     func reveal(_ path: String) {
@@ -590,23 +767,31 @@ final class AppModel: ObservableObject {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard captureState == .idle else { return }
+        startAnalysisPhases()
         Task {
             do {
-                let response = try await runJSON(arguments: ["submit", trimmed, "--json"], as: AnalyzeResponse.self)
+                let options = currentJobOptions()
+                let existsAsLocalFile = FileManager.default.fileExists(atPath: trimmed)
+                let jobResponse: BackendCreateJobResponse
+                if existsAsLocalFile {
+                    jobResponse = try await backend.uploadFile("/v1/uploads", command: backendCommand, fileURL: URL(fileURLWithPath: trimmed), options: options, type: BackendCreateJobResponse.self)
+                } else {
+                    let payload = BackendJobCreateRequest(inputs: [trimmed], options: options)
+                    jobResponse = try await backend.postJSON("/v1/jobs", command: backendCommand, body: payload, type: BackendCreateJobResponse.self)
+                }
                 inputValue = ""
-                result = response
-                selectedSegmentID = response.segments.first?.id
-                cache(response: response, source: trimmed)
-                selectedLibraryJobID = response.job.id
-                selectedStorageJobID = response.job.id
+                selectedLibraryJobID = jobResponse.job_id
+                selectedStorageJobID = jobResponse.job_id
                 if switchToAnalyze {
                     selectedWorkspace = .analyze
                 }
-                updateViewState(for: response)
+                subscribeToJob(jobResponse.job_id)
                 await refreshLibrary()
-                _ = try await refreshJobSnapshot(response.job.id)
-                await refreshStorage(jobID: response.job.id)
+                let response = try await refreshJobSnapshot(jobResponse.job_id)
+                cache(response: response, source: trimmed)
+                await refreshStorage(jobID: jobResponse.job_id)
             } catch {
+                stopAnalysisPhases()
                 viewState = .error(loc(languageCode, "Analysis failed", "Analyse fehlgeschlagen", "Falló el análisis", "Échec de l’analyse"))
             }
         }
@@ -668,14 +853,14 @@ final class AppModel: ObservableObject {
         }
         guard let jobID else { return }
         guard let job = libraryEntries.first(where: { $0.job_id == jobID }) else { return }
-        if ["queued", "running"].contains(job.status) || result?.job.id == jobID {
+        if ["queued", "running"].contains(job.status) {
             _ = try? await refreshJobSnapshot(jobID)
         }
     }
 
     @discardableResult
     private func refreshJobSnapshot(_ jobID: String) async throws -> AnalyzeResponse {
-        let response = try await runJSON(arguments: ["job", jobID, "--json"], as: AnalyzeResponse.self)
+        let response = try await backend.getJSON("/v1/jobs/\(jobID)/snapshot", command: backendCommand, type: AnalyzeResponse.self)
         result = response
         if selectedSegmentID == nil || !response.segments.contains(where: { $0.id == selectedSegmentID }) {
             selectedSegmentID = response.segments.first?.id
@@ -694,8 +879,13 @@ final class AppModel: ObservableObject {
         case "running":
             viewState = .analyzing(response.events?.last?.message ?? loc(languageCode, "Working", "Läuft", "Procesando", "En cours"))
         case "failed":
+            stopAnalysisPhases()
             viewState = .error(response.events?.last?.message ?? loc(languageCode, "Analysis failed", "Analyse fehlgeschlagen", "Falló el análisis", "Échec de l’analyse"))
+        case "canceled":
+            stopAnalysisPhases()
+            viewState = .error(loc(languageCode, "Analysis canceled", "Analyse abgebrochen", "Análisis cancelado", "Analyse annulée"))
         default:
+            stopAnalysisPhases()
             viewState = .showingResults
         }
     }
@@ -725,6 +915,67 @@ final class AppModel: ObservableObject {
               let url = URL(string: urlString) else { return }
         openedPrimaryLinkJobIDs.insert(response.job.id)
         NSWorkspace.shared.open(url)
+    }
+
+    private func currentJobOptions() -> BackendJobOptions {
+        BackendJobOptions(
+            prefer_separation: UserDefaults.standard.object(forKey: "musicFetch.preferSeparation") as? Bool ?? true,
+            analysis_mode: UserDefaults.standard.string(forKey: "musicFetch.analysisMode") ?? "auto",
+            recall_profile: UserDefaults.standard.string(forKey: "musicFetch.recallProfile") ?? "max_recall",
+            enable_metadata_hints: UserDefaults.standard.object(forKey: "musicFetch.metadataHints") as? Bool ?? true,
+            enable_repeat_detection: UserDefaults.standard.object(forKey: "musicFetch.repeatDetection") as? Bool ?? true,
+            max_windows: 24,
+            max_segments: 360,
+            max_probes_per_segment: 3,
+            max_provider_calls: 420
+        )
+    }
+
+    private func requestNotificationAuthorization() async {
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+    }
+
+    private func notifyCompletion(response: AnalyzeResponse) async {
+        guard let summary = Self.topMatchSummary(from: response) else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Music Fetch"
+        content.body = summary
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "music-fetch-\(response.job.id)", content: content, trigger: nil)
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+
+    private static func topMatchSummary(from response: AnalyzeResponse) -> String? {
+        guard let first = response.segments.first(where: { $0.track != nil }), let track = first.track else {
+            return nil
+        }
+        if let artist = track.artist, !artist.isEmpty {
+            return "\(artist) - \(track.title)"
+        }
+        return track.title
+    }
+
+    private func subscribeToJob(_ jobID: String) {
+        eventStreamTask?.cancel()
+        eventStreamTask = Task { [weak self] in
+            guard let self else { return }
+            await self.backend.streamEvents(jobID: jobID, command: self.backendCommand) { payload in
+                if let data = payload.data(using: .utf8), let event = try? JSONDecoder().decode(JobEventPayload.self, from: data) {
+                    if self.result?.job.id == jobID || self.selectedLibraryJobID == jobID || self.selectedStorageJobID == jobID {
+                        self.viewState = .analyzing(event.message)
+                    }
+                }
+                Task {
+                    if let response = try? await self.refreshJobSnapshot(jobID) {
+                        self.cache(response: response, source: response.items.first?.input_value ?? jobID)
+                        self.latestQuickCaptureSummary = Self.topMatchSummary(from: response) ?? self.latestQuickCaptureSummary
+                        if response.job.status == "succeeded" || response.job.status == "partial_failed" {
+                            await self.notifyCompletion(response: response)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func runProcess(arguments: [String]) async throws -> Data {
@@ -939,6 +1190,52 @@ struct ContentView: View {
         .task {
             model.bootstrap()
         }
+    }
+}
+
+struct MenuBarQuickCaptureView: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Music Fetch")
+                .font(.headline)
+            Text(model.statusTitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(model.quickCaptureSummary)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button(model.captureState == .recordingMic || model.captureState == .stoppingMic ? "Stop Mic" : "Start Mic") {
+                    model.toggleMicrophoneRecording()
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(model.captureState == .recordingSystem || model.captureState == .stoppingSystem ? "Stop System" : "Start System") {
+                    model.toggleSystemAudioRecording()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Divider()
+
+            Button("Show Main Window") {
+                openWindow(id: "main")
+                model.showMainWindow()
+            }
+            .buttonStyle(.bordered)
+
+            Button("Quit") {
+                NSApp.terminate(nil)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .frame(width: 280)
     }
 }
 
@@ -1604,13 +1901,18 @@ struct ResultsSectionView: View {
                 let filteredModels = filteredSegments(from: viewModels, showOnlySongs: showOnlySongs && hasSongs)
 
                 ResultsToolbarView(
+                    jobStatus: result.job.status,
                     totalCount: viewModels.count,
                     songCount: viewModels.filter { $0.payload.kind == "matched_track" }.count,
+                    unresolvedCount: viewModels.filter { $0.payload.kind == "music_unresolved" }.count,
                     showOnlySongs: Binding(
                         get: { showOnlySongs && hasSongs },
                         set: { showOnlySongs = $0 }
                     ),
-                    hasSongs: hasSongs
+                    hasSongs: hasSongs,
+                    onRetry: { model.retryUnresolvedSegments() },
+                    onCancel: { model.cancelActiveJob() },
+                    onExport: { format in model.exportCurrentResults(format: format) }
                 )
 
                 ResultsTimelineView(segments: filteredModels, selectedSegmentID: model.selectedSegmentID) { segmentID in
@@ -1623,7 +1925,10 @@ struct ResultsSectionView: View {
                         get: { model.selectedSegmentID },
                         set: { if let value = $0 { model.selectSegment(value) } }
                     ),
-                    onCopy: { text in model.copy(text) }
+                    onCopy: { text in model.copy(text) },
+                    onCorrect: { segment, title, artist, album in
+                        model.correctSegment(segment, title: title, artist: artist, album: album)
+                    }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .onAppear {
@@ -1663,10 +1968,15 @@ struct ResultsSectionView: View {
 }
 
 struct ResultsToolbarView: View {
+    let jobStatus: String
     let totalCount: Int
     let songCount: Int
+    let unresolvedCount: Int
     @Binding var showOnlySongs: Bool
     let hasSongs: Bool
+    let onRetry: () -> Void
+    let onCancel: () -> Void
+    let onExport: (String) -> Void
     @AppStorage(languageDefaultsKey) private var languageCode = defaultUILanguageCode()
 
     var body: some View {
@@ -1681,6 +1991,28 @@ struct ResultsToolbarView: View {
             }
 
             Spacer()
+
+            if unresolvedCount > 0 {
+                Button(loc(languageCode, "Retry unresolved", "Unklare erneut prüfen", "Reintentar sin resolver", "Réessayer les non résolus")) {
+                    onRetry()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Menu(loc(languageCode, "Export", "Export", "Exportar", "Exporter")) {
+                Button("JSON") { onExport("json") }
+                Button("CSV") { onExport("csv") }
+                Button(loc(languageCode, "Chapters", "Kapitel", "Capítulos", "Chapitres")) { onExport("chapters") }
+            }
+            .menuStyle(.borderlessButton)
+
+            if jobStatus == "queued" || jobStatus == "running" {
+                Button(loc(languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler")) {
+                    onCancel()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+            }
 
             if hasSongs && showOnlySongs {
                 Text("\(songCount) \(loc(languageCode, "songs", "Songs", "canciones", "titres"))")
@@ -1787,6 +2119,7 @@ struct CompactResultsView: View {
     let segments: [SegmentViewModel]
     @Binding var selectedSegmentID: String?
     let onCopy: (String) -> Void
+    let onCorrect: (SegmentPayload, String, String?, String?) -> Void
 
     var body: some View {
         HSplitView {
@@ -1795,7 +2128,8 @@ struct CompactResultsView: View {
 
             SegmentInspectorPane(
                 viewModel: segments.first(where: { $0.id == selectedSegmentID }) ?? segments.first,
-                onCopy: onCopy
+                onCopy: onCopy,
+                onCorrect: onCorrect
             )
             .frame(minWidth: 360, maxWidth: .infinity)
         }
@@ -1882,7 +2216,12 @@ struct SegmentListPane: View {
 struct SegmentInspectorPane: View {
     let viewModel: SegmentViewModel?
     let onCopy: (String) -> Void
+    let onCorrect: (SegmentPayload, String, String?, String?) -> Void
     @AppStorage(languageDefaultsKey) private var languageCode = defaultUILanguageCode()
+    @State private var correctionTitle = ""
+    @State private var correctionArtist = ""
+    @State private var correctionAlbum = ""
+    @State private var showCorrectionSheet = false
 
     var body: some View {
         Group {
@@ -1922,6 +2261,9 @@ struct SegmentInspectorPane: View {
                         if let quality = viewModel.qualityLabel {
                             InfoPill(systemImage: "checkmark.seal", text: quality)
                         }
+                        if let uncertainty = viewModel.payload.uncertainty {
+                            InfoPill(systemImage: "gauge.with.dots.needle.33percent", text: "U \(String(format: "%.2f", uncertainty))")
+                        }
                     }
 
                     if let hint = viewModel.metadataHint, !hint.isEmpty {
@@ -1940,6 +2282,14 @@ struct SegmentInspectorPane: View {
                             HStack(spacing: 10) {
                                 Button(loc(languageCode, "Copy", "Kopieren", "Copiar", "Copier")) {
                                     onCopy(viewModel.title)
+                                }
+                                .buttonStyle(.bordered)
+
+                                Button(loc(languageCode, "Correct", "Korrigieren", "Corregir", "Corriger")) {
+                                    correctionTitle = viewModel.payload.track?.title ?? ""
+                                    correctionArtist = viewModel.payload.track?.artist ?? ""
+                                    correctionAlbum = viewModel.payload.track?.album ?? ""
+                                    showCorrectionSheet = true
                                 }
                                 .buttonStyle(.bordered)
 
@@ -1968,10 +2318,32 @@ struct SegmentInspectorPane: View {
                             }
                         }
                     } else {
-                        Button(loc(languageCode, "Copy", "Kopieren", "Copiar", "Copier")) {
-                            onCopy(viewModel.title)
+                        HStack(spacing: 10) {
+                            Button(loc(languageCode, "Copy", "Kopieren", "Copiar", "Copier")) {
+                                onCopy(viewModel.title)
+                            }
+                            .buttonStyle(.bordered)
+                            Button(loc(languageCode, "Correct", "Korrigieren", "Corregir", "Corriger")) {
+                                correctionTitle = viewModel.payload.track?.title ?? ""
+                                correctionArtist = viewModel.payload.track?.artist ?? ""
+                                correctionAlbum = viewModel.payload.track?.album ?? ""
+                                showCorrectionSheet = true
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
+                    }
+
+                    if let explanation = viewModel.payload.explanation, !explanation.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(loc(languageCode, "Why this result", "Warum dieses Ergebnis", "Por qué este resultado", "Pourquoi ce résultat"))
+                                .font(.headline)
+                            ForEach(explanation, id: \.self) { line in
+                                Text(line)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
 
                     if !viewModel.payload.alternates.isEmpty {
@@ -1989,6 +2361,37 @@ struct SegmentInspectorPane: View {
                     Spacer(minLength: 0)
                 }
                 .padding(24)
+                .sheet(isPresented: $showCorrectionSheet) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(loc(languageCode, "Manual correction", "Manuelle Korrektur", "Corrección manual", "Correction manuelle"))
+                            .font(.title3.weight(.semibold))
+                        TextField(loc(languageCode, "Title", "Titel", "Título", "Titre"), text: $correctionTitle)
+                            .textFieldStyle(.roundedBorder)
+                        TextField(loc(languageCode, "Artist", "Artist", "Artista", "Artiste"), text: $correctionArtist)
+                            .textFieldStyle(.roundedBorder)
+                        TextField(loc(languageCode, "Album", "Album", "Álbum", "Album"), text: $correctionAlbum)
+                            .textFieldStyle(.roundedBorder)
+                        HStack {
+                            Spacer()
+                            Button(loc(languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler")) {
+                                showCorrectionSheet = false
+                            }
+                            Button(loc(languageCode, "Save", "Speichern", "Guardar", "Enregistrer")) {
+                                onCorrect(
+                                    viewModel.payload,
+                                    correctionTitle,
+                                    correctionArtist.isEmpty ? nil : correctionArtist,
+                                    correctionAlbum.isEmpty ? nil : correctionAlbum
+                                )
+                                showCorrectionSheet = false
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(correctionTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                    .padding(24)
+                    .frame(width: 360)
+                }
             } else {
                 ContentUnavailableView(
                     loc(languageCode, "No segment", "Kein Abschnitt gewählt", "Sin segmento", "Aucun segment"),
@@ -2123,10 +2526,25 @@ struct SegmentCardView: View {
     }
 }
 
+enum LaunchAtLoginController {
+    static func setEnabled(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            return
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @AppStorage(openExternalLinksDefaultsKey) private var openExternalLinks = false
     @AppStorage(languageDefaultsKey) private var languageCode = UILanguage.en.rawValue
+    @AppStorage(launchAtLoginDefaultsKey) private var launchAtLogin = false
     @AppStorage("musicFetch.casualMode") private var casualMode = true
     @AppStorage("musicFetch.analysisMode") private var analysisMode = "auto"
     @AppStorage("musicFetch.recallProfile") private var recallProfile = "max_recall"
@@ -2159,6 +2577,7 @@ struct SettingsView: View {
                 }
                 Toggle("Simple UI", isOn: $casualMode)
                 Toggle("Open links", isOn: $openExternalLinks)
+                Toggle("Launch at Login", isOn: $launchAtLogin)
             }
             .padding(20)
             .tabItem { Label("General", systemImage: "gearshape") }
@@ -2237,15 +2656,25 @@ struct SettingsView: View {
                 model.refreshDoctor()
             }
         }
+        .onChange(of: launchAtLogin) { _, value in
+            LaunchAtLoginController.setEnabled(value)
+        }
+    }
+}
+
+final class MusicFetchAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 }
 
 @main
 struct MusicFetchMacApp: App {
+    @NSApplicationDelegateAdaptor(MusicFetchAppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             ContentView(model: model)
         }
         .defaultSize(width: 1440, height: 920)
@@ -2262,6 +2691,11 @@ struct MusicFetchMacApp: App {
                 .keyboardShortcut("l", modifiers: [.command])
             }
         }
+
+        MenuBarExtra("Music Fetch", systemImage: "music.note.magnifyingglass") {
+            MenuBarQuickCaptureView(model: model)
+        }
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView(model: model)

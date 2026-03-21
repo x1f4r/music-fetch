@@ -37,6 +37,10 @@ def _build_segment(source_item_id: str, cluster: list[TrackCandidate]) -> Detect
     providers = sorted({item.provider for item in cluster}, key=lambda value: value.value)
     alternates = _alternate_tracks(cluster)
     confidence = min(1.0, sum(item.confidence for item in cluster) / max(1, len(cluster)) + 0.05 * (len(providers) - 1))
+    explanation = [
+        f"Merged {len(cluster)} candidate hit(s) into one segment.",
+        f"Provider agreement: {', '.join(provider.value for provider in providers)}.",
+    ]
     return DetectedSegment(
         source_item_id=source_item_id,
         start_ms=min(item.start_ms for item in cluster),
@@ -49,6 +53,8 @@ def _build_segment(source_item_id: str, cluster: list[TrackCandidate]) -> Detect
         alternates=alternates,
         probe_count=len(cluster),
         provider_attempts=len(cluster),
+        uncertainty=max(0.0, 1.0 - confidence),
+        explanation=explanation,
     )
 
 
