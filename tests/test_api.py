@@ -129,7 +129,7 @@ def test_upload_endpoint_sanitizes_filename_and_accepts_options(tmp_path) -> Non
     )
 
     assert response.status_code == 200
-    assert response.json()["job_id"] == "job-1"
+    assert response.json() == {"job_id": "job-1", "status": "queued"}
     submitted = manager.submitted[0]
     assert submitted.options.analysis_mode.value == "single_track"
     assert submitted.options.prefer_separation is False

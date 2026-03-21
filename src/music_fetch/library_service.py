@@ -20,9 +20,10 @@ class LibraryQueryService:
             items = self.db.get_source_items(job.id)
             segments = self.db.get_segments(job.id)
             primary_item = items[0] if items else None
+            metadata = primary_item.metadata if primary_item else None
             title = (
-                primary_item.metadata.title
-                or primary_item.metadata.playlist_title
+                (metadata.title if metadata else None)
+                or (metadata.playlist_title if metadata else None)
                 or (Path(primary_item.input_value).name if primary_item else None)
                 or (job.inputs[0] if job.inputs else job.id)
             )

@@ -335,12 +335,23 @@ final class AppModel: ObservableObject {
     private var pollingTask: Task<Void, Never>?
     private var cachedResults: [String: AnalyzeResponse] = [:]
     private var openedPrimaryLinkJobIDs: Set<String> = []
+    private var terminationObserver: NSObjectProtocol?
 
     init() {
         let savedBackend = UserDefaults.standard.string(forKey: backendCommandDefaultsKey)
         self.backendCommand = savedBackend?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? savedBackend! : Self.defaultBackendCommand()
         self.recentAnalyses = Self.loadRecentAnalyses()
         self.languageCode = UserDefaults.standard.string(forKey: languageDefaultsKey) ?? defaultUILanguageCode()
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task {
+                await self.backend.stop()
+            }
+        }
     }
 
     var isBusy: Bool {
@@ -428,9 +439,21 @@ final class AppModel: ObservableObject {
 
     func bootstrap() {
         Task {
-            _ = try? await backend.ensureServer(command: backendCommand)
+            var startupFailed = false
+            do {
+                _ = try await backend.ensureServer(command: backendCommand)
+            } catch {
+                startupFailed = true
+                viewState = .error(error.localizedDescription)
+            }
             await refreshLibrary()
             await refreshStorage()
+            if startupFailed,
+               case let .error(message) = viewState,
+               Self.isRecoverableBackendStartupError(message)
+            {
+                viewState = result == nil ? .idle : .showingResults
+            }
             await requestNotificationAuthorization()
         }
         startPolling()
@@ -739,9 +762,10 @@ final class AppModel: ObservableObject {
             viewState = .idle
             return
         }
-        inputValue = url.path
+        let stagedURL = stageCapturedFile(url, prefix: "mic")
+        inputValue = stagedURL.path
         captureState = .idle
-        submitInput(url.path, switchToAnalyze: true)
+        submitInput(stagedURL.path, switchToAnalyze: true)
     }
 
     private func stopSystemAudioRecording() {
@@ -751,8 +775,9 @@ final class AppModel: ObservableObject {
                 let url = try await systemAudioRecorder.stop()
                 captureState = .idle
                 if let url {
-                    inputValue = url.path
-                    submitInput(url.path, switchToAnalyze: true)
+                    let stagedURL = stageCapturedFile(url, prefix: "system")
+                    inputValue = stagedURL.path
+                    submitInput(stagedURL.path, switchToAnalyze: true)
                 } else {
                     viewState = .idle
                 }
@@ -792,7 +817,7 @@ final class AppModel: ObservableObject {
                 await refreshStorage(jobID: jobResponse.job_id)
             } catch {
                 stopAnalysisPhases()
-                viewState = .error(loc(languageCode, "Analysis failed", "Analyse fehlgeschlagen", "Falló el análisis", "Échec de l’analyse"))
+                viewState = .error(error.localizedDescription)
             }
         }
     }
@@ -931,6 +956,27 @@ final class AppModel: ObservableObject {
         )
     }
 
+    private func stageCapturedFile(_ sourceURL: URL, prefix: String) -> URL {
+        let cachesRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let directory = cachesRoot
+            .appendingPathComponent("Music Fetch", isDirectory: true)
+            .appendingPathComponent("Recordings", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory
+            .appendingPathComponent("music-fetch-\(prefix)-\(UUID().uuidString)")
+            .appendingPathExtension(sourceURL.pathExtension.isEmpty ? "m4a" : sourceURL.pathExtension)
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+            return destination
+        } catch {
+            return sourceURL
+        }
+    }
+
     private func requestNotificationAuthorization() async {
         _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
     }
@@ -953,6 +999,16 @@ final class AppModel: ObservableObject {
             return "\(artist) - \(track.title)"
         }
         return track.title
+    }
+
+    private static func isRecoverableBackendStartupError(_ message: String) -> Bool {
+        let knownFragments = [
+            "Backend server did not start in time",
+            "Could not launch backend command",
+            "NSURLErrorDomain Code=-1004",
+            "could not be completed. (NSURLErrorDomain error -1004)",
+        ]
+        return knownFragments.contains { message.localizedCaseInsensitiveContains($0) }
     }
 
     private func subscribeToJob(_ jobID: String) {
@@ -993,8 +1049,8 @@ final class AppModel: ObservableObject {
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
                 process.arguments = [command] + arguments
             }
-            process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            var environment = ProcessInfo.processInfo.environment
+            process.currentDirectoryURL = BackendController.defaultWorkingDirectory()
+            var environment = BackendController.baseEnvironment()
             let backendDir: String? = {
                 let command = backendCommand.trimmingCharacters(in: .whitespacesAndNewlines)
                 if command.contains("/") || command.hasPrefix("~") {
@@ -2692,8 +2748,11 @@ struct MusicFetchMacApp: App {
             }
         }
 
-        MenuBarExtra("Music Fetch", systemImage: "music.note.magnifyingglass") {
+        MenuBarExtra {
             MenuBarQuickCaptureView(model: model)
+        } label: {
+            Image(systemName: "music.note.magnifyingglass")
+                .accessibilityLabel("Music Fetch")
         }
         .menuBarExtraStyle(.window)
 

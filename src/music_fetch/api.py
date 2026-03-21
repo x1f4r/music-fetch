@@ -71,7 +71,7 @@ def _safe_upload_name(filename: str | None) -> str:
 
 
 def create_api(context: AppContext) -> FastAPI:
-    app = FastAPI(title="Music Fetch", version="0.3.1")
+    app = FastAPI(title="Music Fetch", version="0.3.2")
 
     def require_auth(authorization: str | None = Header(default=None)) -> None:
         token = context.settings.api_token
@@ -236,7 +236,7 @@ def create_api(context: AppContext) -> FastAPI:
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=f"Invalid options_json: {exc}") from exc
         job = context.manager.submit(JobCreate(inputs=[str(target)], options=options))
-        return {"job_id": job.id}
+        return {"job_id": job.id, "status": job.status}
 
     @app.get("/v1/providers")
     async def list_providers(_: None = Depends(require_auth)) -> dict:

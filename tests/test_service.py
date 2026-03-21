@@ -510,6 +510,58 @@ def test_cancel_request_marks_job_canceled(app_env, tmp_path: Path) -> None:
     assert stored.status == JobStatus.CANCELED
 
 
+def test_short_system_recording_uses_single_track_path(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "music-fetch-system-demo.wav", seconds=30)
+    job = db.create_job([str(source)], JobOptions())
+    item = SourceItem(
+        id="item-recording",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.QUEUED,
+        metadata=SourceMetadata(title="System Recording", duration_ms=30_000),
+    )
+
+    observed: dict[str, str] = {}
+    monkeypatch.setattr("music_fetch.service.normalize_media", lambda input_path, output_path: input_path)
+    def fake_select_windows(self, job, item, normalized, instrumental, profile):
+        observed["strategy"] = profile.strategy
+        return [WindowPlan(start_ms=0, end_ms=12_000, score=1.0, source_path=str(normalized), label="mix")]
+
+    monkeypatch.setattr(JobManager, "_select_windows", fake_select_windows)
+    monkeypatch.setattr(
+        "music_fetch.service.create_excerpt",
+        lambda source_path, start_ms, end_ms, output_path: (
+            output_path.parent.mkdir(parents=True, exist_ok=True),
+            output_path.write_bytes(source_path.read_bytes()),
+            output_path,
+        )[2],
+    )
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: "recording-cache-key")
+    monkeypatch.setattr(JobManager, "_providers", lambda self: [FakeProvider()])
+    monkeypatch.setattr(JobManager, "_process_long_mix_item", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not use segmented path")))
+
+    manager._process_item(job, item)
+
+    assert observed["strategy"] == "single_track"
+    segments = db.get_segments(job.id)
+    assert segments[0].track is not None
+
+
+def test_library_entries_include_failed_jobs_without_source_items(app_env) -> None:
+    settings, db, manager = app_env
+    job = db.create_job([], JobOptions())
+    db.update_job(job.id, status=JobStatus.FAILED, error="broken")
+
+    entries = manager.list_library_entries(limit=20)
+
+    failed = next(entry for entry in entries if entry.job_id == job.id)
+    assert failed.status == JobStatus.FAILED
+    assert failed.title == job.id
+    assert failed.item_count == 0
+
+
 def test_manual_correction_updates_segment_track_and_explanation(app_env) -> None:
     settings, db, manager = app_env
     job = db.create_job(["demo"], JobOptions())
@@ -604,6 +656,63 @@ def test_retry_unresolved_segment_can_promote_match(monkeypatch, app_env, tmp_pa
     assert stored.track is not None
     assert stored.track.title == "ACIDO III (Super Slowed)"
     assert stored.explanation[0] == "Recovered by retrying an unresolved region."
+
+
+def test_retry_uses_input_path_for_local_files_without_local_path(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "kept-local.wav", seconds=20)
+    job = db.create_job([str(source)], JobOptions())
+    item = SourceItem(
+        id="item-local",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.SUCCEEDED,
+        metadata=SourceMetadata(title="Local", duration_ms=20_000),
+        local_path=None,
+        normalized_path=None,
+    )
+    db.add_source_items([item])
+    db.replace_segments(
+        job.id,
+        item.id,
+        [
+            DetectedSegment(
+                source_item_id=item.id,
+                start_ms=0,
+                end_ms=12_000,
+                kind=SegmentKind.MUSIC_UNRESOLVED,
+                confidence=0.0,
+                providers=[],
+                evidence_count=0,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "music_fetch.service.normalize_media",
+        lambda input_path, output_path: (
+            output_path.parent.mkdir(parents=True, exist_ok=True),
+            output_path.write_bytes(input_path.read_bytes()),
+            output_path,
+        )[2],
+    )
+    monkeypatch.setattr(
+        "music_fetch.service.create_excerpt",
+        lambda source_path, start_ms, end_ms, output_path: (
+            output_path.parent.mkdir(parents=True, exist_ok=True),
+            output_path.write_bytes(source_path.read_bytes()),
+            output_path,
+        )[2],
+    )
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"retry-local:{clip_path}")
+    monkeypatch.setattr(manager.provider_registry, "active_providers_for_order", lambda order=None: [FakeProvider()])
+
+    result = manager.retry_unresolved_segments(job.id)
+
+    assert result["matched_segments"] == 1
+    stored = db.get_segments(job.id)[0]
+    assert stored.kind == SegmentKind.MATCHED_TRACK
+    assert stored.track is not None
 
 
 def test_export_job_supports_csv_and_chapters(app_env) -> None:

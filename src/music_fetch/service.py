@@ -52,6 +52,7 @@ from .models import (
     ProviderState,
     SegmentKind,
     SourceItem,
+    SourceKind,
     StorageSummary,
     TrackCandidate,
     TrackMatch,
@@ -258,7 +259,13 @@ class JobManager:
             self.db.update_source_item(item)
             return
         try:
-            local_media = ensure_local_media(self.settings, item)
+            if item.kind == SourceKind.LOCAL_FILE and not item.local_path:
+                candidate = Path(item.input_value).expanduser().resolve()
+                if not candidate.exists():
+                    raise MediaToolError(f"Input file does not exist: {candidate}")
+                local_media = candidate
+            else:
+                local_media = ensure_local_media(self.settings, item)
         except MediaToolError:
             if self._has_metadata_only_track(item):
                 self.db.add_event(job.id, "warning", f"Media unavailable, falling back to metadata for {item.metadata.title or item.input_value}")
@@ -280,6 +287,14 @@ class JobManager:
             has_playlist_context=item.metadata.playlist_id is not None,
             metadata=item.metadata,
         )
+        if (
+            job.options.analysis_mode is AnalysisMode.AUTO
+            and self._is_recording_source(item)
+            and (item.metadata.duration_ms or 0) <= 90_000
+        ):
+            # Quick mic/system captures are usually "what song is playing right now?"
+            # For these, the segmented multi-track path is too conservative.
+            profile.strategy = "single_track"
         if job.options.analysis_mode is AnalysisMode.LONG_MIX:
             profile.strategy = "long_mix"
         elif job.options.analysis_mode is AnalysisMode.SINGLE_TRACK:
@@ -942,7 +957,14 @@ class JobManager:
         return grouped
 
     def _ensure_retry_media(self, job: Job, item: SourceItem, options: JobOptions) -> tuple[Path, Path]:
-        local_media = Path(item.local_path).expanduser() if item.local_path else ensure_local_media(self.settings, item)
+        if item.local_path:
+            local_media = Path(item.local_path).expanduser()
+        elif item.kind == SourceKind.LOCAL_FILE:
+            local_media = Path(item.input_value).expanduser().resolve()
+            if not local_media.exists():
+                raise MediaToolError(f"Local file no longer exists: {item.input_value}")
+        else:
+            local_media = ensure_local_media(self.settings, item)
         item.local_path = str(local_media)
         normalized = Path(item.normalized_path).expanduser() if item.normalized_path and Path(item.normalized_path).exists() else None
         if normalized is None:
@@ -1251,6 +1273,14 @@ class JobManager:
 
     def _is_recording_path(self, path: Path) -> bool:
         return path.name.startswith("music-fetch-mic-") or path.name.startswith("music-fetch-system-")
+
+    def _is_recording_source(self, item: SourceItem) -> bool:
+        for raw_path in [item.input_value, item.local_path]:
+            if not raw_path:
+                continue
+            if self._is_recording_path(Path(raw_path).expanduser()):
+                return True
+        return False
 
     def _is_upload_path(self, path: Path) -> bool:
         return self._is_path_in_dir(path, self.settings.cache_dir / "uploads")

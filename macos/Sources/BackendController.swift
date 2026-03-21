@@ -27,6 +27,8 @@ struct BackendHealthResponse: Codable {
 }
 
 actor BackendController {
+    private static let startupAttempts = 150
+    private static let startupPollInterval = Duration.milliseconds(200)
     private var process: Process?
     private var baseURL: URL?
     private var token = UUID().uuidString
@@ -36,6 +38,9 @@ actor BackendController {
         if let baseURL, await healthCheck(baseURL: baseURL) {
             return baseURL
         }
+        if process != nil || baseURL != nil {
+            stopCurrentProcess()
+        }
 
         let port = Int.random(in: 18000 ... 26000)
         let baseURL = URL(string: "http://127.0.0.1:\(port)")!
@@ -44,17 +49,11 @@ actor BackendController {
         guard !trimmed.isEmpty else {
             throw NSError(domain: "MusicFetchMac", code: 1, userInfo: [NSLocalizedDescriptionKey: "Backend command is empty"])
         }
+        let resolved = try resolveBackendCommand(trimmed)
+        process.executableURL = resolved.executableURL
+        process.arguments = resolved.arguments + ["serve", "--host", "127.0.0.1", "--port", "\(port)"]
 
-        if trimmed.contains("/") || trimmed.hasPrefix("~") {
-            let expanded = NSString(string: trimmed).expandingTildeInPath
-            process.executableURL = URL(fileURLWithPath: expanded)
-            process.arguments = ["serve", "--host", "127.0.0.1", "--port", "\(port)"]
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [trimmed, "serve", "--host", "127.0.0.1", "--port", "\(port)"]
-        }
-
-        var environment = ProcessInfo.processInfo.environment
+        var environment = Self.baseEnvironment()
         environment["MUSIC_FETCH_API_TOKEN"] = token
         let commandDir: String? = {
             if trimmed.contains("/") || trimmed.hasPrefix("~") {
@@ -73,20 +72,47 @@ actor BackendController {
         ].compactMap { $0 }.filter { !$0.isEmpty }
         environment["PATH"] = pathParts.joined(separator: ":")
         process.environment = environment
-        process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try process.run()
+        process.currentDirectoryURL = Self.defaultWorkingDirectory()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        do {
+            try process.run()
+        } catch {
+            throw NSError(
+                domain: "MusicFetchMac",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Could not launch backend command '\(trimmed)'. Open Settings and set the backend path explicitly."
+                ]
+            )
+        }
 
         self.process = process
         self.baseURL = baseURL
-        for _ in 0 ..< 30 {
+        process.terminationHandler = { [weak self] _ in
+            Task {
+                await self?.clearDeadProcess()
+            }
+        }
+        for _ in 0 ..< Self.startupAttempts {
             if await healthCheck(baseURL: baseURL) {
                 return baseURL
             }
-            try? await Task.sleep(for: .milliseconds(200))
+            if !process.isRunning {
+                break
+            }
+            try? await Task.sleep(for: Self.startupPollInterval)
         }
-        throw NSError(domain: "MusicFetchMac", code: 2, userInfo: [NSLocalizedDescriptionKey: "Backend server did not start in time"])
+        let stderrMessage = Self.readPipe(stderr)
+        let stdoutMessage = Self.readPipe(stdout)
+        stopCurrentProcess()
+        let detail = stderrMessage.isEmpty ? stdoutMessage : stderrMessage
+        let message = detail.isEmpty
+            ? "Backend server did not start in time"
+            : "Backend server did not start in time: \(detail)"
+        throw NSError(domain: "MusicFetchMac", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     func getJSON<T: Decodable>(_ path: String, command: String, queryItems: [URLQueryItem] = [], type: T.Type) async throws -> T {
@@ -179,9 +205,7 @@ actor BackendController {
     }
 
     func stop() {
-        process?.terminate()
-        process = nil
-        baseURL = nil
+        stopCurrentProcess()
     }
 
     private func healthCheck(baseURL: URL) async -> Bool {
@@ -205,5 +229,84 @@ actor BackendController {
             let message = String(data: data, encoding: .utf8) ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw NSError(domain: "MusicFetchMac", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
+    }
+
+    private static func readPipe(_ pipe: Pipe) -> String {
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let value = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty else {
+            return ""
+        }
+        return value
+    }
+
+    static func defaultWorkingDirectory() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        let directory = base.appendingPathComponent("Music Fetch", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func resolveBackendCommand(_ command: String) throws -> (executableURL: URL, arguments: [String]) {
+        if command.contains("/") || command.hasPrefix("~") {
+            let expanded = NSString(string: command).expandingTildeInPath
+            return (URL(fileURLWithPath: expanded), [])
+        }
+        if let located = loginShellLookup(command), located.hasPrefix("/") {
+            return (URL(fileURLWithPath: located), [])
+        }
+        return (URL(fileURLWithPath: "/usr/bin/env"), [command])
+    }
+
+    private func loginShellLookup(_ command: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", "command -v \(command) 2>/dev/null || true"]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            let value = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value?.isEmpty == false ? value : nil
+        } catch {
+            return nil
+        }
+    }
+
+    static func baseEnvironment() -> [String: String] {
+        var environment: [String: String] = [:]
+        let processInfo = ProcessInfo.processInfo.environment
+        let home = processInfo["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        environment["HOME"] = home
+        environment["PATH"] = processInfo["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        if let lang = processInfo["LANG"], !lang.isEmpty {
+            environment["LANG"] = lang
+        }
+        if let lcAll = processInfo["LC_ALL"], !lcAll.isEmpty {
+            environment["LC_ALL"] = lcAll
+        }
+        if let tmpdir = processInfo["TMPDIR"], !tmpdir.isEmpty {
+            environment["TMPDIR"] = tmpdir
+        }
+        return environment
+    }
+
+    private func clearDeadProcess() {
+        process = nil
+        baseURL = nil
+    }
+
+    private func stopCurrentProcess() {
+        process?.terminationHandler = nil
+        if let process, process.isRunning {
+            process.terminate()
+        }
+        process = nil
+        baseURL = nil
     }
 }
