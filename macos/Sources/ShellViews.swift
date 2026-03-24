@@ -7,7 +7,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             StudioControlRail(model: model)
-                .navigationSplitViewColumnWidth(min: 270, ideal: 300, max: 340)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 264)
         } detail: {
             StudioWorkspaceSurface(model: model)
         }
@@ -57,48 +57,49 @@ struct StudioControlRail: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            StudioPanel(padding: 18) {
-                VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            StudioPanel(padding: 16) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text("Music Fetch")
-                        .font(.system(size: 27, weight: .black, design: .rounded))
+                        .font(.system(size: 24, weight: .black, design: .rounded))
                         .foregroundStyle(.white)
                     Text(loc(model.languageCode, "Studio console for local-first music recognition.", "Studio-Konsole fuer lokale Musikerkennung.", "Consola de estudio para reconocimiento musical local.", "Console studio pour reconnaissance musicale locale."))
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.white.opacity(0.72))
                     HStack(spacing: 8) {
                         Image(systemName: "dot.radiowaves.left.and.right")
                         Text(model.statusTitle)
                             .lineLimit(1)
                     }
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 7)
                     .background(Color.white.opacity(0.08), in: Capsule())
                     .foregroundStyle(.white)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(WorkspaceSection.allCases) { section in
                     Button {
                         model.activateWorkspace(section)
                     } label: {
-                        HStack(spacing: 12) {
+                        HStack(spacing: 10) {
                             Image(systemName: section.icon)
-                                .frame(width: 18)
+                                .frame(width: 16)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(section.title(model.languageCode))
-                                    .font(.headline)
-                                Text(section.subtitle(model.languageCode))
                                     .font(.caption)
+                                    .fontWeight(.semibold)
+                                Text(section.subtitle(model.languageCode))
+                                    .font(.caption2)
                                     .lineLimit(1)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
                     }
                     .buttonStyle(StudioNavigationButtonStyle(isSelected: model.selectedWorkspace == section))
                 }
@@ -107,16 +108,7 @@ struct StudioControlRail: View {
             Group {
                 switch model.selectedWorkspace {
                 case .analyze:
-                    StudioPanel {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(loc(model.languageCode, "Quick Notes", "Kurznotizen", "Notas rapidas", "Notes rapides"))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Text(loc(model.languageCode, "Use the command deck to switch between link, file, mic, and system capture without leaving the main workspace.", "Nutze das Command Deck, um zwischen Link, Datei, Mikro und Systemaufnahme zu wechseln, ohne den Workspace zu verlassen.", "Usa el panel superior para cambiar entre enlace, archivo, micro y sistema sin salir del espacio principal.", "Utilisez le panneau de commande pour changer entre lien, fichier, micro et systeme sans quitter l'espace principal."))
-                                .font(.subheadline)
-                                .foregroundStyle(.primary)
-                        }
-                    }
+                    EmptyView()
                 case .library:
                     ContextLibraryRail(model: model)
                 case .storage:
@@ -150,7 +142,7 @@ struct StudioControlRail: View {
                 .buttonStyle(.bordered)
             }
         }
-        .padding(18)
+        .padding(14)
         .background(
             LinearGradient(
                 colors: [
@@ -278,7 +270,7 @@ struct StudioWorkspaceSurface: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 14) {
                 CommandDeckHeader(model: model)
 
                 switch model.selectedWorkspace {
@@ -290,7 +282,7 @@ struct StudioWorkspaceSurface: View {
                     StorageWorkspaceView(model: model)
                 }
             }
-            .padding(20)
+            .padding(14)
         }
     }
 }
@@ -300,84 +292,85 @@ struct CommandDeckHeader: View {
     @AppStorage(recordingTargetDefaultsKey) private var recordingTargetRaw = RecordingTarget.microphone.rawValue
 
     var body: some View {
-        StudioPanel {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .top) {
+        StudioPanel(padding: 14) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(model.selectedWorkspace.title(model.languageCode))
-                            .font(.system(size: 32, weight: .black, design: .rounded))
+                            .font(.system(size: 24, weight: .black, design: .rounded))
                         Text(model.selectedWorkspace.subtitle(model.languageCode))
-                            .font(.subheadline)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     Spacer()
                     StatusPill(viewState: model.viewState, captureState: model.captureState, languageCode: model.languageCode)
                 }
 
-                HStack(spacing: 10) {
-                    Button {
-                        NotificationCenter.default.post(name: .musicFetchFocusInput, object: nil)
-                    } label: {
-                        Label(loc(model.languageCode, "Focus Input", "Eingabe fokussieren", "Enfocar entrada", "Focaliser l'entree"), systemImage: "cursorarrow.rays")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        model.chooseFile()
-                    } label: {
-                        Label(loc(model.languageCode, "Choose File", "Datei waehlen", "Elegir archivo", "Choisir un fichier"), systemImage: "doc.badge.plus")
-                    }
-                    .buttonStyle(.bordered)
-
-                    if recordingTarget == .microphone {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
                         Button {
-                            recordingTargetRaw = RecordingTarget.microphone.rawValue
-                            model.toggleMicrophoneRecording()
+                            NotificationCenter.default.post(name: .musicFetchFocusInput, object: nil)
                         } label: {
-                            Label(microphoneLabel, systemImage: "mic.fill")
+                            Label(loc(model.languageCode, "Focus", "Fokus", "Enfocar", "Focus"), systemImage: "cursorarrow.rays")
                         }
-                        .buttonStyle(.borderedProminent)
-                    } else {
+                        .buttonStyle(.bordered)
+
                         Button {
-                            recordingTargetRaw = RecordingTarget.microphone.rawValue
-                            model.toggleMicrophoneRecording()
+                            model.chooseFile()
                         } label: {
-                            Label(microphoneLabel, systemImage: "mic.fill")
+                            Label(loc(model.languageCode, "File", "Datei", "Archivo", "Fichier"), systemImage: "doc.badge.plus")
+                        }
+                        .buttonStyle(.bordered)
+
+                        if recordingTarget == .microphone {
+                            Button {
+                                recordingTargetRaw = RecordingTarget.microphone.rawValue
+                                model.toggleMicrophoneRecording()
+                            } label: {
+                                Label(microphoneLabel, systemImage: "mic.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Button {
+                                recordingTargetRaw = RecordingTarget.microphone.rawValue
+                                model.toggleMicrophoneRecording()
+                            } label: {
+                                Label(microphoneLabel, systemImage: "mic.fill")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if recordingTarget == .system {
+                            Button {
+                                recordingTargetRaw = RecordingTarget.system.rawValue
+                                model.toggleSystemAudioRecording()
+                            } label: {
+                                Label(systemLabel, systemImage: "waveform")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Button {
+                                recordingTargetRaw = RecordingTarget.system.rawValue
+                                model.toggleSystemAudioRecording()
+                            } label: {
+                                Label(systemLabel, systemImage: "waveform")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        Button {
+                            model.refreshCurrentWorkspace()
+                        } label: {
+                            Label(loc(model.languageCode, "Refresh", "Aktualisieren", "Actualizar", "Actualiser"), systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+
+                        SettingsLink {
+                            Label(loc(model.languageCode, "Settings", "Einstellungen", "Ajustes", "Reglages"), systemImage: "gearshape")
                         }
                         .buttonStyle(.bordered)
                     }
-
-                    if recordingTarget == .system {
-                        Button {
-                            recordingTargetRaw = RecordingTarget.system.rawValue
-                            model.toggleSystemAudioRecording()
-                        } label: {
-                            Label(systemLabel, systemImage: "waveform")
-                        }
-                        .buttonStyle(.borderedProminent)
-                    } else {
-                        Button {
-                            recordingTargetRaw = RecordingTarget.system.rawValue
-                            model.toggleSystemAudioRecording()
-                        } label: {
-                            Label(systemLabel, systemImage: "waveform")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    Button {
-                        model.refreshCurrentWorkspace()
-                    } label: {
-                        Label(loc(model.languageCode, "Refresh", "Aktualisieren", "Actualizar", "Actualiser"), systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered)
-
-                    SettingsLink {
-                        Label(loc(model.languageCode, "Settings", "Einstellungen", "Ajustes", "Reglages"), systemImage: "gearshape")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Spacer()
                 }
             }
         }
@@ -413,9 +406,9 @@ struct StatusPill: View {
             Text(message)
                 .lineLimit(1)
         }
-        .font(.caption.weight(.semibold))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .font(.caption2.weight(.semibold))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .background(backgroundColor.opacity(0.16), in: Capsule())
         .foregroundStyle(backgroundColor)
     }
@@ -497,7 +490,7 @@ struct AnalyzeWorkspaceView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 14) {
             AnalyzeComposerView(model: model)
             ResultsSectionView(model: model)
         }
@@ -510,28 +503,31 @@ struct AnalyzeComposerView: View {
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
-        StudioPanel {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack(alignment: .bottom, spacing: 14) {
+        StudioPanel(padding: 16) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(loc(model.languageCode, "Find Music", "Musik finden", "Buscar musica", "Trouver la musique"))
-                            .font(.system(size: 30, weight: .black, design: .rounded))
-                        Text(loc(model.languageCode, "Paste a link, stage a file, or capture live audio from the command deck below.", "Fuege einen Link ein, waehl eine Datei oder nimm Live-Audio direkt hier auf.", "Pega un enlace, prepara un archivo o captura audio en vivo desde aqui.", "Collez un lien, preparez un fichier ou capturez de l'audio en direct depuis ce panneau."))
-                            .font(.subheadline)
+                            .font(.system(size: 24, weight: .black, design: .rounded))
+                        Text(loc(model.languageCode, "Paste a link or stage a local file.", "Fuege einen Link ein oder waehle eine lokale Datei.", "Pega un enlace o prepara un archivo local.", "Collez un lien ou preparez un fichier local."))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    StatusBannerView(state: model.viewState, captureState: model.captureState)
+                    if preferredInput == .link || preferredInput == .file {
+                        StatusBannerView(state: model.viewState, captureState: model.captureState)
+                            .frame(maxWidth: 280, alignment: .trailing)
+                    }
                 }
 
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .center, spacing: 10) {
                     TextField(
                         loc(model.languageCode, "Link or local file", "Link oder lokale Datei", "Enlace o archivo local", "Lien ou fichier local"),
                         text: $model.inputValue,
                         axis: .vertical
                     )
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 16))
+                    .font(.system(size: 15))
                     .focused($isInputFocused)
 
                     Button(primaryActionTitle) {
@@ -560,17 +556,16 @@ struct AnalyzeComposerView: View {
                 if !model.recentAnalyses.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(loc(model.languageCode, "Recent Runs", "Letzte Laeufe", "Analisis recientes", "Analyses recentes"))
-                            .font(.headline)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                ForEach(model.recentAnalyses) { analysis in
-                                    Button {
-                                        model.restoreRecent(analysis)
-                                    } label: {
-                                        RecentAnalysisCard(analysis: analysis, languageCode: model.languageCode)
-                                    }
-                                    .buttonStyle(.plain)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 10)], spacing: 10) {
+                            ForEach(Array(model.recentAnalyses.prefix(4))) { analysis in
+                                Button {
+                                    model.restoreRecent(analysis)
+                                } label: {
+                                    RecentAnalysisCard(analysis: analysis, languageCode: model.languageCode)
                                 }
+                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -785,16 +780,16 @@ struct RecentAnalysisCard: View {
             Text(relativeDate)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 SummaryBadge(title: loc(languageCode, "Status", "Status", "Estado", "Statut"), value: analysis.status.capitalized)
                 SummaryBadge(title: loc(languageCode, "Segments", "Segmente", "Segmentos", "Segments"), value: "\(analysis.segmentCount)")
             }
         }
-        .frame(width: 240, alignment: .leading)
-        .padding(16)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 102, alignment: .leading)
+        .padding(14)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.08))
         )
     }
@@ -906,11 +901,11 @@ struct SummaryBadge: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.caption.weight(.semibold))
+                .font(.caption2.weight(.semibold))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 

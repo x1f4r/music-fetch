@@ -479,7 +479,7 @@ struct StudioPanel<Content: View>: View {
     let padding: CGFloat
     @ViewBuilder let content: Content
 
-    init(padding: CGFloat = 22, @ViewBuilder content: () -> Content) {
+    init(padding: CGFloat = 18, @ViewBuilder content: () -> Content) {
         self.padding = padding
         self.content = content()
     }
@@ -488,12 +488,12 @@ struct StudioPanel<Content: View>: View {
         content
             .padding(padding)
             .background(
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.16),
-                                Color.white.opacity(0.05),
+                                Color.white.opacity(0.13),
+                                Color.white.opacity(0.045),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -501,8 +501,8 @@ struct StudioPanel<Content: View>: View {
                     )
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.12))
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.1))
             )
     }
 }

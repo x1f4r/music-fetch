@@ -76,10 +76,10 @@ struct ResultsSectionView: View {
     @State private var showOnlySongs = true
 
     var body: some View {
-        StudioPanel {
-            VStack(alignment: .leading, spacing: 18) {
+        StudioPanel(padding: 16) {
+            VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 10) {
                         Text(loc(model.languageCode, "Results", "Ergebnisse", "Resultados", "Resultats"))
                             .font(.headline)
                         if let result = model.result {
@@ -89,12 +89,6 @@ struct ResultsSectionView: View {
                         }
                     }
                     Spacer()
-                    if let result = model.result {
-                        HStack(spacing: 10) {
-                            ResultMetricChip(title: loc(model.languageCode, "Job", "Job", "Job", "Job"), value: result.job.status.capitalized)
-                            ResultMetricChip(title: loc(model.languageCode, "Items", "Elemente", "Elementos", "Elements"), value: "\(result.items.count)")
-                        }
-                    }
                 }
 
                 if case let .analyzing(phase) = model.viewState {
@@ -123,7 +117,7 @@ struct ResultsSectionView: View {
                     ResultsTimelineView(segments: filteredModels, selectedSegmentID: model.selectedSegmentID) { segmentID in
                         model.selectSegment(segmentID)
                     }
-                    .frame(height: 42)
+                    .frame(height: 34)
 
                     CompactResultsView(
                         segments: filteredModels,
@@ -238,13 +232,12 @@ struct ResultsToolbarView: View {
                 .tint(.orange)
             }
 
-            Text(
-                hasSongs && showOnlySongs
-                ? "\(songCount) \(loc(languageCode, "songs", "Songs", "canciones", "titres"))"
-                : "\(totalCount) \(loc(languageCode, "items", "Abschnitte", "bloques", "blocs"))"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            Text(hasSongs && showOnlySongs ? "\(songCount)" : "\(totalCount)")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.white.opacity(0.05), in: Capsule())
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -295,9 +288,6 @@ struct ResultsTimelineView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(loc(languageCode, "Timeline", "Timeline", "Timeline", "Timeline"))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
             GeometryReader { geometry in
                 let totalDuration = max(1, segments.map(\.endMs).max() ?? 1)
                 let trackWidth = max(0, geometry.size.width - (trackInset * 2))
@@ -352,7 +342,7 @@ struct CompactResultsView: View {
     var body: some View {
         HSplitView {
             SegmentListPane(segments: segments, selectedSegmentID: $selectedSegmentID)
-                .frame(minWidth: 260, idealWidth: 300, maxWidth: 340)
+                .frame(minWidth: 320, idealWidth: 360, maxWidth: 410)
 
             SegmentInspectorPane(
                 viewModel: segments.first(where: { $0.id == selectedSegmentID }) ?? segments.first,
@@ -360,9 +350,9 @@ struct CompactResultsView: View {
                 onCorrect: onCorrect,
                 languageCode: languageCode
             )
-            .frame(minWidth: 360, maxWidth: .infinity)
+            .frame(minWidth: 320, maxWidth: .infinity)
         }
-        .frame(minHeight: 380, idealHeight: 460)
+        .frame(minHeight: 420, idealHeight: 500)
         .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
@@ -381,11 +371,11 @@ struct SegmentListPane: View {
                         HStack(alignment: .center, spacing: 10) {
                             RoundedRectangle(cornerRadius: 3, style: .continuous)
                                 .fill(segment.timelineColor)
-                                .frame(width: 6, height: 34)
+                                .frame(width: 5, height: 28)
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(segment.title)
-                                    .font(.subheadline.weight(.medium))
+                                    .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(.primary)
                                     .lineLimit(1)
                                 HStack(spacing: 6) {
@@ -398,24 +388,15 @@ struct SegmentListPane: View {
                             }
 
                             Spacer(minLength: 8)
-
-                            if let badge = segment.statusBadge {
-                                Text(badge)
-                                    .font(.caption2.weight(.semibold))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(segment.accentColor.opacity(0.12), in: Capsule())
-                                    .foregroundStyle(segment.accentColor)
-                            }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
                         .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .fill(selectedSegmentID == segment.id ? Color.cyan.opacity(0.12) : Color.white.opacity(0.04))
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .strokeBorder(selectedSegmentID == segment.id ? Color.cyan.opacity(0.26) : Color.white.opacity(0.06))
                         )
                     }
@@ -444,125 +425,113 @@ struct SegmentInspectorPane: View {
     var body: some View {
         Group {
             if let viewModel {
-                VStack(alignment: .leading, spacing: 18) {
-                    HStack(alignment: .top, spacing: 14) {
-                        Circle()
-                            .fill(viewModel.timelineColor)
-                            .frame(width: 14, height: 14)
-                            .padding(.top, 6)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack(alignment: .top, spacing: 12) {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(viewModel.timelineColor)
+                                .frame(width: 10, height: 56)
 
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(viewModel.title)
-                                .font(.system(size: 28, weight: .semibold, design: .rounded))
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(viewModel.subtitle)
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        Spacer()
-
-                        if let badge = viewModel.statusBadge {
-                            Text(badge)
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(viewModel.accentColor.opacity(0.14), in: Capsule())
-                                .foregroundStyle(viewModel.accentColor)
-                        }
-                    }
-
-                    HStack(spacing: 12) {
-                        InfoPill(systemImage: "clock", text: "\(formatTime(viewModel.startMs)) - \(formatTime(viewModel.endMs))")
-                        InfoPill(systemImage: "sparkles", text: viewModel.detailLabel)
-                        if let quality = viewModel.qualityLabel {
-                            InfoPill(systemImage: "checkmark.seal", text: quality)
-                        }
-                        if let uncertainty = viewModel.payload.uncertainty {
-                            InfoPill(systemImage: "gauge.with.dots.needle.33percent", text: "U \(String(format: "%.2f", uncertainty))")
-                        }
-                    }
-
-                    if let hint = viewModel.metadataHint, !hint.isEmpty {
-                        Text(cleanHint(hint))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(loc(languageCode, "Actions", "Aktionen", "Acciones", "Actions"))
-                            .font(.headline)
-
-                        HStack(spacing: 10) {
-                            Button(loc(languageCode, "Copy", "Kopieren", "Copiar", "Copier")) {
-                                onCopy(viewModel.title)
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button(loc(languageCode, "Correct", "Korrigieren", "Corregir", "Corriger")) {
-                                correctionTitle = viewModel.payload.track?.title ?? ""
-                                correctionArtist = viewModel.payload.track?.artist ?? ""
-                                correctionAlbum = viewModel.payload.track?.album ?? ""
-                                showCorrectionSheet = true
-                            }
-                            .buttonStyle(.bordered)
-
-                            ForEach(viewModel.primaryLinks) { link in
-                                Link(destination: link.url) {
-                                    Label(link.label, systemImage: link.icon)
-                                        .font(.subheadline.weight(.semibold))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 8)
-                                        .foregroundStyle(.white)
-                                        .background(link.color.gradient, in: Capsule())
-                                }
-                                .buttonStyle(.plain)
-                            }
-
-                            if !viewModel.overflowLinks.isEmpty {
-                                Menu(loc(languageCode, "More", "Mehr", "Mas", "Plus")) {
-                                    ForEach(viewModel.overflowLinks) { link in
-                                        Link(destination: link.url) {
-                                            Label(link.label, systemImage: link.icon)
-                                        }
-                                    }
-                                }
-                                .menuStyle(.borderlessButton)
-                            }
-                        }
-                    }
-
-                    if let explanation = viewModel.payload.explanation, !explanation.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(loc(languageCode, "Why this result", "Warum dieses Ergebnis", "Por que este resultado", "Pourquoi ce resultat"))
-                                .font(.headline)
-                            ForEach(explanation, id: \.self) { line in
-                                Text(line)
-                                    .font(.subheadline)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(viewModel.title)
+                                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(viewModel.subtitle)
+                                    .font(.headline)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
-                    }
 
-                    if !viewModel.payload.alternates.isEmpty {
+                        HStack(spacing: 10) {
+                            InfoPill(systemImage: "clock", text: "\(formatTime(viewModel.startMs)) - \(formatTime(viewModel.endMs))")
+                            InfoPill(systemImage: "sparkles", text: viewModel.detailLabel)
+                            if let quality = viewModel.qualityLabel {
+                                InfoPill(systemImage: "checkmark.seal", text: quality)
+                            }
+                            if let uncertainty = viewModel.payload.uncertainty {
+                                InfoPill(systemImage: "gauge.with.dots.needle.33percent", text: "U \(String(format: "%.2f", uncertainty))")
+                            }
+                        }
+
+                        if let hint = viewModel.metadataHint, !hint.isEmpty {
+                            Text(cleanHint(hint))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Divider()
+
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(loc(languageCode, "Alternates", "Weitere Kandidaten", "Alternativas", "Alternatives"))
+                            Text(loc(languageCode, "Actions", "Aktionen", "Acciones", "Actions"))
                                 .font(.headline)
-                            ForEach(viewModel.payload.alternates, id: \.self) { alternate in
-                                Text(alternate.artist.map { "\($0) - \(alternate.title)" } ?? alternate.title)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+
+                            HStack(spacing: 8) {
+                                Button(loc(languageCode, "Copy", "Kopieren", "Copiar", "Copier")) {
+                                    onCopy(viewModel.title)
+                                }
+                                .buttonStyle(.bordered)
+
+                                Button(loc(languageCode, "Correct", "Korrigieren", "Corregir", "Corriger")) {
+                                    correctionTitle = viewModel.payload.track?.title ?? ""
+                                    correctionArtist = viewModel.payload.track?.artist ?? ""
+                                    correctionAlbum = viewModel.payload.track?.album ?? ""
+                                    showCorrectionSheet = true
+                                }
+                                .buttonStyle(.bordered)
+
+                                ForEach(viewModel.primaryLinks) { link in
+                                    Link(destination: link.url) {
+                                        Label(link.label, systemImage: link.icon)
+                                            .font(.caption.weight(.semibold))
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 8)
+                                            .foregroundStyle(.white)
+                                            .background(link.color.gradient, in: Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                if !viewModel.overflowLinks.isEmpty {
+                                    Menu(loc(languageCode, "More", "Mehr", "Mas", "Plus")) {
+                                        ForEach(viewModel.overflowLinks) { link in
+                                            Link(destination: link.url) {
+                                                Label(link.label, systemImage: link.icon)
+                                            }
+                                        }
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                }
+                            }
+                        }
+
+                        if let explanation = viewModel.payload.explanation, !explanation.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(loc(languageCode, "Why this result", "Warum dieses Ergebnis", "Por que este resultado", "Pourquoi ce resultat"))
+                                    .font(.headline)
+                                ForEach(explanation, id: \.self) { line in
+                                    Text(line)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+
+                        if !viewModel.payload.alternates.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(loc(languageCode, "Alternates", "Weitere Kandidaten", "Alternativas", "Alternatives"))
+                                    .font(.headline)
+                                ForEach(viewModel.payload.alternates, id: \.self) { alternate in
+                                    Text(alternate.artist.map { "\($0) - \(alternate.title)" } ?? alternate.title)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
-
-                    Spacer(minLength: 0)
+                    .padding(18)
                 }
-                .padding(24)
                 .sheet(isPresented: $showCorrectionSheet) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(loc(languageCode, "Manual correction", "Manuelle Korrektur", "Correccion manual", "Correction manuelle"))
@@ -617,9 +586,9 @@ struct InfoPill: View {
 
     var body: some View {
         Label(text, systemImage: systemImage)
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
             .background(Color.white.opacity(0.06), in: Capsule())
             .foregroundStyle(.secondary)
     }
