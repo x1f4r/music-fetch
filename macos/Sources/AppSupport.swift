@@ -475,34 +475,3 @@ func formatTime(_ milliseconds: Int) -> String {
     return String(format: "%02d:%02d", minutes, seconds)
 }
 
-struct StudioPanel<Content: View>: View {
-    let padding: CGFloat
-    @ViewBuilder let content: Content
-
-    init(padding: CGFloat = 18, @ViewBuilder content: () -> Content) {
-        self.padding = padding
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .padding(padding)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.13),
-                                Color.white.opacity(0.045),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.1))
-            )
-    }
-}

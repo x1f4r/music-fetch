@@ -16,7 +16,7 @@ struct MusicFetchMacApp: App {
         WindowGroup(id: "main") {
             ContentView(model: model)
         }
-        .defaultSize(width: 1520, height: 980)
+        .defaultSize(width: 1280, height: 820)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Run Analysis") {
@@ -39,7 +39,7 @@ struct MusicFetchMacApp: App {
         MenuBarExtra {
             MenuBarQuickCaptureView(model: model)
         } label: {
-            Image(systemName: "music.note.magnifyingglass")
+            Image(systemName: "waveform.circle")
                 .accessibilityLabel("Music Fetch")
         }
         .menuBarExtraStyle(.window)

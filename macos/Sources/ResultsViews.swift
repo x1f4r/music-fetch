@@ -1,74 +1,7 @@
+import AppKit
 import SwiftUI
 
-struct StatusBannerView: View {
-    let state: AppViewState
-    let captureState: CaptureState
-    @AppStorage(languageDefaultsKey) private var languageCode = defaultUILanguageCode()
-
-    var body: some View {
-        HStack(spacing: 10) {
-            switch captureState {
-            case .startingMic:
-                ProgressView()
-                    .controlSize(.small)
-                Text(loc(languageCode, "Starting mic...", "Mikro startet...", "Iniciando mic...", "Demarrage micro..."))
-                    .foregroundStyle(.secondary)
-            case .recordingMic:
-                Image(systemName: "mic.fill")
-                    .foregroundStyle(.red)
-                Text(loc(languageCode, "Mic is recording. Tap again to stop.", "Mikro laeuft. Erneut tippen zum Stoppen.", "El microfono graba. Pulsa otra vez para parar.", "Le micro enregistre. Touchez encore pour arreter."))
-                    .foregroundStyle(.secondary)
-            case .stoppingMic:
-                ProgressView()
-                    .controlSize(.small)
-                Text(loc(languageCode, "Finishing mic clip...", "Mikroclip wird beendet...", "Finalizando clip de mic...", "Finalisation du clip micro..."))
-                    .foregroundStyle(.secondary)
-            case .startingSystem:
-                ProgressView()
-                    .controlSize(.small)
-                Text(loc(languageCode, "Starting system audio...", "Systemaudio startet...", "Iniciando audio del sistema...", "Demarrage audio systeme..."))
-                    .foregroundStyle(.secondary)
-            case .recordingSystem:
-                Image(systemName: "waveform")
-                    .foregroundStyle(.orange)
-                Text(loc(languageCode, "System audio is recording. Tap again to stop.", "Systemaudio laeuft. Erneut tippen zum Stoppen.", "El audio del sistema graba. Pulsa otra vez para parar.", "L'audio systeme enregistre. Touchez encore pour arreter."))
-                    .foregroundStyle(.secondary)
-            case .stoppingSystem:
-                ProgressView()
-                    .controlSize(.small)
-                Text(loc(languageCode, "Finishing system clip...", "Systemclip wird beendet...", "Finalizando clip del sistema...", "Finalisation du clip systeme..."))
-                    .foregroundStyle(.secondary)
-            case .idle:
-                switch state {
-                case .idle:
-                    Image(systemName: "sparkles")
-                        .foregroundStyle(.secondary)
-                    Text(loc(languageCode, "Paste a link or choose a file.", "Link einfuegen oder Datei waehlen.", "Pega un enlace o elige un archivo.", "Collez un lien ou choisissez un fichier."))
-                        .foregroundStyle(.secondary)
-                case let .analyzing(phase):
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(phase)
-                        .foregroundStyle(.secondary)
-                case .recordingMic, .recordingSystem:
-                    EmptyView()
-                case .showingResults:
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text(loc(languageCode, "Analysis done.", "Analyse fertig.", "Analisis listo.", "Analyse terminee."))
-                        .foregroundStyle(.secondary)
-                case let .error(message):
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text(message)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-        }
-        .font(.subheadline)
-    }
-}
+// MARK: - Results section (used inside Analyze workspace)
 
 struct ResultsSectionView: View {
     @ObservedObject var model: AppModel
@@ -76,33 +9,22 @@ struct ResultsSectionView: View {
     @State private var showOnlySongs = true
 
     var body: some View {
-        StudioPanel(padding: 16) {
+        Card(padding: 18, cornerRadius: 14) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center) {
-                    HStack(spacing: 10) {
-                        Text(loc(model.languageCode, "Results", "Ergebnisse", "Resultados", "Resultats"))
-                            .font(.headline)
-                        if let result = model.result {
-                            Text("\(result.segments.count) \(loc(model.languageCode, "segments", "Segmente", "segmentos", "segments"))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer()
-                }
+                header
 
-                if case let .analyzing(phase) = model.viewState {
-                    LoadingResultsView(phase: phase)
+                if case let .analyzing(phase) = model.viewState, model.result == nil {
+                    LoadingResultsView(phase: phase, languageCode: model.languageCode)
                 } else if let result = model.result {
-                    let viewModels = result.segments.map(model.makeSegmentViewModel)
-                    let hasSongs = viewModels.contains(where: { $0.payload.kind == "matched_track" })
-                    let filteredModels = filteredSegments(from: viewModels, showOnlySongs: showOnlySongs && hasSongs)
+                    let models = result.segments.map(model.makeSegmentViewModel)
+                    let hasSongs = models.contains(where: { $0.payload.kind == "matched_track" })
+                    let filtered = filtered(from: models, onlySongs: showOnlySongs && hasSongs)
 
-                    ResultsToolbarView(
+                    ResultsToolbar(
                         jobStatus: result.job.status,
-                        totalCount: viewModels.count,
-                        songCount: viewModels.filter { $0.payload.kind == "matched_track" }.count,
-                        unresolvedCount: viewModels.filter { $0.payload.kind == "music_unresolved" }.count,
+                        total: models.count,
+                        songs: models.filter { $0.payload.kind == "matched_track" }.count,
+                        unresolved: models.filter { $0.payload.kind == "music_unresolved" }.count,
                         showOnlySongs: Binding(
                             get: { showOnlySongs && hasSongs },
                             set: { showOnlySongs = $0 }
@@ -110,41 +32,35 @@ struct ResultsSectionView: View {
                         hasSongs: hasSongs,
                         onRetry: { model.retryUnresolvedSegments() },
                         onCancel: { model.cancelActiveJob() },
-                        onExport: { format in model.exportCurrentResults(format: format) },
+                        onExport: { fmt in model.exportCurrentResults(format: fmt) },
                         languageCode: model.languageCode
                     )
 
-                    ResultsTimelineView(segments: filteredModels, selectedSegmentID: model.selectedSegmentID) { segmentID in
-                        model.selectSegment(segmentID)
+                    if !filtered.isEmpty {
+                        ResultsTimelineView(
+                            segments: filtered,
+                            selectedID: model.selectedSegmentID,
+                            onSelect: { id in model.selectSegment(id) }
+                        )
+                        .frame(height: 30)
                     }
-                    .frame(height: 34)
 
-                    CompactResultsView(
-                        segments: filteredModels,
-                        selectedSegmentID: Binding(
-                            get: { model.selectedSegmentID },
-                            set: { if let value = $0 { model.selectSegment(value) } }
-                        ),
-                        onCopy: { text in model.copy(text) },
-                        onCorrect: { segment, title, artist, album in
-                            model.correctSegment(segment, title: title, artist: artist, album: album)
-                        },
-                        languageCode: model.languageCode
+                    SegmentList(
+                        segments: filtered,
+                        selectedID: segmentSelectionBinding
                     )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minHeight: 260)
                     .onAppear {
                         if model.selectedSegmentID == nil {
-                            model.selectedSegmentID = filteredModels.first?.id
+                            model.selectedSegmentID = filtered.first?.id
                         }
                     }
-                    .onChange(of: filteredModels.map(\.id)) { _, ids in
+                    .onChange(of: filtered.map(\.id)) { _, ids in
                         guard !ids.isEmpty else {
                             model.selectedSegmentID = nil
                             return
                         }
-                        if let selected = model.selectedSegmentID, ids.contains(selected) {
-                            return
-                        }
+                        if let current = model.selectedSegmentID, ids.contains(current) { return }
                         model.selectedSegmentID = ids.first
                     }
 
@@ -152,44 +68,45 @@ struct ResultsSectionView: View {
                         DebugEventsPanel(events: events, languageCode: model.languageCode)
                     }
                 } else {
-                    EmptyStateView(languageCode: model.languageCode)
+                    EmptyResultsView(languageCode: model.languageCode)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
-    private func filteredSegments(from segments: [SegmentViewModel], showOnlySongs: Bool) -> [SegmentViewModel] {
-        if showOnlySongs {
-            return segments.filter { $0.payload.kind == "matched_track" }
+    private var header: some View {
+        HStack(alignment: .center) {
+            SectionHeading(
+                loc(model.languageCode, "Results", "Ergebnisse", "Resultados", "Resultats"),
+                subtitle: model.result.map { result in
+                    "\(result.segments.count) " + loc(model.languageCode, "segments", "Segmente", "segmentos", "segments")
+                }
+            )
+            Spacer()
         }
-        return segments
+    }
+
+    private var segmentSelectionBinding: Binding<String?> {
+        Binding(
+            get: { model.selectedSegmentID },
+            set: { newValue in
+                if let newValue { model.selectSegment(newValue) }
+            }
+        )
+    }
+
+    private func filtered(from models: [SegmentViewModel], onlySongs: Bool) -> [SegmentViewModel] {
+        onlySongs ? models.filter { $0.payload.kind == "matched_track" } : models
     }
 }
 
-struct ResultMetricChip: View {
-    let title: String
-    let value: String
+// MARK: - Toolbar
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.caption.weight(.semibold))
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-struct ResultsToolbarView: View {
+struct ResultsToolbar: View {
     let jobStatus: String
-    let totalCount: Int
-    let songCount: Int
-    let unresolvedCount: Int
+    let total: Int
+    let songs: Int
+    let unresolved: Int
     @Binding var showOnlySongs: Bool
     let hasSongs: Bool
     let onRetry: () -> Void
@@ -198,380 +115,478 @@ struct ResultsToolbarView: View {
     let languageCode: String
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             if hasSongs {
-                Picker(loc(languageCode, "Filter", "Filter", "Filtro", "Filtre"), selection: $showOnlySongs) {
-                    Text(loc(languageCode, "Songs", "Songs", "Canciones", "Titres")).tag(true)
-                    Text(loc(languageCode, "All", "Alle", "Todo", "Tout")).tag(false)
+                Picker("", selection: $showOnlySongs) {
+                    Text("\(loc(languageCode, "Songs", "Songs", "Canciones", "Titres")) (\(songs))").tag(true)
+                    Text("\(loc(languageCode, "All", "Alle", "Todo", "Tout")) (\(total))").tag(false)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 180)
+                .labelsHidden()
+                .frame(width: 220)
             }
 
             Spacer()
 
-            if unresolvedCount > 0 {
-                Button(loc(languageCode, "Retry unresolved", "Unklare erneut pruefen", "Reintentar sin resolver", "Reessayer les non resolus")) {
+            if unresolved > 0 {
+                Button {
                     onRetry()
+                } label: {
+                    Label(loc(languageCode, "Retry unresolved", "Unklare erneut pruefen", "Reintentar", "Reessayer"),
+                          systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
             }
 
-            Menu(loc(languageCode, "Export", "Export", "Exportar", "Exporter")) {
+            Menu {
                 Button("JSON") { onExport("json") }
                 Button("CSV") { onExport("csv") }
                 Button(loc(languageCode, "Chapters", "Kapitel", "Capitulos", "Chapitres")) { onExport("chapters") }
+            } label: {
+                Label(loc(languageCode, "Export", "Export", "Exportar", "Exporter"), systemImage: "square.and.arrow.up")
             }
             .menuStyle(.borderlessButton)
+            .fixedSize()
 
             if jobStatus == "queued" || jobStatus == "running" {
-                Button(loc(languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler")) {
+                Button {
                     onCancel()
+                } label: {
+                    Label(loc(languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler"), systemImage: "xmark.circle")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .tint(.orange)
             }
-
-            Text(hasSongs && showOnlySongs ? "\(songCount)" : "\(totalCount)")
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.05), in: Capsule())
-                .foregroundStyle(.secondary)
         }
     }
 }
+
+// MARK: - Timeline
+
+struct ResultsTimelineView: View {
+    let segments: [SegmentViewModel]
+    let selectedID: String?
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            let totalDuration = max(1, segments.map(\.endMs).max() ?? 1)
+            let width = geo.size.width
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+
+                ForEach(segments) { seg in
+                    let segWidth = max(3, CGFloat(seg.endMs - seg.startMs) / CGFloat(totalDuration) * width)
+                    let segX = CGFloat(seg.startMs) / CGFloat(totalDuration) * width
+                    let isSelected = selectedID == seg.id
+
+                    Button {
+                        onSelect(seg.id)
+                    } label: {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(seg.timelineColor.opacity(isSelected ? 1.0 : 0.75))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .strokeBorder(isSelected ? Color.primary.opacity(0.55) : Color.clear, lineWidth: 1.5)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: segWidth, height: isSelected ? 26 : 20)
+                    .offset(x: segX, y: isSelected ? 2 : 5)
+                    .help(seg.title)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+    }
+}
+
+// MARK: - Segment list
+
+struct SegmentList: View {
+    let segments: [SegmentViewModel]
+    @Binding var selectedID: String?
+
+    var body: some View {
+        List(selection: $selectedID) {
+            ForEach(segments) { seg in
+                SegmentRow(segment: seg, isSelected: selectedID == seg.id)
+                    .tag(Optional(seg.id))
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2))
+                    .listRowBackground(Color.clear)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 52)
+    }
+}
+
+struct SegmentRow: View {
+    let segment: SegmentViewModel
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(segment.timelineColor)
+                .frame(width: 4, height: 36)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(segment.title)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text("\(formatTime(segment.startMs)) – \(formatTime(segment.endMs))")
+                        .monospacedDigit()
+                    Text("·")
+                    Text(segment.detailLabel)
+                    if segment.repeatGroupID != nil {
+                        Text("·")
+                        Image(systemName: "repeat")
+                            .font(.caption2)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            if let quality = segment.qualityLabel {
+                Text(quality)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.08), in: Capsule())
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
+        )
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Loading & empty states
 
 struct LoadingResultsView: View {
     let phase: String
-    @AppStorage(languageDefaultsKey) private var languageCode = defaultUILanguageCode()
+    let languageCode: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ProgressView()
-                .controlSize(.regular)
-            Text(phase)
-                .font(.title3.weight(.semibold))
-            Text(loc(languageCode, "Long mixes are segmented first, then matched.", "Lange Mixe werden erst segmentiert, dann zugeordnet.", "Las mezclas largas se segmentan primero y luego se identifican.", "Les longs mixes sont d'abord segmentes puis identifies."))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text(phase)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+            Text(loc(languageCode, "Long mixes are segmented first, then matched to songs.",
+                     "Lange Mixe werden erst segmentiert und dann Songs zugeordnet.",
+                     "Las mezclas largas se segmentan primero y luego se identifican.",
+                     "Les longs mixes sont d'abord segmentes puis identifies."))
+                .font(.caption)
                 .foregroundStyle(.secondary)
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.white.opacity(0.06))
-                .frame(height: 14)
             ForEach(0..<3, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color.white.opacity(0.04))
-                    .frame(height: 92)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 44)
             }
         }
+        .padding(.vertical, 4)
     }
 }
 
-struct EmptyStateView: View {
+struct EmptyResultsView: View {
     let languageCode: String
 
     var body: some View {
         ContentUnavailableView(
-            loc(languageCode, "No analysis", "Noch keine Analyse", "Sin analisis", "Pas d'analyse"),
+            loc(languageCode, "No analysis yet", "Noch keine Analyse", "Sin analisis", "Aucune analyse"),
             systemImage: "waveform.and.magnifyingglass",
-            description: Text(loc(languageCode, "Run analysis to see the timeline.", "Starte eine Analyse, um die Timeline zu sehen.", "Ejecuta un analisis para ver la timeline.", "Lancez une analyse pour voir la timeline."))
+            description: Text(loc(languageCode,
+                                  "Paste a link above and press Analyze to see the timeline.",
+                                  "Fuege oben einen Link ein und starte die Analyse.",
+                                  "Pega un enlace y pulsa Analizar para ver la timeline.",
+                                  "Collez un lien et appuyez sur Analyser pour voir la timeline."))
         )
-        .frame(maxWidth: .infinity, minHeight: 260)
+        .frame(maxWidth: .infinity, minHeight: 220)
     }
 }
 
-struct ResultsTimelineView: View {
-    let segments: [SegmentViewModel]
-    let selectedSegmentID: String?
-    let onSelect: (String) -> Void
-    @AppStorage(languageDefaultsKey) private var languageCode = defaultUILanguageCode()
-    private let trackInset: CGFloat = 4
+// MARK: - Debug events
+
+struct DebugEventsPanel: View {
+    let events: [JobEventPayload]
+    let languageCode: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            GeometryReader { geometry in
-                let totalDuration = max(1, segments.map(\.endMs).max() ?? 1)
-                let trackWidth = max(0, geometry.size.width - (trackInset * 2))
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.06))
-                    ForEach(segments) { segment in
-                        let segmentWidth = clampedWidth(for: segment, totalDuration: totalDuration, trackWidth: trackWidth)
-                        let segmentOffset = clampedOffset(for: segment, totalDuration: totalDuration, trackWidth: trackWidth, segmentWidth: segmentWidth)
-                        Button {
-                            onSelect(segment.id)
-                        } label: {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(segment.timelineColor)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .strokeBorder(selectedSegmentID == segment.id ? Color.white.opacity(0.42) : .clear, lineWidth: 2)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .frame(width: segmentWidth, height: selectedSegmentID == segment.id ? 28 : 20)
-                        .offset(x: trackInset + segmentOffset)
-                        .help(segment.title)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .frame(height: 30)
-        }
-    }
-
-    private func clampedWidth(for segment: SegmentViewModel, totalDuration: Int, trackWidth: CGFloat) -> CGFloat {
-        guard trackWidth > 0 else { return 0 }
-        let fraction = CGFloat(segment.endMs - segment.startMs) / CGFloat(totalDuration)
-        return min(trackWidth, max(6, trackWidth * fraction))
-    }
-
-    private func clampedOffset(for segment: SegmentViewModel, totalDuration: Int, trackWidth: CGFloat, segmentWidth: CGFloat) -> CGFloat {
-        guard trackWidth > 0 else { return 0 }
-        let rawOffset = CGFloat(segment.startMs) / CGFloat(totalDuration) * trackWidth
-        return min(max(0, rawOffset), max(0, trackWidth - segmentWidth))
-    }
-}
-
-struct CompactResultsView: View {
-    let segments: [SegmentViewModel]
-    @Binding var selectedSegmentID: String?
-    let onCopy: (String) -> Void
-    let onCorrect: (SegmentPayload, String, String?, String?) -> Void
-    let languageCode: String
-
-    var body: some View {
-        HSplitView {
-            SegmentListPane(segments: segments, selectedSegmentID: $selectedSegmentID)
-                .frame(minWidth: 320, idealWidth: 360, maxWidth: 410)
-
-            SegmentInspectorPane(
-                viewModel: segments.first(where: { $0.id == selectedSegmentID }) ?? segments.first,
-                onCopy: onCopy,
-                onCorrect: onCorrect,
-                languageCode: languageCode
-            )
-            .frame(minWidth: 320, maxWidth: .infinity)
-        }
-        .frame(minHeight: 420, idealHeight: 500)
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-}
-
-struct SegmentListPane: View {
-    let segments: [SegmentViewModel]
-    @Binding var selectedSegmentID: String?
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                ForEach(segments) { segment in
-                    Button {
-                        selectedSegmentID = segment.id
-                    } label: {
-                        HStack(alignment: .center, spacing: 10) {
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(segment.timelineColor)
-                                .frame(width: 5, height: 28)
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(segment.title)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                HStack(spacing: 6) {
-                                    Text(timeRange(segment))
-                                    Text("•")
-                                    Text(segment.detailLabel)
-                                }
+            Text(loc(languageCode, "Debug events", "Debug-Events", "Eventos debug", "Evenements debug"))
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(events) { event in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(event.level.uppercased())
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(color(for: event.level))
+                                .frame(width: 54, alignment: .leading)
+                            Text(event.message)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            }
-
-                            Spacer(minLength: 8)
+                                .textSelection(.enabled)
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(selectedSegmentID == segment.id ? Color.cyan.opacity(0.12) : Color.white.opacity(0.04))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(selectedSegmentID == segment.id ? Color.cyan.opacity(0.26) : Color.white.opacity(0.06))
-                        )
+                        .padding(.vertical, 2)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(12)
+            .frame(minHeight: 100, maxHeight: 200)
+            .padding(10)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
-    private func timeRange(_ segment: SegmentViewModel) -> String {
-        "\(formatTime(segment.startMs))-\(formatTime(segment.endMs))"
+    private func color(for level: String) -> Color {
+        switch level.lowercased() {
+        case "error": return .red
+        case "warning": return .orange
+        default: return .blue
+        }
     }
 }
 
-struct SegmentInspectorPane: View {
-    let viewModel: SegmentViewModel?
-    let onCopy: (String) -> Void
-    let onCorrect: (SegmentPayload, String, String?, String?) -> Void
-    let languageCode: String
+// MARK: - Inspector (segment details)
+
+struct InspectorView: View {
+    @ObservedObject var model: AppModel
+    @State private var correctionSheetPresented = false
     @State private var correctionTitle = ""
     @State private var correctionArtist = ""
     @State private var correctionAlbum = ""
-    @State private var showCorrectionSheet = false
+    @State private var correctionPayload: SegmentPayload?
 
     var body: some View {
         Group {
-            if let viewModel {
+            if let segment = currentSegment {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        HStack(alignment: .top, spacing: 12) {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(viewModel.timelineColor)
-                                .frame(width: 10, height: 56)
-
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(viewModel.title)
-                                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Text(viewModel.subtitle)
-                                    .font(.headline)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                        headerSection(segment)
+                        metadataSection(segment)
+                        actionsSection(segment)
+                        if let explanation = segment.payload.explanation, !explanation.isEmpty {
+                            explanationSection(explanation)
                         }
-
-                        HStack(spacing: 10) {
-                            InfoPill(systemImage: "clock", text: "\(formatTime(viewModel.startMs)) - \(formatTime(viewModel.endMs))")
-                            InfoPill(systemImage: "sparkles", text: viewModel.detailLabel)
-                            if let quality = viewModel.qualityLabel {
-                                InfoPill(systemImage: "checkmark.seal", text: quality)
-                            }
-                            if let uncertainty = viewModel.payload.uncertainty {
-                                InfoPill(systemImage: "gauge.with.dots.needle.33percent", text: "U \(String(format: "%.2f", uncertainty))")
-                            }
-                        }
-
-                        if let hint = viewModel.metadataHint, !hint.isEmpty {
-                            Text(cleanHint(hint))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        Divider()
-
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(loc(languageCode, "Actions", "Aktionen", "Acciones", "Actions"))
-                                .font(.headline)
-
-                            HStack(spacing: 8) {
-                                Button(loc(languageCode, "Copy", "Kopieren", "Copiar", "Copier")) {
-                                    onCopy(viewModel.title)
-                                }
-                                .buttonStyle(.bordered)
-
-                                Button(loc(languageCode, "Correct", "Korrigieren", "Corregir", "Corriger")) {
-                                    correctionTitle = viewModel.payload.track?.title ?? ""
-                                    correctionArtist = viewModel.payload.track?.artist ?? ""
-                                    correctionAlbum = viewModel.payload.track?.album ?? ""
-                                    showCorrectionSheet = true
-                                }
-                                .buttonStyle(.bordered)
-
-                                ForEach(viewModel.primaryLinks) { link in
-                                    Link(destination: link.url) {
-                                        Label(link.label, systemImage: link.icon)
-                                            .font(.caption.weight(.semibold))
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 8)
-                                            .foregroundStyle(.white)
-                                            .background(link.color.gradient, in: Capsule())
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-
-                                if !viewModel.overflowLinks.isEmpty {
-                                    Menu(loc(languageCode, "More", "Mehr", "Mas", "Plus")) {
-                                        ForEach(viewModel.overflowLinks) { link in
-                                            Link(destination: link.url) {
-                                                Label(link.label, systemImage: link.icon)
-                                            }
-                                        }
-                                    }
-                                    .menuStyle(.borderlessButton)
-                                }
-                            }
-                        }
-
-                        if let explanation = viewModel.payload.explanation, !explanation.isEmpty {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text(loc(languageCode, "Why this result", "Warum dieses Ergebnis", "Por que este resultado", "Pourquoi ce resultat"))
-                                    .font(.headline)
-                                ForEach(explanation, id: \.self) { line in
-                                    Text(line)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
-
-                        if !viewModel.payload.alternates.isEmpty {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text(loc(languageCode, "Alternates", "Weitere Kandidaten", "Alternativas", "Alternatives"))
-                                    .font(.headline)
-                                ForEach(viewModel.payload.alternates, id: \.self) { alternate in
-                                    Text(alternate.artist.map { "\($0) - \(alternate.title)" } ?? alternate.title)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+                        if !segment.payload.alternates.isEmpty {
+                            alternatesSection(segment.payload.alternates)
                         }
                     }
                     .padding(18)
-                }
-                .sheet(isPresented: $showCorrectionSheet) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text(loc(languageCode, "Manual correction", "Manuelle Korrektur", "Correccion manual", "Correction manuelle"))
-                            .font(.title3.weight(.semibold))
-                        TextField(loc(languageCode, "Title", "Titel", "Titulo", "Titre"), text: $correctionTitle)
-                            .textFieldStyle(.roundedBorder)
-                        TextField(loc(languageCode, "Artist", "Artist", "Artista", "Artiste"), text: $correctionArtist)
-                            .textFieldStyle(.roundedBorder)
-                        TextField(loc(languageCode, "Album", "Album", "Album", "Album"), text: $correctionAlbum)
-                            .textFieldStyle(.roundedBorder)
-                        HStack {
-                            Spacer()
-                            Button(loc(languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler")) {
-                                showCorrectionSheet = false
-                            }
-                            Button(loc(languageCode, "Save", "Speichern", "Guardar", "Enregistrer")) {
-                                onCorrect(
-                                    viewModel.payload,
-                                    correctionTitle,
-                                    correctionArtist.isEmpty ? nil : correctionArtist,
-                                    correctionAlbum.isEmpty ? nil : correctionAlbum
-                                )
-                                showCorrectionSheet = false
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(correctionTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-                    .padding(24)
-                    .frame(width: 360)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             } else {
                 ContentUnavailableView(
-                    loc(languageCode, "No segment", "Kein Abschnitt gewaehlt", "Sin segmento", "Aucun segment"),
-                    systemImage: "line.3.horizontal.decrease.circle",
-                    description: Text(loc(languageCode, "Pick a segment to inspect it.", "Waehle links einen Abschnitt.", "Elige un segmento.", "Choisissez un segment."))
+                    loc(model.languageCode, "No segment", "Kein Abschnitt", "Sin segmento", "Aucun segment"),
+                    systemImage: "cursorarrow.click",
+                    description: Text(loc(model.languageCode,
+                                          "Select a segment to see details.",
+                                          "Waehle ein Segment, um Details zu sehen.",
+                                          "Elige un segmento para ver detalles.",
+                                          "Choisissez un segment pour voir les details."))
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .background(Color(NSColor.windowBackgroundColor))
+        .sheet(isPresented: $correctionSheetPresented) {
+            correctionSheet
+        }
+    }
+
+    private var currentSegment: SegmentViewModel? {
+        guard let result = model.result else { return nil }
+        let models = result.segments.map(model.makeSegmentViewModel)
+        if let id = model.selectedSegmentID,
+           let match = models.first(where: { $0.id == id }) {
+            return match
+        }
+        return models.first
+    }
+
+    // MARK: sections
+
+    private func headerSection(_ segment: SegmentViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(segment.timelineColor)
+                    .frame(width: 6, height: 46)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(segment.title)
+                        .font(.title3.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(segment.subtitle)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func metadataSection(_ segment: SegmentViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                InspectorPill(icon: "clock", text: "\(formatTime(segment.startMs)) – \(formatTime(segment.endMs))")
+                InspectorPill(icon: "sparkles", text: segment.detailLabel)
+            }
+            HStack(spacing: 6) {
+                if let quality = segment.qualityLabel {
+                    InspectorPill(icon: "checkmark.seal", text: quality)
+                }
+                if let uncertainty = segment.payload.uncertainty {
+                    InspectorPill(icon: "gauge.with.dots.needle.33percent",
+                                  text: String(format: "U %.2f", uncertainty))
+                }
+            }
+
+            if let hint = segment.metadataHint, !hint.isEmpty {
+                Text(cleanHint(hint))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func actionsSection(_ segment: SegmentViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(loc(model.languageCode, "Actions", "Aktionen", "Acciones", "Actions"))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            HStack(spacing: 8) {
+                Button {
+                    model.copy(segment.title)
+                } label: {
+                    Label(loc(model.languageCode, "Copy", "Kopieren", "Copiar", "Copier"), systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                if segment.isInteractive {
+                    Button {
+                        correctionPayload = segment.payload
+                        correctionTitle = segment.payload.track?.title ?? ""
+                        correctionArtist = segment.payload.track?.artist ?? ""
+                        correctionAlbum = segment.payload.track?.album ?? ""
+                        correctionSheetPresented = true
+                    } label: {
+                        Label(loc(model.languageCode, "Correct", "Korrigieren", "Corregir", "Corriger"), systemImage: "pencil")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                Spacer()
+            }
+
+            if !segment.primaryLinks.isEmpty || !segment.overflowLinks.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(loc(model.languageCode, "Listen", "Anhoeren", "Escuchar", "Ecouter"))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                    FlowLinks(primary: segment.primaryLinks, overflow: segment.overflowLinks, languageCode: model.languageCode)
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    private func explanationSection(_ lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(loc(model.languageCode, "Why this result", "Warum dieses Ergebnis", "Por que este resultado", "Pourquoi ce resultat"))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(lines, id: \.self) { line in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("•")
+                            .foregroundStyle(.tertiary)
+                        Text(line)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func alternatesSection(_ tracks: [TrackMatchPayload]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(loc(model.languageCode, "Alternates", "Weitere Kandidaten", "Alternativas", "Alternatives"))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(tracks, id: \.self) { track in
+                    Text(track.artist.map { "\($0) · \(track.title)" } ?? track.title)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private var correctionSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(loc(model.languageCode, "Manual correction", "Manuelle Korrektur", "Correccion manual", "Correction manuelle"))
+                .font(.title3.weight(.semibold))
+            Form {
+                TextField(loc(model.languageCode, "Title", "Titel", "Titulo", "Titre"), text: $correctionTitle)
+                TextField(loc(model.languageCode, "Artist", "Artist", "Artista", "Artiste"), text: $correctionArtist)
+                TextField(loc(model.languageCode, "Album", "Album", "Album", "Album"), text: $correctionAlbum)
+            }
+            .formStyle(.grouped)
+
+            HStack {
+                Spacer()
+                Button(loc(model.languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler")) {
+                    correctionSheetPresented = false
+                }
+                .keyboardShortcut(.cancelAction)
+                Button(loc(model.languageCode, "Save", "Speichern", "Guardar", "Enregistrer")) {
+                    if let payload = correctionPayload {
+                        model.correctSegment(
+                            payload,
+                            title: correctionTitle,
+                            artist: correctionArtist.isEmpty ? nil : correctionArtist,
+                            album: correctionAlbum.isEmpty ? nil : correctionAlbum
+                        )
+                    }
+                    correctionSheetPresented = false
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(correctionTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
     }
 
     private func cleanHint(_ hint: String) -> String {
@@ -580,184 +595,56 @@ struct SegmentInspectorPane: View {
     }
 }
 
-struct InfoPill: View {
-    let systemImage: String
+struct InspectorPill: View {
+    let icon: String
     let text: String
 
     var body: some View {
-        Label(text, systemImage: systemImage)
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(Color.white.opacity(0.06), in: Capsule())
-            .foregroundStyle(.secondary)
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption2)
+            Text(text)
+                .font(.caption.weight(.medium))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.primary.opacity(0.06), in: Capsule())
     }
 }
 
-struct DebugEventsPanel: View {
-    let events: [JobEventPayload]
+struct FlowLinks: View {
+    let primary: [PlatformLink]
+    let overflow: [PlatformLink]
     let languageCode: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(loc(languageCode, "Debug Event Stream", "Debug-Event-Stream", "Flujo de eventos debug", "Flux d'evenements debug"))
-                .font(.headline)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(events) { event in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(event.level.uppercased())
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(color(for: event.level))
-                                Spacer()
-                                Text(event.created_at)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Text(event.message)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                        .padding(12)
-                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
+        HStack(spacing: 6) {
+            ForEach(primary) { link in
+                Link(destination: link.url) {
+                    Label(link.label, systemImage: link.icon)
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .foregroundStyle(Color.white)
+                        .background(link.color.gradient, in: Capsule())
                 }
+                .buttonStyle(.plain)
             }
-            .frame(minHeight: 120, maxHeight: 220)
-        }
-    }
 
-    private func color(for level: String) -> Color {
-        switch level.lowercased() {
-        case "error":
-            return .red
-        case "warning":
-            return .orange
-        default:
-            return .cyan
-        }
-    }
-}
-
-struct StorageSummaryHeaderView: View {
-    let summary: StorageSummaryPayload
-    let languageCode: String
-
-    var body: some View {
-        HStack(spacing: 14) {
-            SummaryChip(title: loc(languageCode, "Artifacts", "Artefakte", "Artefactos", "Artefacts"), value: "\(summary.entries.count)")
-            SummaryChip(title: loc(languageCode, "Size", "Groesse", "Tamano", "Taille"), value: formatBytes(summary.total_size_bytes))
-            SummaryChip(title: loc(languageCode, "Policy", "Regel", "Politica", "Politique"), value: summary.auto_clean ? "Auto-clean" : "Retained")
-            Spacer()
-        }
-    }
-}
-
-struct SummaryChip: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline.weight(.semibold))
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-struct StorageArtifactsListView: View {
-    let summary: StorageSummaryPayload
-    let onReveal: (String) -> Void
-    let languageCode: String
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                if !summary.categories.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(loc(languageCode, "Categories", "Kategorien", "Categorias", "Categories"))
-                            .font(.headline)
-                        ForEach(summary.categories, id: \.category) { category in
-                            HStack {
-                                Text(category.category.replacingOccurrences(of: "_", with: " ").capitalized)
-                                Spacer()
-                                Text("\(category.count)")
-                                    .foregroundStyle(.secondary)
-                                Text(formatBytes(category.size_bytes))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .font(.subheadline)
+            if !overflow.isEmpty {
+                Menu {
+                    ForEach(overflow) { link in
+                        Link(destination: link.url) {
+                            Label(link.label, systemImage: link.icon)
                         }
                     }
-                    .padding(18)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                } label: {
+                    Label(loc(languageCode, "More", "Mehr", "Mas", "Plus"), systemImage: "ellipsis.circle")
+                        .labelStyle(.iconOnly)
                 }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(loc(languageCode, "Files And Folders", "Dateien und Ordner", "Archivos y carpetas", "Fichiers et dossiers"))
-                        .font(.headline)
-                    ForEach(summary.entries) { entry in
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: entry.temporary ? "folder.badge.gearshape" : "externaldrive")
-                                .foregroundStyle(entry.temporary ? Color.accentColor : Color.secondary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack {
-                                    Text(entry.label)
-                                        .font(.subheadline.weight(.semibold))
-                                    if entry.pinned {
-                                        Text(loc(languageCode, "Pinned", "Gepinnt", "Fijado", "Epingle"))
-                                            .font(.caption2.weight(.semibold))
-                                            .padding(.horizontal, 7)
-                                            .padding(.vertical, 4)
-                                            .background(Color.orange.opacity(0.14), in: Capsule())
-                                            .foregroundStyle(.orange)
-                                    }
-                                }
-                                Text(entry.path)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                                Text(formatBytes(entry.size_bytes))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button(loc(languageCode, "Reveal", "Anzeigen", "Mostrar", "Afficher")) {
-                                onReveal(entry.path)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                        .padding(14)
-                        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
-                }
-                .padding(18)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(loc(languageCode, "Locations", "Orte", "Ubicaciones", "Emplacements"))
-                        .font(.headline)
-                    ForEach(summary.locations.keys.sorted(), id: \.self) { key in
-                        HStack {
-                            Text(key.capitalized)
-                            Spacer()
-                            Text(summary.locations[key] ?? "")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-                .padding(18)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
         }
     }

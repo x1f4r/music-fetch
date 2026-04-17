@@ -17,49 +17,36 @@ enum LaunchAtLoginController {
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
-    @AppStorage(openExternalLinksDefaultsKey) private var openExternalLinks = false
-    @AppStorage(languageDefaultsKey) private var languageCode = UILanguage.en.rawValue
-    @AppStorage(launchAtLoginDefaultsKey) private var launchAtLogin = false
-    @AppStorage(analysisModeDefaultsKey) private var analysisModeRaw = AnalysisMode.auto.rawValue
-    @AppStorage(recallProfileDefaultsKey) private var recallProfileRaw = RecallProfile.maxRecall.rawValue
-    @AppStorage(metadataHintsDefaultsKey) private var metadataHints = true
-    @AppStorage(repeatDetectionDefaultsKey) private var repeatDetection = true
-    @AppStorage(preferSeparationDefaultsKey) private var preferSeparation = true
-    @AppStorage(preferredInputDefaultsKey) private var preferredInputRaw = PreferredInput.link.rawValue
-    @AppStorage(recordingTargetDefaultsKey) private var recordingTargetRaw = RecordingTarget.microphone.rawValue
-    @AppStorage(debugDetailsDefaultsKey) private var debugDetails = false
     @AppStorage(settingsTabDefaultsKey) private var settingsTabRaw = SettingsTab.general.rawValue
+    @AppStorage(languageDefaultsKey) private var languageCode = UILanguage.en.rawValue
 
     var body: some View {
         TabView(selection: selectedTab) {
-            generalTab
+            GeneralSettingsTab(model: model, languageCode: languageCode)
                 .tabItem { Label(SettingsTab.general.title(languageCode), systemImage: SettingsTab.general.systemImage) }
                 .tag(SettingsTab.general)
 
-            inputTab
+            InputSettingsTab(languageCode: languageCode)
                 .tabItem { Label(SettingsTab.input.title(languageCode), systemImage: SettingsTab.input.systemImage) }
                 .tag(SettingsTab.input)
 
-            recognitionTab
+            RecognitionSettingsTab(languageCode: languageCode)
                 .tabItem { Label(SettingsTab.recognition.title(languageCode), systemImage: SettingsTab.recognition.systemImage) }
                 .tag(SettingsTab.recognition)
 
-            connectionsTab
+            ConnectionsSettingsTab(languageCode: languageCode)
                 .tabItem { Label(SettingsTab.connections.title(languageCode), systemImage: SettingsTab.connections.systemImage) }
                 .tag(SettingsTab.connections)
 
-            diagnosticsTab
+            DiagnosticsSettingsTab(model: model, languageCode: languageCode)
                 .tabItem { Label(SettingsTab.diagnostics.title(languageCode), systemImage: SettingsTab.diagnostics.systemImage) }
                 .tag(SettingsTab.diagnostics)
         }
-        .frame(minWidth: 860, minHeight: 620)
+        .frame(minWidth: 640, idealWidth: 720, minHeight: 480, idealHeight: 540)
         .onAppear {
             if model.providerChecks.isEmpty {
                 model.refreshDoctor()
             }
-        }
-        .onChange(of: launchAtLogin) { _, value in
-            LaunchAtLoginController.setEnabled(value)
         }
     }
 
@@ -69,209 +56,268 @@ struct SettingsView: View {
             set: { settingsTabRaw = $0.rawValue }
         )
     }
+}
 
-    private var analysisMode: Binding<AnalysisMode> {
+// MARK: - General
+
+struct GeneralSettingsTab: View {
+    @ObservedObject var model: AppModel
+    let languageCode: String
+
+    @AppStorage(languageDefaultsKey) private var storedLanguage = UILanguage.en.rawValue
+    @AppStorage(openExternalLinksDefaultsKey) private var openExternalLinks = false
+    @AppStorage(launchAtLoginDefaultsKey) private var launchAtLogin = false
+    @AppStorage(analysisModeDefaultsKey) private var analysisModeRaw = AnalysisMode.auto.rawValue
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(loc(languageCode, "Language", "Sprache", "Idioma", "Langue"), selection: Binding(
+                    get: { storedLanguage },
+                    set: { value in
+                        storedLanguage = value
+                        model.setLanguage(value)
+                    }
+                )) {
+                    ForEach(UILanguage.allCases, id: \.rawValue) { language in
+                        Text(language.label).tag(language.rawValue)
+                    }
+                }
+
+                Picker(loc(languageCode, "Default analysis", "Standardanalyse", "Analisis por defecto", "Analyse par defaut"), selection: analysisModeBinding) {
+                    ForEach(AnalysisMode.allCases) { mode in
+                        Text(mode.title(languageCode)).tag(mode)
+                    }
+                }
+            }
+
+            Section {
+                Toggle(loc(languageCode, "Open best external link automatically", "Besten externen Link automatisch oeffnen", "Abrir automaticamente el mejor enlace externo", "Ouvrir automatiquement le meilleur lien externe"),
+                       isOn: $openExternalLinks)
+                Toggle(loc(languageCode, "Launch at login", "Beim Login starten", "Iniciar al arrancar", "Lancer a la connexion"),
+                       isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, value in
+                        LaunchAtLoginController.setEnabled(value)
+                    }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var analysisModeBinding: Binding<AnalysisMode> {
         Binding(
             get: { AnalysisMode(rawValue: analysisModeRaw) ?? .auto },
             set: { analysisModeRaw = $0.rawValue }
         )
     }
+}
 
-    private var recallProfile: Binding<RecallProfile> {
-        Binding(
-            get: { RecallProfile(rawValue: recallProfileRaw) ?? .maxRecall },
-            set: { recallProfileRaw = $0.rawValue }
-        )
+// MARK: - Input
+
+struct InputSettingsTab: View {
+    let languageCode: String
+
+    @AppStorage(preferredInputDefaultsKey) private var preferredInputRaw = PreferredInput.link.rawValue
+    @AppStorage(recordingTargetDefaultsKey) private var recordingTargetRaw = RecordingTarget.microphone.rawValue
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(loc(languageCode, "Preferred input", "Bevorzugte Eingabe", "Entrada preferida", "Entree preferee"), selection: preferredInputBinding) {
+                    ForEach(PreferredInput.allCases) { input in
+                        Text(input.title(languageCode)).tag(input)
+                    }
+                }
+                Picker(loc(languageCode, "Recording target", "Aufnahmeziel", "Objetivo de grabacion", "Cible d'enregistrement"), selection: recordingTargetBinding) {
+                    ForEach(RecordingTarget.allCases) { target in
+                        Text(target.title(languageCode)).tag(target)
+                    }
+                }
+            } footer: {
+                Text(loc(languageCode,
+                         "These selections are highlighted in the Analyze workspace.",
+                         "Diese Auswahl wird im Analyse-Arbeitsbereich hervorgehoben.",
+                         "Estas opciones aparecen destacadas en el espacio Analizar.",
+                         "Ces choix sont mis en avant dans l'espace Analyser."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 
-    private var preferredInput: Binding<PreferredInput> {
+    private var preferredInputBinding: Binding<PreferredInput> {
         Binding(
             get: { PreferredInput(rawValue: preferredInputRaw) ?? .link },
             set: { preferredInputRaw = $0.rawValue }
         )
     }
 
-    private var recordingTarget: Binding<RecordingTarget> {
+    private var recordingTargetBinding: Binding<RecordingTarget> {
         Binding(
             get: { RecordingTarget(rawValue: recordingTargetRaw) ?? .microphone },
             set: { recordingTargetRaw = $0.rawValue }
         )
     }
-
-    private var generalTab: some View {
-        Form {
-            Picker(loc(languageCode, "Language", "Sprache", "Idioma", "Langue"), selection: Binding(
-                get: { languageCode },
-                set: {
-                    languageCode = $0
-                    model.setLanguage($0)
-                }
-            )) {
-                ForEach(UILanguage.allCases, id: \.rawValue) { language in
-                    Text(language.label).tag(language.rawValue)
-                }
-            }
-
-            Picker(loc(languageCode, "Default Analysis", "Standardanalyse", "Analisis por defecto", "Analyse par defaut"), selection: analysisMode) {
-                ForEach(AnalysisMode.allCases) { mode in
-                    Text(mode.title(languageCode)).tag(mode)
-                }
-            }
-
-            Toggle(loc(languageCode, "Open best external link automatically", "Besten externen Link automatisch oeffnen", "Abrir automaticamente el mejor enlace externo", "Ouvrir automatiquement le meilleur lien externe"), isOn: $openExternalLinks)
-            Toggle(loc(languageCode, "Launch at login", "Beim Login starten", "Iniciar al arrancar", "Lancer a la connexion"), isOn: $launchAtLogin)
-        }
-        .padding(22)
-    }
-
-    private var inputTab: some View {
-        Form {
-            Picker(loc(languageCode, "Preferred Input", "Bevorzugte Eingabe", "Entrada preferida", "Entree preferee"), selection: preferredInput) {
-                ForEach(PreferredInput.allCases) { input in
-                    Text(input.title(languageCode)).tag(input)
-                }
-            }
-
-            Picker(loc(languageCode, "Primary Recording Target", "Primaeres Aufnahmeziel", "Objetivo principal de grabacion", "Cible d'enregistrement principale"), selection: recordingTarget) {
-                ForEach(RecordingTarget.allCases) { target in
-                    Text(target.title(languageCode)).tag(target)
-                }
-            }
-
-            Text(loc(languageCode, "The command deck and analyze composer highlight these selections in the main window.", "Command Deck und Analyse-Composer heben diese Auswahl im Hauptfenster hervor.", "El panel superior y el compositor principal destacan estas selecciones.", "Le panneau de commande et le composeur principal mettent ces choix en avant."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(22)
-    }
-
-    private var recognitionTab: some View {
-        Form {
-            Picker(loc(languageCode, "Recall Profile", "Recall-Profil", "Perfil de recall", "Profil de rappel"), selection: recallProfile) {
-                ForEach(RecallProfile.allCases) { profile in
-                    Text(profile.title(languageCode)).tag(profile)
-                }
-            }
-
-            Toggle(loc(languageCode, "Use metadata hints", "Metadaten-Hinweise nutzen", "Usar pistas de metadatos", "Utiliser les indices de metadonnees"), isOn: $metadataHints)
-            Toggle(loc(languageCode, "Detect repeats", "Wiederholungen erkennen", "Detectar repeticiones", "Detecter les repetitions"), isOn: $repeatDetection)
-            Toggle(loc(languageCode, "Prefer source separation", "Source-Separation bevorzugen", "Preferir separacion de fuentes", "Preferer la separation de sources"), isOn: $preferSeparation)
-        }
-        .padding(22)
-    }
-
-    private var connectionsTab: some View {
-        Form {
-            LabeledContent(loc(languageCode, "Local catalog", "Lokaler Katalog", "Catalogo local", "Catalogue local"), value: "CLI / API")
-            LabeledContent("AudD / ACRCloud", value: loc(languageCode, "Backend config", "Backend-Konfiguration", "Configuracion del backend", "Configuration du backend"))
-            Text(loc(languageCode, "Advanced provider credentials still live in the backend config and CLI environment.", "Erweiterte Provider-Zugangsdaten bleiben in Backend-Konfiguration und CLI-Umgebung.", "Las credenciales avanzadas siguen en la configuracion del backend y el entorno CLI.", "Les identifiants avances restent dans la configuration backend et l'environnement CLI."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(22)
-    }
-
-    private var diagnosticsTab: some View {
-        DiagnosticsPanelView(model: model, languageCode: languageCode, debugDetails: $debugDetails)
-            .padding(22)
-    }
 }
 
-struct DiagnosticsPanelView: View {
-    @ObservedObject var model: AppModel
+// MARK: - Recognition
+
+struct RecognitionSettingsTab: View {
     let languageCode: String
-    @Binding var debugDetails: Bool
+
+    @AppStorage(recallProfileDefaultsKey) private var recallProfileRaw = RecallProfile.maxRecall.rawValue
+    @AppStorage(metadataHintsDefaultsKey) private var metadataHints = true
+    @AppStorage(repeatDetectionDefaultsKey) private var repeatDetection = true
+    @AppStorage(preferSeparationDefaultsKey) private var preferSeparation = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(loc(languageCode, "Diagnostics", "Diagnostik", "Diagnostico", "Diagnostic"))
-                        .font(.system(size: 28, weight: .black, design: .rounded))
-                    Text(loc(languageCode, "Inspect backend reachability, dependencies, and verbose run state.", "Backend-Erreichbarkeit, Abhaengigkeiten und ausfuehrlichen Laufstatus pruefen.", "Inspecciona el backend, dependencias y estado detallado de ejecucion.", "Inspectez l'accessibilite du backend, les dependances et l'etat detaille des analyses."))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Toggle(loc(languageCode, "Show debug details", "Debug-Details zeigen", "Mostrar detalles debug", "Afficher les details debug"), isOn: $debugDetails)
-                    .toggleStyle(.switch)
-            }
-
-            HStack {
-                Button(loc(languageCode, "Refresh Checks", "Checks aktualisieren", "Actualizar checks", "Actualiser les checks")) {
-                    model.refreshDoctor()
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button(loc(languageCode, "Install Tools", "Tools installieren", "Instalar herramientas", "Installer les outils")) {
-                    model.installMissingCoreDependencies()
-                }
-                .buttonStyle(.bordered)
-            }
-
-            TextField(loc(languageCode, "Backend command", "Backend-Befehl", "Comando backend", "Commande backend"), text: Binding(
-                get: { model.backendCommand },
-                set: { model.updateBackendCommand($0) }
-            ))
-            .textFieldStyle(.roundedBorder)
-
-            StudioPanel(padding: 18) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(loc(languageCode, "Provider Checks", "Provider-Checks", "Comprobaciones de proveedores", "Verifications des fournisseurs"))
-                        .font(.headline)
-                    List(model.providerChecks) { check in
-                        HStack {
-                            Image(systemName: check.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                .foregroundStyle(check.ok ? .green : .orange)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(check.name)
-                                Text(check.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .frame(minHeight: 260)
-                }
-            }
-
-            if debugDetails, let result = model.result {
-                StudioPanel(padding: 18) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(loc(languageCode, "Live Snapshot", "Live-Snapshot", "Snapshot en vivo", "Snapshot en direct"))
-                            .font(.headline)
-                        LabeledContent("Job ID", value: result.job.id)
-                        LabeledContent(loc(languageCode, "Status", "Status", "Estado", "Statut"), value: result.job.status)
-                        LabeledContent(loc(languageCode, "Segments", "Segmente", "Segmentos", "Segments"), value: "\(result.segments.count)")
-                        if let lastEvent = result.events?.last {
-                            LabeledContent(loc(languageCode, "Last Event", "Letztes Event", "Ultimo evento", "Dernier evenement"), value: lastEvent.message)
-                        }
+        Form {
+            Section {
+                Picker(loc(languageCode, "Recall profile", "Recall-Profil", "Perfil de recall", "Profil de rappel"), selection: recallBinding) {
+                    ForEach(RecallProfile.allCases) { profile in
+                        Text(profile.title(languageCode)).tag(profile)
                     }
                 }
+            } footer: {
+                Text(loc(languageCode,
+                         "Max recall searches more windows; Fast first stops earlier for short clips.",
+                         "Max Recall sucht mehr Fenster ab; Fast first stoppt frueh bei kurzen Clips.",
+                         "Max recall explora mas ventanas; Fast first se detiene antes en clips cortos.",
+                         "Max recall analyse plus de fenetres ; Fast first s'arrete plus tot pour les courts clips."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            Spacer(minLength: 0)
+            Section {
+                Toggle(loc(languageCode, "Use metadata hints", "Metadaten-Hinweise nutzen", "Usar pistas de metadatos", "Utiliser les indices de metadonnees"), isOn: $metadataHints)
+                Toggle(loc(languageCode, "Detect repeats", "Wiederholungen erkennen", "Detectar repeticiones", "Detecter les repetitions"), isOn: $repeatDetection)
+                Toggle(loc(languageCode, "Prefer source separation", "Source-Separation bevorzugen", "Preferir separacion de fuentes", "Preferer la separation de sources"), isOn: $preferSeparation)
+            }
         }
+        .formStyle(.grouped)
+    }
+
+    private var recallBinding: Binding<RecallProfile> {
+        Binding(
+            get: { RecallProfile(rawValue: recallProfileRaw) ?? .maxRecall },
+            set: { recallProfileRaw = $0.rawValue }
+        )
     }
 }
 
-struct DiagnosticsSheetView: View {
+// MARK: - Connections
+
+struct ConnectionsSettingsTab: View {
+    let languageCode: String
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent(loc(languageCode, "Local catalog", "Lokaler Katalog", "Catalogo local", "Catalogue local"),
+                               value: "CLI / API")
+                LabeledContent("AudD / ACRCloud",
+                               value: loc(languageCode, "Backend config", "Backend-Konfiguration", "Configuracion del backend", "Configuration du backend"))
+            } footer: {
+                Text(loc(languageCode,
+                         "Advanced provider credentials live in the backend config and CLI environment.",
+                         "Erweiterte Provider-Zugangsdaten bleiben in Backend-Konfiguration und CLI-Umgebung.",
+                         "Las credenciales avanzadas siguen en la configuracion del backend y el entorno CLI.",
+                         "Les identifiants avances restent dans la configuration backend et l'environnement CLI."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - Diagnostics
+
+struct DiagnosticsSettingsTab: View {
     @ObservedObject var model: AppModel
-    @AppStorage(languageDefaultsKey) private var languageCode = defaultUILanguageCode()
+    let languageCode: String
+
     @AppStorage(debugDetailsDefaultsKey) private var debugDetails = false
 
     var body: some View {
-        NavigationStack {
-            DiagnosticsPanelView(model: model, languageCode: languageCode, debugDetails: $debugDetails)
-                .padding(24)
-                .frame(minWidth: 840, minHeight: 620)
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
-                        SettingsLink {
-                            Label(loc(languageCode, "Open Settings", "Einstellungen oeffnen", "Abrir ajustes", "Ouvrir les reglages"), systemImage: "gearshape")
+        Form {
+            Section {
+                TextField(loc(languageCode, "Backend command", "Backend-Befehl", "Comando backend", "Commande backend"),
+                          text: backendBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+
+                HStack(spacing: 8) {
+                    Button {
+                        model.refreshDoctor()
+                    } label: {
+                        Label(loc(languageCode, "Refresh checks", "Checks aktualisieren", "Actualizar", "Actualiser"), systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    Button {
+                        model.installMissingCoreDependencies()
+                    } label: {
+                        Label(loc(languageCode, "Install tools", "Tools installieren", "Instalar herramientas", "Installer les outils"), systemImage: "arrow.down.app")
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
+                }
+            } header: {
+                Text(loc(languageCode, "Backend", "Backend", "Backend", "Backend"))
+            }
+
+            Section {
+                if model.providerChecks.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(loc(languageCode, "Running checks…", "Checks laufen…", "Ejecutando…", "Verification…"))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                } else {
+                    ForEach(model.providerChecks) { check in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: check.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(check.ok ? .green : .orange)
+                                .font(.callout)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(check.name)
+                                    .font(.callout.weight(.medium))
+                                Text(check.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
                         }
+                        .padding(.vertical, 4)
                     }
                 }
+            } header: {
+                Text(loc(languageCode, "Provider checks", "Provider-Checks", "Proveedores", "Fournisseurs"))
+            }
+
+            Section {
+                Toggle(loc(languageCode, "Show debug event stream", "Debug-Events anzeigen", "Mostrar eventos debug", "Afficher les evenements debug"),
+                       isOn: $debugDetails)
+            } footer: {
+                Text(loc(languageCode,
+                         "Debug events show raw backend progress messages below the results list.",
+                         "Debug-Events zeigen rohe Backend-Fortschrittsmeldungen unter der Ergebnisliste.",
+                         "Los eventos debug muestran mensajes crudos de progreso bajo los resultados.",
+                         "Les evenements debug affichent les messages bruts de progression sous les resultats."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .formStyle(.grouped)
+    }
+
+    private var backendBinding: Binding<String> {
+        Binding(
+            get: { model.backendCommand },
+            set: { model.updateBackendCommand($0) }
+        )
     }
 }
