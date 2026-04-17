@@ -622,14 +622,9 @@ struct FlowLinks: View {
         HStack(spacing: 6) {
             ForEach(primary) { link in
                 Link(destination: link.url) {
-                    Label(link.label, systemImage: link.icon)
-                        .font(.caption.weight(.medium))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .foregroundStyle(Color.white)
-                        .background(link.color.gradient, in: Capsule())
+                    FlowLinkContent(icon: link.icon, iconColor: link.color, text: link.label)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(FlowLinkButtonStyle())
             }
 
             if !overflow.isEmpty {
@@ -640,12 +635,53 @@ struct FlowLinks: View {
                         }
                     }
                 } label: {
-                    Label(loc(languageCode, "More", "Mehr", "Mas", "Plus"), systemImage: "ellipsis.circle")
-                        .labelStyle(.iconOnly)
+                    FlowLinkContent(icon: "ellipsis", iconColor: .secondary, text: nil)
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
+                .buttonStyle(FlowLinkButtonStyle())
+                .menuIndicator(.hidden)
                 .fixedSize()
             }
         }
+    }
+}
+
+private struct FlowLinkContent: View {
+    let icon: String
+    let iconColor: Color
+    let text: String?
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(iconColor)
+                .frame(width: 12)
+            if let text {
+                Text(text)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .padding(.horizontal, text == nil ? 8 : 10)
+        .frame(height: 24)
+    }
+}
+
+private struct FlowLinkButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : 0.06))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
+            )
+            .contentShape(Capsule(style: .continuous))
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
