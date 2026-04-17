@@ -122,9 +122,10 @@ struct SidebarView: View {
             List(selection: workspaceBinding) {
                 Section(loc(model.languageCode, "Workspaces", "Bereiche", "Espacios", "Espaces")) {
                     ForEach(WorkspaceSection.allCases) { section in
-                        Label(section.title(model.languageCode), systemImage: section.icon)
-                            .badge(sidebarBadge(for: section))
-                            .tag(Optional(section))
+                        NavigationLink(value: section) {
+                            Label(section.title(model.languageCode), systemImage: section.icon)
+                                .badge(sidebarBadge(for: section))
+                        }
                     }
                 }
 
