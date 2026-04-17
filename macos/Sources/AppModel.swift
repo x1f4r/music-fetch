@@ -18,7 +18,6 @@ final class AppModel: ObservableObject {
     @Published var languageCode: String
     @Published var captureState: CaptureState = .idle
     @Published var latestQuickCaptureSummary = ""
-    @Published var isDiagnosticsPresented = false
 
     private let microphoneRecorder = MicrophoneRecorder()
     private let systemAudioRecorder = SystemAudioRecorder()
@@ -192,10 +191,11 @@ final class AppModel: ObservableObject {
     }
 
     func showDiagnostics() {
-        isDiagnosticsPresented = true
+        UserDefaults.standard.set(SettingsTab.diagnostics.rawValue, forKey: settingsTabDefaultsKey)
         if providerChecks.isEmpty {
             refreshDoctor()
         }
+        NotificationCenter.default.post(name: .musicFetchShowDiagnostics, object: nil)
     }
 
     func analyze() {
