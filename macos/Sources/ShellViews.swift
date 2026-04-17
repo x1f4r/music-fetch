@@ -668,9 +668,6 @@ struct LibraryView: View {
                 .toggleStyle(.button)
             }
         }
-        .task {
-            await model.refreshLibrary()
-        }
         .refreshable {
             await model.refreshLibrary()
         }
