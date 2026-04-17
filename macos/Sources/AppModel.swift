@@ -28,6 +28,11 @@ final class AppModel: ObservableObject {
     private var cachedResults: [String: AnalyzeResponse] = [:]
     private var openedPrimaryLinkJobIDs: Set<String> = []
     private var terminationObserver: NSObjectProtocol?
+    private var lastStorageFetchAt: Date?
+    private var lastStorageFetchJobID: String?
+    private var lastLibraryFetchAt: Date?
+    private static let storageCacheWindow: TimeInterval = 8
+    private static let libraryCacheWindow: TimeInterval = 4
 
     init() {
         let savedBackend = UserDefaults.standard.string(forKey: backendCommandDefaultsKey)
@@ -142,6 +147,7 @@ final class AppModel: ObservableObject {
     }
 
     func activateWorkspace(_ section: WorkspaceSection) {
+        let alreadyThere = route.workspace == section
         route.workspace = section
         switch section {
         case .analyze:
@@ -151,16 +157,41 @@ final class AppModel: ObservableObject {
                 route.libraryJobID = orderedLibraryEntries.first?.job_id
             }
             if let jobID = route.libraryJobID {
-                loadLibraryJob(jobID)
+                if let cached = cachedResults[jobID] {
+                    applyCachedSnapshot(cached)
+                }
+                if !alreadyThere || shouldRefreshLibrary() {
+                    loadLibraryJob(jobID)
+                }
             }
         case .storage:
             if route.storageJobID == nil {
                 route.storageJobID = route.libraryJobID ?? orderedLibraryEntries.first?.job_id
             }
-            Task {
-                await refreshStorage(jobID: route.storageJobID)
+            if shouldRefreshStorage(for: route.storageJobID) || !alreadyThere && storageSummary == nil {
+                Task { await refreshStorage(jobID: route.storageJobID) }
             }
         }
+    }
+
+    private func applyCachedSnapshot(_ cached: AnalyzeResponse) {
+        result = cached
+        if selectedSegmentID == nil || !cached.segments.contains(where: { $0.id == selectedSegmentID }) {
+            selectedSegmentID = cached.segments.first?.id
+        }
+        updateViewState(for: cached)
+    }
+
+    private func shouldRefreshStorage(for jobID: String?) -> Bool {
+        if storageSummary == nil { return true }
+        if lastStorageFetchJobID != jobID { return true }
+        guard let at = lastStorageFetchAt else { return true }
+        return Date().timeIntervalSince(at) > Self.storageCacheWindow
+    }
+
+    private func shouldRefreshLibrary() -> Bool {
+        guard let at = lastLibraryFetchAt else { return true }
+        return Date().timeIntervalSince(at) > Self.libraryCacheWindow
     }
 
     func refreshCurrentWorkspace() {
@@ -251,13 +282,19 @@ final class AppModel: ObservableObject {
     }
 
     func loadLibraryJob(_ jobID: String) {
+        if let cached = cachedResults[jobID] {
+            route.libraryJobID = jobID
+            applyCachedSnapshot(cached)
+        }
         Task {
             do {
                 let response = try await refreshJobSnapshot(jobID)
                 route.libraryJobID = jobID
                 cache(response: response, source: response.items.first?.input_value ?? jobID)
             } catch {
-                viewState = .error(loc(languageCode, "Could not load analysis", "Analyse konnte nicht geladen werden", "No se pudo cargar el analisis", "Impossible de charger l'analyse"))
+                if cachedResults[jobID] == nil {
+                    viewState = .error(loc(languageCode, "Could not load analysis", "Analyse konnte nicht geladen werden", "No se pudo cargar el analisis", "Impossible de charger l'analyse"))
+                }
             }
         }
     }
@@ -302,7 +339,10 @@ final class AppModel: ObservableObject {
                 queryItems: [URLQueryItem(name: "limit", value: "60")],
                 type: LibraryEnvelope.self
             )
-            libraryEntries = payload.entries
+            let incoming = payload.entries
+            if incoming != libraryEntries {
+                libraryEntries = incoming
+            }
             if route.libraryJobID == nil || !libraryEntries.contains(where: { $0.job_id == route.libraryJobID }) {
                 route.libraryJobID = orderedLibraryEntries.first?.job_id
             }
@@ -311,7 +351,9 @@ final class AppModel: ObservableObject {
             {
                 route.storageJobID = nil
             }
+            lastLibraryFetchAt = Date()
         } catch {
+            if !libraryEntries.isEmpty { return }
             libraryEntries = []
         }
     }
@@ -324,8 +366,10 @@ final class AppModel: ObservableObject {
             }
             let payload = try await backend.getJSON("/v1/storage", command: backendCommand, queryItems: queryItems, type: StorageEnvelope.self)
             storageSummary = payload.storage
+            lastStorageFetchAt = Date()
+            lastStorageFetchJobID = jobID
         } catch {
-            storageSummary = nil
+            if storageSummary == nil { return }
         }
     }
 
@@ -715,14 +759,19 @@ final class AppModel: ObservableObject {
         pollingTask = Task { [weak self] in
             while let self, !Task.isCancelled {
                 await self.pollLiveState()
-                try? await Task.sleep(for: .seconds(2))
+                let interval: Duration = self.hasActiveJob ? .seconds(2) : .seconds(6)
+                try? await Task.sleep(for: interval)
             }
         }
     }
 
+    private var hasActiveJob: Bool {
+        libraryEntries.contains { ["queued", "running"].contains($0.status) }
+    }
+
     private func pollLiveState() async {
         await refreshLibrary()
-        if route.workspace == .storage {
+        if route.workspace == .storage, shouldRefreshStorage(for: route.storageJobID) {
             await refreshStorage(jobID: route.storageJobID)
         }
         guard let jobID = activeJobID else { return }
