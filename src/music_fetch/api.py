@@ -71,7 +71,7 @@ def _safe_upload_name(filename: str | None) -> str:
 
 
 def create_api(context: AppContext) -> FastAPI:
-    app = FastAPI(title="Music Fetch", version="0.3.5")
+    app = FastAPI(title="Music Fetch", version="0.3.6")
 
     def require_auth(authorization: str | None = Header(default=None)) -> None:
         token = context.settings.api_token
