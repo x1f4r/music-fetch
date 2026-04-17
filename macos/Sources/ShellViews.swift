@@ -358,6 +358,8 @@ struct InputCard: View {
                     Text(subtitle)
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2, reservesSpace: true)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Group {
@@ -368,22 +370,15 @@ struct InputCard: View {
                         fileRow
                     case .microphone:
                         captureRow(icon: "mic.fill",
-                                   hint: loc(model.languageCode,
-                                             "Capture audio from the selected microphone.",
-                                             "Audio vom gewaehlten Mikrofon aufnehmen.",
-                                             "Captura audio del microfono seleccionado.",
-                                             "Capturez l'audio du micro selectionne."),
+                                   status: micStatus,
                                    tint: .red)
                     case .system:
                         captureRow(icon: "waveform",
-                                   hint: loc(model.languageCode,
-                                             "Record currently playing system audio (requires permission).",
-                                             "Laufendes Systemaudio aufnehmen (benoetigt Berechtigung).",
-                                             "Graba el audio del sistema (requiere permiso).",
-                                             "Enregistre l'audio systeme (permission requise)."),
+                                   status: systemStatus,
                                    tint: .orange)
                     }
                 }
+                .frame(height: 40)
 
                 Picker("", selection: preferredBinding) {
                     ForEach(PreferredInput.allCases) { input in
@@ -425,7 +420,9 @@ struct InputCard: View {
     // MARK: rows
 
     private var linkRow: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
+            leadingInputIcon("link", tint: .accentColor)
+
             TextField(
                 loc(model.languageCode, "Paste a link", "Link einfuegen", "Pega un enlace", "Collez un lien"),
                 text: $model.inputValue
@@ -445,7 +442,9 @@ struct InputCard: View {
     }
 
     private var fileRow: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
+            leadingInputIcon("doc", tint: .accentColor)
+
             TextField(
                 loc(model.languageCode, "File path", "Dateipfad", "Ruta de archivo", "Chemin du fichier"),
                 text: $model.inputValue
@@ -473,18 +472,14 @@ struct InputCard: View {
         }
     }
 
-    private func captureRow(icon: String, hint: String, tint: Color) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 28))
-                .foregroundStyle(tint)
-                .frame(width: 40, height: 40)
-                .background(tint.opacity(0.12), in: Circle())
+    private func captureRow(icon: String, status: String, tint: Color) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            leadingInputIcon(icon, tint: tint)
 
-            Text(hint)
+            Text(status)
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
 
             Spacer(minLength: 8)
 
@@ -494,7 +489,37 @@ struct InputCard: View {
                 .tint(tint)
                 .keyboardShortcut(.return, modifiers: [.command])
         }
-        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func leadingInputIcon(_ name: String, tint: Color) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 32, height: 32)
+            .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var micStatus: String {
+        switch model.captureState {
+        case .recordingMic:
+            return loc(model.languageCode, "Recording...", "Nimmt auf...", "Grabando...", "Enregistrement...")
+        case .stoppingMic:
+            return loc(model.languageCode, "Stopping...", "Stoppt...", "Deteniendo...", "Arret...")
+        default:
+            return loc(model.languageCode, "Ready", "Bereit", "Listo", "Pret")
+        }
+    }
+
+    private var systemStatus: String {
+        switch model.captureState {
+        case .recordingSystem:
+            return loc(model.languageCode, "Capturing...", "Nimmt auf...", "Capturando...", "Capture...")
+        case .stoppingSystem:
+            return loc(model.languageCode, "Stopping...", "Stoppt...", "Deteniendo...", "Arret...")
+        default:
+            return loc(model.languageCode, "Ready", "Bereit", "Listo", "Pret")
+        }
     }
 
     // MARK: computed
