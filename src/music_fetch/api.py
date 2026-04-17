@@ -11,8 +11,10 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from .artifact_service import ArtifactCleanupError
 from .context import AppContext
 from .models import DetectedSegment, JobCreate, JobOptions, ProviderConfig, ProviderName
+from .service import JobBusyError
 
 
 class ProviderUpdate(BaseModel):
@@ -257,11 +259,49 @@ def create_api(context: AppContext) -> FastAPI:
 
     @app.delete("/v1/storage")
     async def delete_storage(job_id: str | None = None, _: None = Depends(require_auth)) -> dict:
-        if job_id:
-            storage = context.manager.cleanup_job_artifacts(job_id)
-        else:
-            storage = context.manager.cleanup_temporary_artifacts()
-        return {"storage": storage}
+        failed_paths: list[str] = []
+        try:
+            if job_id:
+                storage = context.manager.cleanup_job_artifacts(job_id, strict=True)
+            else:
+                storage = context.manager.cleanup_temporary_artifacts()
+        except ArtifactCleanupError as exc:
+            # Partial success: return the summary we CAN compute plus the
+            # offending paths so the UI can surface them. HTTP 200 keeps
+            # existing clients working; they ignore the new field.
+            failed_paths = exc.failed_paths
+            storage = context.manager.storage_summary(job_id)
+        return {"storage": storage, "failed_paths": failed_paths}
+
+    @app.delete("/v1/jobs/{job_id}")
+    async def delete_job(job_id: str, _: None = Depends(require_auth)) -> dict:
+        """Permanently remove a job: artifacts + database row (T0.2).
+
+        Refuses to act on queued/running jobs; caller must cancel first. With
+        the v5 schema cascade in place, a single DELETE row wipes every
+        dependent table.
+        """
+        try:
+            return context.manager.delete_job(job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except JobBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.delete("/v1/library/{job_id}")
+    async def delete_library_entry(job_id: str, _: None = Depends(require_auth)) -> dict:
+        """Alias of ``DELETE /v1/jobs/{id}`` intended for the library UI."""
+        try:
+            return context.manager.delete_job(job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except JobBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/v1/library/prune-zombies")
+    async def prune_library_zombies(_: None = Depends(require_auth)) -> dict:
+        """Remove library rows whose artifacts are gone (T0.5)."""
+        return context.manager.prune_zombie_library_entries()
 
     @app.put("/v1/storage/jobs/{job_id}/pin")
     async def update_job_pin(job_id: str, payload: PinUpdate, _: None = Depends(require_auth)) -> dict:

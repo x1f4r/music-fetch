@@ -153,6 +153,16 @@ struct CancelResponse: Codable {
     let status: String
 }
 
+/// Response from `DELETE /v1/jobs/{id}` — the backend returns the deleted
+/// job id, a success flag, and any paths that could not be unlinked (partial
+/// success). The UI does not need the failed-paths array today but the model
+/// accepts it so future UX work can surface it without another round-trip.
+struct DeleteJobResponse: Codable {
+    let job_id: String
+    let deleted: Bool
+    let failed_paths: [String]?
+}
+
 struct RetryResponse: Codable {
     let job_id: String
     let retried_segments: Int

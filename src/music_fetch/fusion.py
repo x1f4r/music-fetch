@@ -5,7 +5,24 @@ from collections import defaultdict
 from .models import DetectedSegment, ProviderName, SegmentKind, TrackCandidate, TrackMatch
 
 
-def fuse_candidates(source_item_id: str, candidates: list[TrackCandidate], max_gap_ms: int = 8_000) -> list[DetectedSegment]:
+def fuse_candidates(
+    source_item_id: str,
+    candidates: list[TrackCandidate],
+    max_gap_ms: int = 12_000,
+) -> list[DetectedSegment]:
+    """Group candidate hits into :class:`DetectedSegment` runs.
+
+    Candidates are grouped by the new tiered identity
+    (:meth:`TrackMatch.normalized_key`), which means ISRC / provider-native id
+    / fuzzy artist+title variants collapse together. Within each identity, a
+    sequence of hits is coalesced as long as successive hits are within
+    ``max_gap_ms`` of the previous one's end — a legitimate repeat of the
+    same song later in the mix produces a separate segment.
+
+    The default ``max_gap_ms`` is aligned with
+    ``JobOptions.merge_gap_same_track_ms`` so the single-track fusion and the
+    long-mix stitcher behave consistently.
+    """
     grouped: dict[str, list[TrackCandidate]] = defaultdict(list)
     for candidate in candidates:
         grouped[candidate.track.normalized_key()].append(candidate)
@@ -55,6 +72,8 @@ def _build_segment(source_item_id: str, cluster: list[TrackCandidate]) -> Detect
         provider_attempts=len(cluster),
         uncertainty=max(0.0, 1.0 - confidence),
         explanation=explanation,
+        identity_key=primary.track.normalized_key(),
+        acceptance_gate="FUSION",
     )
 
 

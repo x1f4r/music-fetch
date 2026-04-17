@@ -36,7 +36,7 @@ class DummyManager:
     def storage_summary(self, job_id=None):
         return {"job_id": job_id, "total_size_bytes": 0}
 
-    def cleanup_job_artifacts(self, job_id):
+    def cleanup_job_artifacts(self, job_id, *, strict: bool = False):
         return {"job_id": job_id, "total_size_bytes": 0}
 
     def cleanup_temporary_artifacts(self):
@@ -44,6 +44,12 @@ class DummyManager:
 
     def set_job_pinned(self, job_id, pinned):
         return pinned
+
+    def delete_job(self, job_id):
+        return {"job_id": job_id, "deleted": True, "failed_paths": []}
+
+    def prune_zombie_library_entries(self):
+        return {"removed_job_ids": []}
 
     def correct_segment(self, job_id, **payload):
         self.corrected.append((job_id, payload))
@@ -114,6 +120,76 @@ def test_storage_and_library_endpoints() -> None:
     assert cancel.status_code == 200
     assert cancel.json()["job_id"] == "job-1"
     assert manager.canceled == ["job-1"]
+
+
+def test_delete_job_endpoint_success_and_404() -> None:
+    """``DELETE /v1/jobs/{id}`` returns the manager result. Unknown job is 404."""
+    manager = DummyManager()
+    context = AppContext(settings=type("Settings", (), {"api_token": None})(), db=DummyDb(), manager=manager)
+    client = TestClient(create_api(context))
+
+    ok = client.delete("/v1/jobs/job-1")
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["deleted"] is True
+    assert body["job_id"] == "job-1"
+
+    # DummyManager.delete_job never raises — simulate a 404 by flipping it.
+    def _raise_unknown(job_id):
+        raise ValueError(f"Unknown job: {job_id}")
+
+    manager.delete_job = _raise_unknown  # type: ignore[method-assign]
+    missing = client.delete("/v1/jobs/unknown")
+    assert missing.status_code == 404
+
+
+def test_delete_job_endpoint_409_on_running_job() -> None:
+    from music_fetch.service import JobBusyError
+
+    manager = DummyManager()
+
+    def _raise_busy(job_id):
+        raise JobBusyError(f"Job {job_id} is running")
+
+    manager.delete_job = _raise_busy  # type: ignore[method-assign]
+    context = AppContext(settings=type("Settings", (), {"api_token": None})(), db=DummyDb(), manager=manager)
+    client = TestClient(create_api(context))
+
+    response = client.delete("/v1/jobs/job-1")
+    assert response.status_code == 409
+
+
+def test_delete_library_entry_alias_and_prune_zombies_endpoint() -> None:
+    manager = DummyManager()
+    context = AppContext(settings=type("Settings", (), {"api_token": None})(), db=DummyDb(), manager=manager)
+    client = TestClient(create_api(context))
+
+    alias = client.delete("/v1/library/job-1")
+    assert alias.status_code == 200
+    assert alias.json()["deleted"] is True
+
+    prune = client.post("/v1/library/prune-zombies")
+    assert prune.status_code == 200
+    assert prune.json() == {"removed_job_ids": []}
+
+
+def test_delete_storage_surfaces_failed_paths() -> None:
+    """Partial success during cleanup returns HTTP 200 plus ``failed_paths``."""
+    from music_fetch.artifact_service import ArtifactCleanupError
+
+    manager = DummyManager()
+
+    def _partial(job_id, *, strict: bool = False):
+        raise ArtifactCleanupError(["/tmp/stuck.wav"], "simulated stuck file")
+
+    manager.cleanup_job_artifacts = _partial  # type: ignore[method-assign]
+    context = AppContext(settings=type("Settings", (), {"api_token": None})(), db=DummyDb(), manager=manager)
+    client = TestClient(create_api(context))
+
+    response = client.delete("/v1/storage", params={"job_id": "job-1"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["failed_paths"] == ["/tmp/stuck.wav"]
 
 
 def test_upload_endpoint_sanitizes_filename_and_accepts_options(tmp_path) -> None:

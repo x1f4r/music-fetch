@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from music_fetch.media import MediaToolError, SourceProfile
 from music_fetch.long_mix import ProbeWindow, SegmentDraft
 from music_fetch.models import (
@@ -216,7 +218,12 @@ def test_long_mix_reuses_repeat_group_matches(monkeypatch, app_env, tmp_path: Pa
     monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: "cache-key")
     monkeypatch.setattr(JobManager, "_providers", lambda self: [FakeProvider()])
 
+    # Create a real jobs row with the id the test uses so FK-backed writes
+    # (events, metrics, source_items) succeed under the v5 cascade schema.
     db.create_job([str(source)], JobOptions())
+    with db.connect() as conn:
+        conn.execute("UPDATE jobs SET id = ? WHERE id != ?", ("job-long", "job-long"))
+        conn.commit()
     segments = manager._process_long_mix_item(
         Job(
             id="job-long",
@@ -241,9 +248,12 @@ def test_recognize_with_cache_converts_unexpected_provider_crash_to_warning(app_
     settings, db, manager = app_env
     clip = tmp_path / "clip.wav"
     clip.write_bytes(b"fake")
+    # Create a job row so that the FK-backed event/metric writes succeed under
+    # the v5 cascade schema.
+    job = db.create_job([str(clip)], JobOptions())
     item = SourceItem(
         id="item-1",
-        job_id="job-1",
+        job_id=job.id,
         input_value=str(clip),
         kind=SourceKind.LOCAL_FILE,
         status=ItemStatus.RUNNING,
@@ -251,9 +261,9 @@ def test_recognize_with_cache_converts_unexpected_provider_crash_to_warning(app_
         local_path=str(clip),
     )
 
-    hits = manager._recognize_with_cache("job-1", item, CrashProvider(), clip, 0, 12_000)
+    hits = manager._recognize_with_cache(job.id, item, CrashProvider(), clip, 0, 12_000)
     assert hits == []
-    events = db.list_events("job-1")
+    events = db.list_events(job.id)
     assert any("crashed on" in event.message for event in events)
 
 
@@ -261,6 +271,12 @@ def test_segmented_path_prefers_instrumental_excerpt_source(monkeypatch, app_env
     settings, db, manager = app_env
     source = write_test_tone(tmp_path / "mix.wav", seconds=40)
     instrumental = write_test_tone(tmp_path / "instrumental.wav", seconds=40)
+    # Pre-create the job row so FK-backed writes (events, metrics, source_items)
+    # succeed under the v5 cascade schema.
+    db.create_job([str(source)], JobOptions())
+    with db.connect() as conn:
+        conn.execute("UPDATE jobs SET id = ? WHERE id != ?", ("job-segmented", "job-segmented"))
+        conn.commit()
     item = SourceItem(
         id="item-segmented",
         job_id="job-segmented",
@@ -713,6 +729,256 @@ def test_retry_uses_input_path_for_local_files_without_local_path(monkeypatch, a
     stored = db.get_segments(job.id)[0]
     assert stored.kind == SegmentKind.MATCHED_TRACK
     assert stored.track is not None
+
+
+def test_stitch_bridges_short_speech_between_same_identity_matches(app_env) -> None:
+    """A DJ talking for 3 seconds between two plays of the same song
+    (identity-equivalent, even with slight metadata drift) should produce
+    one segment, not two. Regression: this was the canonical "6 snippets
+    of one song" complaint. T1.2."""
+    settings, db, manager = app_env
+    song_a = TrackMatch(title="Slow Down", artist="CADMIUM, Chris Linton")
+    # Slightly different artist ordering — fuzzy identity must collapse these.
+    song_a2 = TrackMatch(title="Slow Down", artist="Chris Linton & CADMIUM")
+    stitched = manager._stitch_segment_timeline(
+        [
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=0,
+                end_ms=30_000,
+                kind=SegmentKind.MATCHED_TRACK,
+                confidence=0.72,
+                providers=[ProviderName.VIBRA],
+                evidence_count=1,
+                track=song_a,
+            ),
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=30_000,
+                end_ms=33_000,
+                kind=SegmentKind.SPEECH_ONLY,
+                confidence=0.0,
+                providers=[],
+                evidence_count=0,
+            ),
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=33_000,
+                end_ms=60_000,
+                kind=SegmentKind.MATCHED_TRACK,
+                confidence=0.75,
+                providers=[ProviderName.VIBRA],
+                evidence_count=1,
+                track=song_a2,
+            ),
+        ]
+    )
+    assert len(stitched) == 1
+    assert stitched[0].start_ms == 0
+    assert stitched[0].end_ms == 60_000
+    assert stitched[0].track.title == "Slow Down"
+
+
+def test_stitch_does_not_bridge_across_long_speech_region(app_env) -> None:
+    """A genuine 20-second speech section between two plays of the same
+    song should stay separate — that's legitimate repeat behavior, not DJ
+    chatter. T1.2 bridge-length guard."""
+    settings, db, manager = app_env
+    track = TrackMatch(title="Repeat Song", artist="Artist")
+    stitched = manager._stitch_segment_timeline(
+        [
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=0,
+                end_ms=30_000,
+                kind=SegmentKind.MATCHED_TRACK,
+                confidence=0.8,
+                providers=[ProviderName.VIBRA],
+                evidence_count=1,
+                track=track,
+            ),
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=30_000,
+                end_ms=50_000,  # 20 seconds of speech — too long to bridge.
+                kind=SegmentKind.SPEECH_ONLY,
+                confidence=0.0,
+                providers=[],
+                evidence_count=0,
+            ),
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=50_000,
+                end_ms=80_000,
+                kind=SegmentKind.MATCHED_TRACK,
+                confidence=0.8,
+                providers=[ProviderName.VIBRA],
+                evidence_count=1,
+                track=track,
+            ),
+        ]
+    )
+    # Expect 3 segments preserved: song / speech / song.
+    assert len(stitched) == 3
+    assert stitched[0].kind == SegmentKind.MATCHED_TRACK
+    assert stitched[1].kind == SegmentKind.SPEECH_ONLY
+    assert stitched[2].kind == SegmentKind.MATCHED_TRACK
+
+
+def test_stitch_does_not_merge_distinct_isrcs_even_with_matching_titles(app_env) -> None:
+    """Two songs with the same title + artist but distinct ISRCs are
+    explicitly different recordings; ISRC veto must prevent merge."""
+    settings, db, manager = app_env
+    left_track = TrackMatch(title="Same Title", artist="Artist", isrc="USRC11111111")
+    right_track = TrackMatch(title="Same Title", artist="Artist", isrc="USRC22222222")
+    stitched = manager._stitch_segment_timeline(
+        [
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=0,
+                end_ms=10_000,
+                kind=SegmentKind.MATCHED_TRACK,
+                confidence=0.8,
+                providers=[ProviderName.VIBRA],
+                evidence_count=1,
+                track=left_track,
+            ),
+            DetectedSegment(
+                source_item_id="item-1",
+                start_ms=10_000,
+                end_ms=20_000,
+                kind=SegmentKind.MATCHED_TRACK,
+                confidence=0.8,
+                providers=[ProviderName.VIBRA],
+                evidence_count=1,
+                track=right_track,
+            ),
+        ]
+    )
+    assert len(stitched) == 2
+
+
+def test_pick_candidate_accepts_single_strong_hit_over_low_music_ratio(app_env) -> None:
+    """A podcast with music has music_ratio below 0.45, which the old gate
+    (AND all) rejected even when providers agreed. The layered gate (T1.3)
+    accepts when score >= 0.72 regardless of music_ratio."""
+    settings, db, manager = app_env
+    from music_fetch.long_mix import SegmentDraft
+    import numpy as np
+
+    draft = SegmentDraft(
+        start_ms=0,
+        end_ms=30_000,
+        kind=SegmentKind.SPEECH_ONLY,
+        feature_vector=np.ones(4),
+        chroma_vector=np.ones(4),
+        music_ratio=0.30,
+        speech_ratio=0.60,
+        candidates=[
+            TrackCandidate(
+                track=TrackMatch(title="Underlying Music", artist="Some Artist"),
+                provider=ProviderName.ACRCLOUD,
+                confidence=0.85,  # ACRCloud weight 0.90 → score 0.765+ → G3
+                start_ms=0,
+                end_ms=10_000,
+            )
+        ],
+    )
+    pick = manager._pick_segment_candidate(draft)
+    assert pick is not None
+    assert pick.raw.get("_acceptance_gate") == "G3"
+
+
+def test_pick_candidate_accepts_isrc_backed_hit_below_normal_threshold(app_env) -> None:
+    """ISRC provenance is strong evidence; G5 accepts at a lower score."""
+    settings, db, manager = app_env
+    from music_fetch.long_mix import SegmentDraft
+    import numpy as np
+
+    draft = SegmentDraft(
+        start_ms=0,
+        end_ms=30_000,
+        kind=SegmentKind.MUSIC_UNRESOLVED,
+        feature_vector=np.ones(4),
+        chroma_vector=np.ones(4),
+        music_ratio=0.20,  # low — would fail G4
+        speech_ratio=0.10,
+        candidates=[
+            TrackCandidate(
+                track=TrackMatch(title="Song", artist="Artist", isrc="USRC00000001"),
+                provider=ProviderName.AUDD,
+                confidence=0.70,  # weight 0.87 → score ~0.60+
+                start_ms=0,
+                end_ms=10_000,
+            )
+        ],
+    )
+    pick = manager._pick_segment_candidate(draft)
+    assert pick is not None
+    assert pick.raw.get("_acceptance_gate") == "G5"
+
+
+def test_delete_job_refuses_running_job(app_env) -> None:
+    """Can't delete an in-flight job — cancel first. T0.2."""
+    from music_fetch.service import JobBusyError
+
+    settings, db, manager = app_env
+    job = db.create_job(["/tmp/x.wav"], JobOptions())
+    db.update_job(job.id, status=JobStatus.RUNNING)
+
+    with pytest.raises(JobBusyError):
+        manager.delete_job(job.id)
+
+    # Still present.
+    assert db.get_job(job.id) is not None
+
+
+def test_delete_job_removes_library_row_and_children(app_env, tmp_path) -> None:
+    """End-to-end: delete a terminal job, verify library entry disappears
+    and cascades clear every child table."""
+    settings, db, manager = app_env
+    job = db.create_job(["/tmp/x.wav"], JobOptions())
+    db.add_source_items(
+        [
+            SourceItem(
+                id="item-1",
+                job_id=job.id,
+                input_value="/tmp/x.wav",
+                kind=SourceKind.LOCAL_FILE,
+                status=ItemStatus.SUCCEEDED,
+                metadata=SourceMetadata(title="X", duration_ms=12_000),
+            )
+        ]
+    )
+    db.update_job(job.id, status=JobStatus.SUCCEEDED)
+
+    result = manager.delete_job(job.id)
+
+    assert result["deleted"] is True
+    assert db.get_job(job.id) is None
+    assert len(manager.list_library_entries()) == 0
+
+
+def test_prune_zombie_entries_removes_artifactless_terminals(app_env) -> None:
+    """Library reconciliation: terminal-status jobs with no artifacts and no
+    segments are zombies; pinned jobs and still-running jobs are not. T0.5."""
+    settings, db, manager = app_env
+    zombie = db.create_job(["a"], JobOptions())
+    db.update_job(zombie.id, status=JobStatus.SUCCEEDED)
+    pinned = db.create_job(["b"], JobOptions())
+    db.update_job(pinned.id, status=JobStatus.SUCCEEDED)
+    db.set_job_pinned(pinned.id, True)
+    running = db.create_job(["c"], JobOptions())
+    db.update_job(running.id, status=JobStatus.RUNNING)
+
+    result = manager.prune_zombie_library_entries()
+    removed = set(result["removed_job_ids"])
+    assert zombie.id in removed
+    assert pinned.id not in removed
+    assert running.id not in removed
+    assert db.get_job(zombie.id) is None
+    assert db.get_job(pinned.id) is not None
+    assert db.get_job(running.id) is not None
 
 
 def test_export_job_supports_csv_and_chapters(app_env) -> None:

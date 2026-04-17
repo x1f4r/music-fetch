@@ -622,6 +622,7 @@ struct LibraryView: View {
     @State private var searchText: String = ""
     @AppStorage(libraryScopeDefaultsKey) private var scopeRaw = LibraryScope.all.rawValue
     @State private var path: [String] = []
+    @State private var pendingDeletion: PendingDeletion?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -664,6 +665,26 @@ struct LibraryView: View {
                                            role: .destructive) {
                                         model.cancelJob(entry.job_id)
                                     }
+                                } else {
+                                    // Terminal jobs only: offer the new destructive
+                                    // "Delete permanently" action. Running jobs need
+                                    // to be canceled first (backend returns 409).
+                                    Divider()
+                                    Button(loc(model.languageCode,
+                                              "Clear artifacts",
+                                              "Artefakte leeren",
+                                              "Borrar archivos",
+                                              "Effacer les fichiers")) {
+                                        model.cleanupArtifacts(jobID: entry.job_id)
+                                    }
+                                    Button(loc(model.languageCode,
+                                              "Delete permanently",
+                                              "Dauerhaft loeschen",
+                                              "Eliminar",
+                                              "Supprimer definitivement"),
+                                           role: .destructive) {
+                                        pendingDeletion = PendingDeletion(entry: entry)
+                                    }
                                 }
                             }
                         }
@@ -676,6 +697,49 @@ struct LibraryView: View {
         .background(Theme.Palette.surface)
         .searchable(text: $searchText, prompt: loc(model.languageCode, "Search runs", "Laeufe suchen", "Buscar analisis", "Rechercher"))
         .refreshable { await model.refreshLibrary() }
+        .confirmationDialog(
+            loc(model.languageCode,
+                "Delete this run permanently?",
+                "Diesen Lauf dauerhaft loeschen?",
+                "¿Eliminar este analisis definitivamente?",
+                "Supprimer cette analyse definitivement ?"),
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            presenting: pendingDeletion
+        ) { pending in
+            Button(pending.entry.pinned
+                   ? loc(model.languageCode,
+                         "Delete pinned run",
+                         "Gepinnten Lauf loeschen",
+                         "Eliminar analisis fijado",
+                         "Supprimer l'analyse epinglee")
+                   : loc(model.languageCode,
+                         "Delete",
+                         "Loeschen",
+                         "Eliminar",
+                         "Supprimer"),
+                   role: .destructive) {
+                model.deleteJob(pending.entry.job_id)
+                pendingDeletion = nil
+            }
+            Button(loc(model.languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler"),
+                   role: .cancel) { pendingDeletion = nil }
+        } message: { pending in
+            Text(loc(model.languageCode,
+                     "This removes the run and every artifact file. It cannot be undone.",
+                     "Der Lauf und alle Dateien werden entfernt. Nicht rueckgaengig zu machen.",
+                     "Se eliminaran el analisis y todos los archivos. Sin deshacer.",
+                     "L'analyse et tous les fichiers seront supprimes. Irreversible."))
+        }
+    }
+
+    /// Selection state for the destructive-delete confirmation sheet. Held on
+    /// the view, not the model, so it resets naturally when the view goes away.
+    private struct PendingDeletion: Identifiable {
+        let entry: LibraryEntryPayload
+        var id: String { entry.job_id }
     }
 
     private var scopeRow: some View {
@@ -909,6 +973,7 @@ struct LibraryJobDetailView: View {
     @State private var zoom: Double = 1.0
     @State private var showOnlySongs: Bool = true
     @State private var refreshTask: Task<Void, Never>?
+    @State private var detailPendingDeletion: DetailPendingDeletion?
 
     var body: some View {
         ScrollView {
@@ -932,6 +997,42 @@ struct LibraryJobDetailView: View {
         .onDisappear {
             refreshTask?.cancel()
             refreshTask = nil
+        }
+        .confirmationDialog(
+            loc(model.languageCode,
+                "Delete this run permanently?",
+                "Diesen Lauf dauerhaft loeschen?",
+                "¿Eliminar este analisis definitivamente?",
+                "Supprimer cette analyse definitivement ?"),
+            isPresented: Binding(
+                get: { detailPendingDeletion != nil },
+                set: { if !$0 { detailPendingDeletion = nil } }
+            ),
+            presenting: detailPendingDeletion
+        ) { pending in
+            Button(pending.pinned
+                   ? loc(model.languageCode,
+                         "Delete pinned run",
+                         "Gepinnten Lauf loeschen",
+                         "Eliminar analisis fijado",
+                         "Supprimer l'analyse epinglee")
+                   : loc(model.languageCode,
+                         "Delete",
+                         "Loeschen",
+                         "Eliminar",
+                         "Supprimer"),
+                   role: .destructive) {
+                model.deleteJob(pending.jobID)
+                detailPendingDeletion = nil
+            }
+            Button(loc(model.languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler"),
+                   role: .cancel) { detailPendingDeletion = nil }
+        } message: { _ in
+            Text(loc(model.languageCode,
+                     "This removes the run and every artifact file. It cannot be undone.",
+                     "Der Lauf und alle Dateien werden entfernt. Nicht rueckgaengig zu machen.",
+                     "Se eliminaran el analisis y todos los archivos. Sin deshacer.",
+                     "L'analyse et tous les fichiers seront supprimes. Irreversible."))
         }
     }
 
@@ -991,8 +1092,37 @@ struct LibraryJobDetailView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.orange)
+            } else {
+                Menu {
+                    Button(loc(model.languageCode,
+                              "Clear artifacts",
+                              "Artefakte leeren",
+                              "Borrar archivos",
+                              "Effacer les fichiers")) {
+                        model.cleanupArtifacts(jobID: jobID)
+                    }
+                    Button(loc(model.languageCode,
+                              "Delete permanently",
+                              "Dauerhaft loeschen",
+                              "Eliminar",
+                              "Supprimer definitivement"),
+                           role: .destructive) {
+                        detailPendingDeletion = DetailPendingDeletion(jobID: jobID, pinned: entry.pinned)
+                    }
+                } label: {
+                    Label(loc(model.languageCode, "Manage", "Verwalten", "Gestionar", "Gerer"),
+                          systemImage: "ellipsis.circle")
+                }
+                .menuStyle(.button)
+                .fixedSize()
             }
         }
+    }
+
+    private struct DetailPendingDeletion: Identifiable {
+        let jobID: String
+        let pinned: Bool
+        var id: String { jobID }
     }
 
     @ViewBuilder

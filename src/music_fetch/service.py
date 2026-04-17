@@ -12,7 +12,7 @@ from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .artifact_service import ArtifactService
+from .artifact_service import ArtifactCleanupError, ArtifactService
 from .config import Settings
 from .db import Database
 from .fusion import fuse_candidates
@@ -44,6 +44,7 @@ from .models import (
     ItemStatus,
     Job,
     JobCreate,
+    JobOptions,
     JobStatus,
     LibraryEntry,
     ProviderConfig,
@@ -63,6 +64,40 @@ from .providers import ACRCloudProvider, AudDProvider, LocalCatalogProvider, Vib
 from .providers.base import BaseProvider, ProviderError
 from .sources import SourceResolver
 from .utils import now_iso
+
+
+class JobBusyError(RuntimeError):
+    """Raised when an operation refuses to act on a queued/running job.
+
+    Handled by the API layer as HTTP 409 Conflict. Keeps the worker thread
+    from having its DB row ripped out mid-process.
+    """
+
+
+class _BudgetCounter:
+    """Thread-safe integer budget shared across parallel segment workers.
+
+    ``try_spend(1)`` atomically checks-and-decrements; returns True when the
+    caller is authorized to make a provider call. ``try_spend(0)`` is a
+    non-consuming check for "is there any budget left?" — useful when a
+    worker wants to bail early without burning a slot.
+    """
+
+    def __init__(self, initial: int) -> None:
+        self._lock = threading.Lock()
+        self._remaining = max(0, initial)
+
+    @property
+    def remaining(self) -> int:
+        with self._lock:
+            return self._remaining
+
+    def try_spend(self, cost: int) -> bool:
+        with self._lock:
+            if self._remaining < cost:
+                return False
+            self._remaining -= cost
+            return True
 
 
 class JobManager:
@@ -140,11 +175,40 @@ class JobManager:
         self.db.set_job_pinned(job_id, pinned)
         return pinned
 
-    def cleanup_job_artifacts(self, job_id: str, *, force: bool = True) -> StorageSummary:
-        return self.artifact_service.cleanup_job_artifacts(job_id, force=force)
+    def cleanup_job_artifacts(self, job_id: str, *, force: bool = True, strict: bool = False) -> StorageSummary:
+        return self.artifact_service.cleanup_job_artifacts(job_id, force=force, strict=strict)
 
     def cleanup_temporary_artifacts(self) -> StorageSummary:
         return self.artifact_service.cleanup_temporary_artifacts()
+
+    def delete_job(self, job_id: str) -> dict:
+        """Delete a job entirely: files + library row (T0.2).
+
+        Refuses to delete a queued/running job (409-style). Callers should
+        cancel first. Returns a small status dict for API callers.
+        """
+        job = self.db.get_job(job_id)
+        if job is None:
+            raise ValueError(f"Unknown job: {job_id}")
+        if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+            raise JobBusyError(f"Job {job_id} is {job.status.value}; cancel it first")
+        report = self.artifact_service.delete_job_completely(job_id, strict=False)
+        with self._lock:
+            self._futures.pop(job_id, None)
+        return {
+            "job_id": job_id,
+            "deleted": True,
+            "failed_paths": list(report.failed_paths),
+        }
+
+    def prune_zombie_library_entries(self) -> dict:
+        """Remove library entries whose artifacts are gone (T0.5).
+
+        A "zombie" is a terminal-status job row (``SUCCEEDED`` / ``FAILED`` /
+        ``CANCELED``) that is unpinned and has no artifacts on disk. Returns a
+        summary dict with ``removed_job_ids``.
+        """
+        return self.library_service.prune_zombie_entries()
 
     def cancel(self, job_id: str) -> None:
         if not self.db.get_job(job_id):
@@ -367,7 +431,15 @@ class JobManager:
                 self.db.add_event(job.id, "info", f"Early stop reached for {item.id}")
                 break
 
-        segments = fuse_candidates(item.id, candidates)
+        segments = fuse_candidates(
+            item.id,
+            candidates,
+            max_gap_ms=job.options.merge_gap_same_track_ms,
+        )
+        # Even on the single-track path the stitch pass is useful: provider
+        # title/artist variance can yield two same-identity segments that only
+        # merge once tiered-identity does its thing.
+        segments = self._stitch_segment_timeline(segments, options=job.options)
         self.db.replace_segments(job.id, item.id, segments)
         self._record_item_summary_metric(job.id, item.id, segments)
         item.status = ItemStatus.SUCCEEDED
@@ -411,48 +483,118 @@ class JobManager:
         ]
 
     def _process_long_mix_item(self, job: Job, item: SourceItem, normalized: Path, instrumental: Path | None = None) -> list[DetectedSegment]:
+        """Scan a long mix segment-by-segment using a coverage-first allocator
+        and (optionally) a parallel worker pool.
+
+        Pipeline changes vs the pre-overhaul code:
+
+        - **T1.4**: skip-predicate change — SPEECH_ONLY segments with some
+          music content (``music_ratio >= 0.15``) still get probed.
+        - **T1.5**: segments run through a ``ThreadPoolExecutor``. Per-provider
+          throttling is already thread-safe via ``_throttle_provider``.
+        - **T1.6**: budget scales to the number of probe-able segments when
+          only free providers are configured; paid providers still honor the
+          ``JobOptions.max_provider_calls`` ceiling.
+        - **T1.7**: a single retry pass runs over any segment that came back
+          ``MUSIC_UNRESOLVED``, reusing ``_retry_segment``.
+        - **T2.2**: repeat-group reuse now re-confirms with one cheap free
+          probe before adopting the group's match.
+        """
         providers = self._providers()
         analysis = analyze_long_mix(normalized, item.metadata, job.options)
         excerpts_dir = normalized.parent / "segment-clips"
         excerpt_source = instrumental or normalized
-        remaining_budget = job.options.max_provider_calls
-        if (item.metadata.duration_ms or 0) < 25 * 60_000:
-            remaining_budget = min(96, remaining_budget)
+        probeable: list[SegmentDraft] = []
+        probeable_ids: set[int] = set()
+        draft_order: dict[int, SegmentDraft] = {}
+        for index, draft in enumerate(analysis.segments):
+            draft_order[index] = draft
+            if self._should_skip_draft(draft):
+                # Not probeable — emit as-is.
+                continue
+            probeable.append(draft)
+            probeable_ids.add(id(draft))
+
+        budget = _BudgetCounter(self._effective_budget(job.options, providers, probeable, item))
         repeat_matches: dict[str, TrackCandidate] = {}
-        segments: list[DetectedSegment] = []
-        for index, draft in enumerate(analysis.segments, start=1):
+        repeat_matches_lock = threading.Lock()
+        per_draft_result: dict[int, DetectedSegment] = {}
+        repeat_stats = {"reconfirmed": 0, "rejected": 0}
+
+        progress_counter = [0]
+        progress_lock = threading.Lock()
+        total_segments = len(analysis.segments)
+
+        def process_one(index: int, draft: SegmentDraft) -> DetectedSegment:
             if self.db.is_cancel_requested(job.id):
                 raise RuntimeError("__CANCELLED__")
-            if index % 12 == 0:
-                self.db.add_event(job.id, "info", f"Processed {index}/{len(analysis.segments)} segmented regions for {item.id}")
-            if draft.kind in {SegmentKind.SILENCE_OR_FX, SegmentKind.SPEECH_ONLY}:
-                segments.append(self._draft_to_detected(item.id, draft))
-                continue
-            if draft.repeat_group_id and draft.repeat_group_id in repeat_matches:
-                segments.append(self._candidate_to_detected(item.id, draft, repeat_matches[draft.repeat_group_id], reused=True))
-                continue
-
             candidates: list[TrackCandidate] = []
             provider_attempts = 0
             probe_count = 0
+            # --- T2.2: re-confirm reuse before adopting a group's match ---
+            if draft.repeat_group_id:
+                with repeat_matches_lock:
+                    reusable = repeat_matches.get(draft.repeat_group_id)
+                if reusable is not None:
+                    confirmed = self._reconfirm_reused_match(
+                        job,
+                        item,
+                        draft,
+                        reusable,
+                        excerpt_source,
+                        excerpts_dir,
+                        budget,
+                        providers,
+                    )
+                    if confirmed is True:
+                        repeat_stats["reconfirmed"] += 1
+                        draft.probe_count = 1
+                        draft.provider_attempts = 1
+                        return self._candidate_to_detected(item.id, draft, reusable, reused=True)
+                    if confirmed is False:
+                        repeat_stats["rejected"] += 1
+                    # confirmed is None → no free provider to verify. Fall through
+                    # to full probing so we don't propagate a possibly-wrong match.
+
             for probe in draft.probe_windows[: job.options.max_probes_per_segment]:
-                if remaining_budget <= 0:
+                spend = budget.try_spend(1)
+                if not spend:
                     break
                 probe_count += 1
-                excerpt_path = build_excerpt_path(excerpts_dir, excerpt_source, probe.start_ms, probe.end_ms, f"segment-{probe.reason}")
+                excerpt_path = build_excerpt_path(
+                    excerpts_dir,
+                    excerpt_source,
+                    probe.start_ms,
+                    probe.end_ms,
+                    f"segment-{probe.reason}",
+                )
                 if not excerpt_path.exists():
                     create_excerpt(excerpt_source, probe.start_ms, probe.end_ms, excerpt_path)
                 for provider in providers:
-                    if remaining_budget <= 0:
-                        break
                     state = provider.state()
                     if not state.available:
                         continue
-                    provider_hits = self._recognize_with_cache(job.id, item, provider, excerpt_path, probe.start_ms, probe.end_ms)
+                    # Prefer-free-providers: once a free provider has produced a
+                    # strong match for this probe, skip paid providers for the
+                    # rest of the probe loop.
+                    if (
+                        job.options.prefer_free_providers
+                        and self._is_paid_provider(provider)
+                        and self._candidates_have_strong_free_hit(candidates)
+                    ):
+                        continue
+                    if not budget.try_spend(0):
+                        break
+                    provider_hits = self._recognize_with_cache(
+                        job.id, item, provider, excerpt_path, probe.start_ms, probe.end_ms
+                    )
                     provider_attempts += 1
-                    remaining_budget -= 1
                     if provider_hits:
-                        self.db.add_event(job.id, "info", f"{provider.name} matched {provider_hits[0].track.title} for segment {draft.start_ms}-{draft.end_ms}")
+                        self.db.add_event(
+                            job.id,
+                            "info",
+                            f"{provider.name} matched {provider_hits[0].track.title} for segment {draft.start_ms}-{draft.end_ms}",
+                        )
                     candidates.extend(provider_hits)
                 if self._probes_have_strong_match(candidates):
                     break
@@ -460,33 +602,278 @@ class JobManager:
             draft.provider_attempts = provider_attempts
             draft.candidates = candidates
             best = self._pick_segment_candidate(draft)
+            with progress_lock:
+                progress_counter[0] += 1
+                if progress_counter[0] % 12 == 0:
+                    self.db.add_event(
+                        job.id,
+                        "info",
+                        f"Processed {progress_counter[0]}/{total_segments} segmented regions for {item.id}",
+                    )
             if best:
                 if draft.repeat_group_id:
-                    repeat_matches[draft.repeat_group_id] = best
-                segments.append(self._candidate_to_detected(item.id, draft, best, reused=False))
-            else:
-                unresolved_kind = SegmentKind.SPEECH_ONLY if draft.speech_ratio >= 0.70 and draft.music_ratio < 0.35 else SegmentKind.MUSIC_UNRESOLVED
-                draft.kind = unresolved_kind
-                segments.append(self._draft_to_detected(item.id, draft))
-        return self._stitch_segment_timeline(segments)
+                    with repeat_matches_lock:
+                        repeat_matches.setdefault(draft.repeat_group_id, best)
+                return self._candidate_to_detected(item.id, draft, best, reused=False)
+            unresolved_kind = (
+                SegmentKind.SPEECH_ONLY
+                if draft.speech_ratio >= 0.70 and draft.music_ratio < 0.35
+                else SegmentKind.MUSIC_UNRESOLVED
+            )
+            draft.kind = unresolved_kind
+            return self._draft_to_detected(item.id, draft)
+
+        # --- T1.5: parallel segment loop ---
+        workers = self._segment_worker_count(job.options, probeable)
+        # Map SegmentDraft identity -> its index in analysis order so the
+        # parallel assembly can reconstruct timeline order. Identity-by-id is
+        # safe here (drafts are only referenced by this call) and avoids the
+        # numpy-array __eq__ ambiguity that plain ``in`` would trigger.
+        order_index = {id(draft): index for index, draft in draft_order.items() if id(draft) in probeable_ids}
+        if workers <= 1 or len(probeable) <= 1:
+            for draft in probeable:
+                if self.db.is_cancel_requested(job.id):
+                    raise RuntimeError("__CANCELLED__")
+                idx = order_index[id(draft)]
+                per_draft_result[idx] = process_one(idx, draft)
+        else:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="music-fetch-seg") as pool:
+                futures = {pool.submit(process_one, order_index[id(draft)], draft): draft for draft in probeable}
+                for future in as_completed(futures):
+                    draft = futures[future]
+                    idx = order_index[id(draft)]
+                    try:
+                        per_draft_result[idx] = future.result()
+                    except Exception:
+                        raise
+
+        # Assemble per-draft results preserving timeline order; non-probeable
+        # drafts were skipped above and get emitted here as speech/silence.
+        assembled: list[DetectedSegment] = []
+        for index, draft in sorted(draft_order.items()):
+            if index in per_draft_result:
+                assembled.append(per_draft_result[index])
+                continue
+            assembled.append(self._draft_to_detected(item.id, draft))
+
+        # --- T1.7: retry unresolved segments once if budget permits ---
+        if job.options.auto_retry_unresolved:
+            unresolved_indices = [
+                index
+                for index, segment in enumerate(assembled)
+                if segment.kind == SegmentKind.MUSIC_UNRESOLVED and budget.remaining > 0
+            ]
+            for index in unresolved_indices:
+                if not budget.try_spend(0):
+                    break
+                if self.db.is_cancel_requested(job.id):
+                    break
+                retried = self._retry_segment(
+                    job,
+                    item,
+                    assembled[index],
+                    excerpt_source,
+                    providers,
+                    job.options,
+                )
+                assembled[index] = retried
+
+        self._last_segment_counters = {
+            "repeat_group_reconfirmed": repeat_stats["reconfirmed"],
+            "repeat_group_rejected": repeat_stats["rejected"],
+        }
+        return self._stitch_segment_timeline(assembled, options=job.options)
+
+    # --- Helpers introduced by the long-mix rewrite ---
+
+    def _should_skip_draft(self, draft: SegmentDraft) -> bool:
+        """Skip non-probeable drafts (T1.4).
+
+        SILENCE_OR_FX is always skipped. SPEECH_ONLY is skipped ONLY when
+        there is essentially no music content; a podcast with a bed of music
+        is still worth a probe.
+        """
+        if draft.kind == SegmentKind.SILENCE_OR_FX:
+            return True
+        if draft.kind == SegmentKind.SPEECH_ONLY and draft.music_ratio < 0.15:
+            return True
+        return False
+
+    def _effective_budget(
+        self,
+        options: JobOptions,
+        providers: list[BaseProvider],
+        probeable: list[SegmentDraft],
+        item: SourceItem,
+    ) -> int:
+        """Compute an allowance for provider calls (T1.6).
+
+        Rules:
+        - Free-only mode: call count uncapped (so long mixes get full coverage
+          when there's no financial cost).
+        - Paid mode: ``max(max_provider_calls, segments * 1.3)`` so mixes
+          with many segments still get their minimum-one-probe coverage even
+          when the hand-configured ceiling is lower.
+        - When budget_autoscale is disabled, the old fixed-cap behavior is
+          preserved.
+        """
+        base = options.max_provider_calls
+        if not options.budget_autoscale:
+            return base if (item.metadata.duration_ms or 0) >= 25 * 60_000 else min(96, base)
+        free_only = self._only_free_providers(providers)
+        if free_only:
+            # Uncap: 2 × probes × segments is a safe ceiling that still prevents
+            # an infinite loop if something goes wrong.
+            return max(base, 2 * options.max_probes_per_segment * max(1, len(probeable)))
+        # Paid providers configured — keep the user-specified ceiling but grow
+        # it enough to guarantee coverage.
+        return max(base, int(1.3 * len(probeable)) + 60)
+
+    def _only_free_providers(self, providers: list[BaseProvider]) -> bool:
+        """True when the available provider set contains no paid API."""
+        for provider in providers:
+            if not provider.state().available:
+                continue
+            if self._is_paid_provider(provider):
+                return False
+        return True
+
+    def _is_paid_provider(self, provider: BaseProvider) -> bool:
+        return provider.name in {ProviderName.AUDD, ProviderName.ACRCLOUD}
+
+    def _candidates_have_strong_free_hit(self, candidates: list[TrackCandidate]) -> bool:
+        for candidate in candidates:
+            if candidate.provider in {ProviderName.LOCAL_CATALOG, ProviderName.VIBRA}:
+                if candidate.confidence >= 0.80:
+                    return True
+        return False
+
+    def _segment_worker_count(self, options: JobOptions, probeable: list[SegmentDraft]) -> int:
+        if options.segment_workers and options.segment_workers > 0:
+            return max(1, options.segment_workers)
+        base = max(2, (self.settings.max_workers or 2) * 2)
+        # Don't spin up more workers than segments to probe, with a hard cap
+        # because most providers rate-limit aggressively.
+        return max(1, min(base, 6, max(1, len(probeable))))
+
+    def _reconfirm_reused_match(
+        self,
+        job: Job,
+        item: SourceItem,
+        draft: SegmentDraft,
+        reusable: TrackCandidate,
+        excerpt_source: Path,
+        excerpts_dir: Path,
+        budget: "_BudgetCounter",
+        providers: list[BaseProvider],
+    ) -> bool | None:
+        """Verify a cached ``repeat_group`` match with one cheap free probe.
+
+        Returns:
+            - ``True``: a free provider returned an identity that merges with
+              the existing group match — adopt it.
+            - ``False``: a free provider returned a different identity or no
+              hit at all — force full probing so the group doesn't propagate a
+              wrong guess.
+            - ``None``: no free provider is available — caller decides.
+        """
+        if not draft.probe_windows:
+            return None
+        free_providers = [p for p in providers if not self._is_paid_provider(p) and p.state().available]
+        if not free_providers:
+            return None
+        if not budget.try_spend(1):
+            return None
+        probe = draft.probe_windows[len(draft.probe_windows) // 2]
+        excerpt_path = build_excerpt_path(
+            excerpts_dir, excerpt_source, probe.start_ms, probe.end_ms, "reconfirm"
+        )
+        if not excerpt_path.exists():
+            try:
+                create_excerpt(excerpt_source, probe.start_ms, probe.end_ms, excerpt_path)
+            except MediaToolError:
+                return None
+        for provider in free_providers:
+            hits = self._recognize_with_cache(
+                job.id, item, provider, excerpt_path, probe.start_ms, probe.end_ms
+            )
+            if not hits:
+                continue
+            # If any hit matches the group's track by tiered identity, accept.
+            if any(hit.track.merges_with(reusable.track) for hit in hits):
+                return True
+            # A confident, DIFFERENT match means the first group member was
+            # wrong; fall through to full probing.
+            return False
+        return None
 
     def _pick_segment_candidate(self, draft: SegmentDraft) -> TrackCandidate | None:
+        """Layered acceptance gate (T1.3).
+
+        Instead of the previous single compound AND-gate
+        (``score >= 0.68 AND music_ratio >= 0.45 AND kind != SPEECH_ONLY``)
+        we accept a candidate under the FIRST of these that matches:
+
+        - G1: 2+ distinct providers agree on the top identity.
+        - G2: 2+ probes from the same provider agree.
+        - G3: single hit with score >= 0.72 — rescues podcasts-with-music where
+          ``music_ratio`` is unfairly low.
+        - G4: single hit with score >= 0.60 AND music_ratio >= 0.35.
+        - G5: single hit with ISRC present and score >= 0.55 — ISRC provenance
+          is stronger evidence than raw confidence.
+
+        The winning gate label is stashed on the candidate's ``evidence`` list
+        (a string like ``"gate:G3"``) so ``_candidate_to_detected`` can surface
+        it on the resulting ``DetectedSegment.acceptance_gate``.
+        """
         if not draft.candidates:
             return None
         scores: dict[str, float] = {}
-        counts = Counter(candidate.track.normalized_key() for candidate in draft.candidates)
         by_key: dict[str, list[TrackCandidate]] = {}
         for candidate in draft.candidates:
             key = candidate.track.normalized_key()
             by_key.setdefault(key, []).append(candidate)
             scores[key] = scores.get(key, 0.0) + self._candidate_score(candidate, draft)
         top_key = max(scores, key=scores.get)
-        ranked = sorted(by_key[top_key], key=lambda candidate: (self._candidate_score(candidate, draft), candidate.confidence), reverse=True)
+        top_candidates = by_key[top_key]
+        ranked = sorted(
+            top_candidates,
+            key=lambda candidate: (self._candidate_score(candidate, draft), candidate.confidence),
+            reverse=True,
+        )
         best = ranked[0]
-        if counts[top_key] >= 2:
-            return best
-        if self._candidate_score(best, draft) >= 0.68 and draft.music_ratio >= 0.45 and draft.kind != SegmentKind.SPEECH_ONLY:
-            return best
+
+        gate = self._determine_acceptance_gate(best, top_candidates, draft)
+        if gate is None:
+            return None
+        # Tag the candidate with the gate that accepted it. Using a tuple
+        # sentinel in ``evidence`` is noisy; stash on ``raw`` instead.
+        best.raw = {**best.raw, "_acceptance_gate": gate}
+        return best
+
+    def _determine_acceptance_gate(
+        self,
+        best: TrackCandidate,
+        top_candidates: list[TrackCandidate],
+        draft: SegmentDraft,
+    ) -> str | None:
+        score = self._candidate_score(best, draft)
+        distinct_providers = {candidate.provider for candidate in top_candidates}
+        # G1 — multi-provider consensus.
+        if len(distinct_providers) >= 2:
+            return "G1"
+        # G2 — 2+ probes from the same provider.
+        if len(top_candidates) >= 2:
+            return "G2"
+        # G3 — strong single hit; music_ratio irrelevant (podcast+music rescue).
+        if score >= 0.72:
+            return "G3"
+        # G4 — moderate single hit with noticeable music content.
+        if score >= 0.60 and draft.music_ratio >= 0.35:
+            return "G4"
+        # G5 — ISRC-backed single hit.
+        if best.track.isrc and score >= 0.55:
+            return "G5"
         return None
 
     def _candidate_score(self, candidate: TrackCandidate, draft: SegmentDraft) -> float:
@@ -571,6 +958,10 @@ class JobManager:
             seen.add(key)
             alternates.append(alternate.track)
         confidence = candidate.confidence if not reused else min(0.95, candidate.confidence + 0.03)
+        # Lift acceptance-gate label (set by _pick_segment_candidate) + identity
+        # key onto the segment for observability. Reused candidates inherit the
+        # propagation label "REUSED" so downstream SQL can split these out.
+        gate = str((candidate.raw or {}).get("_acceptance_gate") or "") or ("REUSED" if reused else None)
         return DetectedSegment(
             source_item_id=source_item_id,
             start_ms=draft.start_ms,
@@ -587,19 +978,106 @@ class JobManager:
             metadata_hints=draft.metadata_hints,
             uncertainty=max(0.0, 1.0 - self._candidate_score(candidate, draft)),
             explanation=self._candidate_explanation(draft, candidate, reused=reused),
+            identity_key=candidate.track.normalized_key(),
+            acceptance_gate=gate,
         )
 
-    def _stitch_segment_timeline(self, segments: list[DetectedSegment]) -> list[DetectedSegment]:
+    def _stitch_segment_timeline(
+        self,
+        segments: list[DetectedSegment],
+        *,
+        options: "JobOptions | None" = None,
+    ) -> list[DetectedSegment]:
+        """Two-pass stitch (T1.2):
+
+        1. **Bridge pass** — when a short non-MATCHED segment (speech or
+           silence) sits between two MATCHED segments of the same identity,
+           absorb it into the outer pair. Directly addresses the "song split
+           by DJ talk" complaint.
+        2. **Merge pass** — then collapse adjacent same-identity MATCHED
+           segments (the classic "6 snippets of one song" case). Also merges
+           adjacent non-MATCHED runs of the same kind within a tight gap.
+
+        Both passes use duration-adaptive gap budgets; tiny SFX (<10s) keep a
+        small tolerance so they don't get glued together, while long-form
+        works (symphonies, extended mixes) tolerate 30s pauses. The ISRC
+        veto in ``TrackMatch.merges_with`` prevents two distinct recordings
+        from being accidentally merged.
+        """
         if not segments:
             return []
-        ordered = sorted(segments, key=lambda segment: (segment.start_ms, segment.end_ms, segment.kind.value))
+        bridge_counter = [0]
+        merged_counter = [0]
+        ordered = sorted(
+            segments,
+            key=lambda segment: (segment.start_ms, segment.end_ms, segment.kind.value),
+        )
+
+        # --- Pass 1: bridge MATCHED → non-MATCHED → MATCHED of same identity ---
+        bridged: list[DetectedSegment] = []
+        index = 0
+        while index < len(ordered):
+            current = ordered[index]
+            # Look ahead for a ``MATCHED(X) → (non-MATCHED) → MATCHED(X)`` pattern.
+            if (
+                current.kind == SegmentKind.MATCHED_TRACK
+                and current.track is not None
+                and index + 2 < len(ordered)
+            ):
+                bridge = ordered[index + 1]
+                successor = ordered[index + 2]
+                if (
+                    bridge.kind in {SegmentKind.SPEECH_ONLY, SegmentKind.SILENCE_OR_FX, SegmentKind.MUSIC_UNRESOLVED}
+                    and successor.kind == SegmentKind.MATCHED_TRACK
+                    and successor.track is not None
+                    and current.track.merges_with(successor.track)
+                ):
+                    gap_before = bridge.start_ms - current.end_ms
+                    gap_after = successor.start_ms - bridge.end_ms
+                    bridge_budget = self._bridge_gap_ms(current, successor, options=options)
+                    bridge_duration = bridge.end_ms - bridge.start_ms
+                    # Only bridge across SHORT intermediate segments. A 20s speech
+                    # section is real speech (a host talking between tracks), not
+                    # an announcement over continuous music; bridging it would
+                    # wrongly glue two distinct occurrences of the same song.
+                    if (
+                        max(gap_before, 0) <= bridge_budget
+                        and max(gap_after, 0) <= bridge_budget
+                        and bridge_duration <= bridge_budget
+                    ):
+                        fused = self._merge_detected_segments(current, successor)
+                        # Don't lose the bridged segment's time — just its body —
+                        # so the outer segment covers the full span.
+                        fused = fused.model_copy(update={"end_ms": max(fused.end_ms, successor.end_ms)})
+                        fused = fused.model_copy(
+                            update={
+                                "explanation": list(
+                                    dict.fromkeys(
+                                        [
+                                            *fused.explanation,
+                                            f"Bridged across a {bridge.kind.value.replace('_', ' ')} gap of {max(0, gap_before)+max(0, gap_after)} ms.",
+                                        ]
+                                    )
+                                )
+                            }
+                        )
+                        bridge_counter[0] += 1
+                        bridged.append(fused)
+                        index += 3
+                        continue
+            bridged.append(current)
+            index += 1
+
+        # --- Pass 2: merge adjacent same-identity MATCHED + same-kind non-MATCHED ---
         merged: list[DetectedSegment] = []
-        for segment in ordered:
-            if merged and self._can_merge_segments(merged[-1], segment):
+        for segment in bridged:
+            if merged and self._can_merge_segments(merged[-1], segment, options=options):
                 merged[-1] = self._merge_detected_segments(merged[-1], segment)
+                merged_counter[0] += 1
             else:
                 merged.append(segment)
 
+        # Finally clamp any residual overlaps.
         stitched: list[DetectedSegment] = []
         for index, segment in enumerate(merged):
             if index < len(merged) - 1:
@@ -608,17 +1086,84 @@ class JobManager:
                     segment = segment.model_copy(update={"end_ms": max(segment.start_ms, next_segment.start_ms)})
             if segment.end_ms > segment.start_ms:
                 stitched.append(segment)
+        # Stash counters for metric export (T4.2). Consumers look at them via
+        # ``_consume_stitch_counters``.
+        self._last_stitch_counters = {
+            "segments_bridged_across_speech": bridge_counter[0],
+            "segments_merged": merged_counter[0],
+        }
         return stitched
 
-    def _can_merge_segments(self, left: DetectedSegment, right: DetectedSegment) -> bool:
+    def _consume_stitch_counters(self) -> dict[str, int]:
+        """Pop the per-stitch observability counters (T4.2)."""
+        counters = getattr(self, "_last_stitch_counters", {}) or {}
+        self._last_stitch_counters = {}
+        return counters
+
+    def _can_merge_segments(
+        self,
+        left: DetectedSegment,
+        right: DetectedSegment,
+        *,
+        options: "JobOptions | None" = None,
+    ) -> bool:
+        gap_ms = max(0, right.start_ms - left.end_ms)
+        if left.kind == SegmentKind.MATCHED_TRACK and right.kind == SegmentKind.MATCHED_TRACK:
+            if not (left.track and right.track):
+                return False
+            if not left.track.merges_with(right.track):
+                return False
+            return gap_ms <= self._same_track_gap_ms(left, right, options=options)
         if left.kind != right.kind:
             return False
-        gap_ms = right.start_ms - left.end_ms
-        if gap_ms > 3_000:
-            return False
-        if left.kind == SegmentKind.MATCHED_TRACK and left.track and right.track:
-            return left.track.normalized_key() == right.track.normalized_key()
-        return left.track is None and right.track is None
+        # Non-MATCHED runs of the same kind merge only with the plain bridge-gap
+        # allowance; they have no identity to compare.
+        return gap_ms <= self._bridge_gap_ms(left, right, options=options) and (
+            left.track is None and right.track is None
+        )
+
+    def _same_track_gap_ms(
+        self,
+        left: DetectedSegment,
+        right: DetectedSegment,
+        *,
+        options: "JobOptions | None" = None,
+    ) -> int:
+        """Duration-adaptive gap for same-identity merging.
+
+        Short SFX snippets stay crisp; normal 3-minute songs survive DJ intros;
+        hour-long classical works absorb legitimate quiet movements.
+        """
+        longer = max(left.end_ms - left.start_ms, right.end_ms - right.start_ms)
+        if longer < 10_000:
+            return 2_000
+        if longer < 60_000:
+            return 5_000
+        if longer < 600_000:
+            base = (options or JobOptions()).merge_gap_same_track_ms
+            return max(5_000, base)
+        # long-form (>10 min): symphonies, extended mixes, full sets.
+        return 30_000
+
+    def _bridge_gap_ms(
+        self,
+        left: DetectedSegment,
+        right: DetectedSegment,
+        *,
+        options: "JobOptions | None" = None,
+    ) -> int:
+        """Gap allowance for bridging a non-MATCHED segment between two
+        MATCHED same-identity segments. Slightly stricter than same-track
+        merging because a bridge has to survive TWO gap checks."""
+        longer = max(left.end_ms - left.start_ms, right.end_ms - right.start_ms)
+        base = (options or JobOptions()).merge_gap_bridge_ms
+        if longer < 10_000:
+            return min(2_000, base)
+        if longer < 60_000:
+            return min(5_000, base)
+        if longer < 600_000:
+            return base
+        return max(base, 19_000)
 
     def _merge_detected_segments(self, left: DetectedSegment, right: DetectedSegment) -> DetectedSegment:
         metadata_hints = list(dict.fromkeys([*left.metadata_hints, *right.metadata_hints]))
@@ -795,6 +1340,18 @@ class JobManager:
         return top_confidence >= 0.90
 
     def _record_item_summary_metric(self, job_id: str, source_item_id: str, segments: list[DetectedSegment]) -> None:
+        # Pop any transient counters the stitch/long-mix passes attached to
+        # ``self``. They're per-item and must not leak into the next call, so
+        # ``_consume_stitch_counters`` clears them as it returns.
+        stitch_counters = self._consume_stitch_counters()
+        segment_counters = getattr(self, "_last_segment_counters", {}) or {}
+        self._last_segment_counters = {}
+        # Tally acceptance-gate hits for observability.
+        gate_tallies = Counter(
+            (segment.acceptance_gate or "")
+            for segment in segments
+            if segment.kind == SegmentKind.MATCHED_TRACK
+        )
         self.db.add_recognition_metric(
             RecognitionMetric(
                 id=str(uuid.uuid4()),
@@ -804,6 +1361,15 @@ class JobManager:
                 call_count=0,
                 matched_segments=sum(1 for segment in segments if segment.kind == SegmentKind.MATCHED_TRACK),
                 unresolved_segments=sum(1 for segment in segments if segment.kind == SegmentKind.MUSIC_UNRESOLVED),
+                segments_merged=int(stitch_counters.get("segments_merged", 0)),
+                segments_bridged_across_speech=int(stitch_counters.get("segments_bridged_across_speech", 0)),
+                repeat_group_reconfirmed=int(segment_counters.get("repeat_group_reconfirmed", 0)),
+                repeat_group_rejected=int(segment_counters.get("repeat_group_rejected", 0)),
+                gate_g1_hits=int(gate_tallies.get("G1", 0)),
+                gate_g2_hits=int(gate_tallies.get("G2", 0)),
+                gate_g3_hits=int(gate_tallies.get("G3", 0)),
+                gate_g4_hits=int(gate_tallies.get("G4", 0)),
+                gate_g5_hits=int(gate_tallies.get("G5", 0)),
                 payload={"segment_count": len(segments)},
                 created_at=now_iso(),
             )

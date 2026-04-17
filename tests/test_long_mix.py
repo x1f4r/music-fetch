@@ -6,7 +6,15 @@ from pathlib import Path
 
 import numpy as np
 
-from music_fetch.long_mix import SegmentAnalysisParameters, SegmentDraft, analyze_long_mix, choose_probe_windows, extract_feature_frames
+from music_fetch.long_mix import (
+    SegmentAnalysisParameters,
+    SegmentDraft,
+    analyze_long_mix,
+    assign_repeat_groups,
+    choose_probe_windows,
+    classify_label,
+    extract_feature_frames,
+)
 from music_fetch.models import JobOptions, SegmentKind, SourceMetadata
 
 
@@ -104,6 +112,93 @@ def test_analyze_long_mix_segments_short_three_song_clip(tmp_path: Path) -> None
     boundaries = [segment.end_ms for segment in music_segments[:-1]]
     assert any(8_000 <= boundary <= 12_500 for boundary in boundaries)
     assert any(18_000 <= boundary <= 22_500 for boundary in boundaries)
+
+
+def test_classify_label_widened_thresholds_accept_borderline_music() -> None:
+    """T1.4: music_score 0.50 and chroma 0.25 (previously borderline below
+    the 0.55/0.30 threshold) must now classify as MATCHED_TRACK so the probe
+    loop visits these frames. Fixes "songs missed entirely"."""
+    label = classify_label(
+        music_score=0.50,
+        speech_score=0.40,
+        no_music_score=0.20,
+        rms=0.35,
+        chroma_strength=0.25,
+    )
+    assert label == SegmentKind.MATCHED_TRACK
+
+
+def test_classify_label_still_flags_pure_speech() -> None:
+    label = classify_label(
+        music_score=0.20,
+        speech_score=0.80,
+        no_music_score=0.20,
+        rms=0.30,
+        chroma_strength=0.10,
+    )
+    assert label == SegmentKind.SPEECH_ONLY
+
+
+def test_assign_repeat_groups_temporal_gate_splits_distant_same_feature_segments() -> None:
+    """T2.1: two segments with moderately-similar features far apart in the
+    timeline should NOT share a repeat group. Only cosine-similarity >= 0.96
+    overrides the temporal gate."""
+    # Cosine similarity between ``base`` and ``drifted`` is ~0.93 — above the
+    # 0.88 match floor, below the 0.96 extreme-similarity escape hatch.
+    base = np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+    drifted = np.array([1.0, 1.0, 0.70, 0.30], dtype=np.float32)
+    segments = [
+        SegmentDraft(
+            start_ms=0,
+            end_ms=20_000,
+            kind=SegmentKind.MUSIC_UNRESOLVED,
+            feature_vector=base,
+            chroma_vector=base,
+            music_ratio=1.0,
+            speech_ratio=0.0,
+        ),
+        SegmentDraft(
+            start_ms=30 * 60_000,  # 30 minutes later — well outside temporal window.
+            end_ms=30 * 60_000 + 20_000,
+            kind=SegmentKind.MUSIC_UNRESOLVED,
+            feature_vector=drifted,
+            chroma_vector=drifted,
+            music_ratio=1.0,
+            speech_ratio=0.0,
+        ),
+    ]
+    assign_repeat_groups(segments, enabled=True)
+    groups = [segment.repeat_group_id for segment in segments]
+    assert groups[0] != groups[1]
+
+
+def test_assign_repeat_groups_groups_identical_features_even_far_apart() -> None:
+    """The temporal gate has an escape hatch for near-perfect audio similarity
+    — e.g. the exact same chorus sampled at minute 0 and minute 30 of a
+    live-recorded mix. similarity >= 0.96 overrides the window."""
+    base = np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+    segments = [
+        SegmentDraft(
+            start_ms=0,
+            end_ms=20_000,
+            kind=SegmentKind.MUSIC_UNRESOLVED,
+            feature_vector=base,
+            chroma_vector=base,
+            music_ratio=1.0,
+            speech_ratio=0.0,
+        ),
+        SegmentDraft(
+            start_ms=30 * 60_000,
+            end_ms=30 * 60_000 + 20_000,
+            kind=SegmentKind.MUSIC_UNRESOLVED,
+            feature_vector=base.copy(),
+            chroma_vector=base.copy(),
+            music_ratio=1.0,
+            speech_ratio=0.0,
+        ),
+    ]
+    assign_repeat_groups(segments, enabled=True)
+    assert segments[0].repeat_group_id == segments[1].repeat_group_id
 
 
 def test_extract_feature_frames_casts_overlap_frame_count_to_int(monkeypatch, tmp_path: Path) -> None:

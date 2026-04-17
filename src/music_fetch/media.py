@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools as _functools
 import json
 import math
 import re
@@ -452,7 +453,24 @@ def raw_fingerprint_similarity(a: list[int], b: list[int]) -> float:
 
 
 def fingerprint_cache_key(clip_path: Path) -> str:
-    result = run_command(["fpcalc", "-raw", "-json", str(clip_path)])
+    """Return a stable key for ``clip_path`` suitable for the provider-result cache.
+
+    Uses Chromaprint's ``fpcalc`` when available so two different excerpts
+    that contain the same audio hash to the same key. Falls back to a content
+    hash. Result is memoized on ``(resolved path, mtime, size)`` so repeated
+    probes of the same excerpt don't re-fork ``fpcalc`` (T3.2).
+    """
+    try:
+        stat = clip_path.stat()
+    except FileNotFoundError:
+        return sha1_text(str(clip_path))
+    return _fingerprint_cache_lookup(str(clip_path.resolve()), stat.st_mtime_ns, stat.st_size)
+
+
+@_functools.lru_cache(maxsize=2048)
+def _fingerprint_cache_lookup(resolved_path: str, _mtime_ns: int, _size: int) -> str:
+    path = Path(resolved_path)
+    result = run_command(["fpcalc", "-raw", "-json", resolved_path])
     if result.returncode == 0:
         try:
             payload = json.loads(result.stdout)
@@ -462,4 +480,12 @@ def fingerprint_cache_key(clip_path: Path) -> str:
                 return sha1_text(json.dumps({"duration": duration, "fingerprint": fingerprint[:120]}, separators=(",", ":")))
         except json.JSONDecodeError:
             pass
-    return sha1_text(clip_path.read_bytes().hex())
+    try:
+        return sha1_text(path.read_bytes().hex())
+    except FileNotFoundError:
+        return sha1_text(resolved_path)
+
+
+def clear_fingerprint_cache() -> None:
+    """Reset the fingerprint-key LRU (useful for tests that rewrite excerpt files)."""
+    _fingerprint_cache_lookup.cache_clear()

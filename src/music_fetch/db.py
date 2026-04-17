@@ -28,7 +28,7 @@ from .utils import now_iso
 
 
 class Database:
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 6
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -39,6 +39,12 @@ class Database:
     def connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
+        # Enforce foreign-key constraints (including ON DELETE CASCADE). This is
+        # per-connection in SQLite and defaults OFF, so every connection needs it.
+        try:
+            conn.execute("PRAGMA foreign_keys = ON;")
+        except sqlite3.DatabaseError:
+            pass
         try:
             yield conn
         finally:
@@ -51,6 +57,9 @@ class Database:
             version_row = conn.execute("SELECT value FROM app_meta WHERE key = 'schema_version'").fetchone()
             current_version = int(version_row["value"]) if version_row else 0
             for version in range(current_version + 1, self.SCHEMA_VERSION + 1):
+                # FK-enforcing migrations can fail on legacy orphan rows, so migrations
+                # that manipulate tables with FKs disable enforcement for their own
+                # duration and re-enable it at the end.
                 getattr(self, f"_migrate_to_v{version}")(conn)
             conn.execute(
                 "INSERT OR REPLACE INTO app_meta (key, value) VALUES ('schema_version', ?)",
@@ -245,6 +254,234 @@ class Database:
             """
         )
 
+    def _migrate_to_v5(self, conn: sqlite3.Connection) -> None:
+        """Rebuild every job-scoped child table with ON DELETE CASCADE so that
+        deleting a row from ``jobs`` wipes every dependent row in one shot.
+
+        SQLite does not support ALTER TABLE ADD CONSTRAINT; the canonical
+        recipe is to create a shadow table with the new constraints, copy data
+        over, drop the original, and rename the shadow. We also pre-sweep
+        orphan rows (children with no matching parent) so CASCADE doesn't trip
+        once ``foreign_keys = ON`` takes effect.
+        """
+        # Foreign-key enforcement must be OFF during the shadow-table swap, else
+        # SQLite refuses the rename step. Re-enabled by ``connect()`` on the next
+        # connection.
+        conn.execute("PRAGMA foreign_keys = OFF;")
+
+        # Pre-sweep orphan rows in every child table. These would otherwise
+        # survive a rename and immediately violate the new constraint the next
+        # time a delete cascades.
+        child_tables = [
+            "source_items",
+            "detected_segments",
+            "segment_rows",
+            "job_events",
+            "pinned_jobs",
+            "artifact_entries",
+            "recognition_metrics",
+            "discovery_state",
+        ]
+        for table in child_tables:
+            # Some older databases may not have every table yet; guard with EXISTS.
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)
+            ).fetchone()
+            if not row:
+                continue
+            conn.execute(
+                f"DELETE FROM {table} WHERE job_id IS NOT NULL AND job_id NOT IN (SELECT id FROM jobs)"
+            )
+
+        # Rebuild each table with the cascade constraint. We keep each schema
+        # explicit so adding a column later doesn't silently drop it.
+        conn.executescript(
+            """
+            CREATE TABLE source_items_v5 (
+              id TEXT PRIMARY KEY,
+              job_id TEXT NOT NULL,
+              input_value TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              status TEXT NOT NULL,
+              metadata_json TEXT NOT NULL,
+              local_path TEXT,
+              download_url TEXT,
+              normalized_path TEXT,
+              instrumental_path TEXT,
+              error TEXT,
+              FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+            INSERT INTO source_items_v5 (
+              id, job_id, input_value, kind, status, metadata_json,
+              local_path, download_url, normalized_path, instrumental_path, error
+            )
+            SELECT
+              id, job_id, input_value, kind, status, metadata_json,
+              local_path, download_url, normalized_path, instrumental_path, error
+            FROM source_items;
+            DROP TABLE source_items;
+            ALTER TABLE source_items_v5 RENAME TO source_items;
+
+            CREATE TABLE detected_segments_v5 (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              job_id TEXT NOT NULL,
+              source_item_id TEXT NOT NULL,
+              segment_json TEXT NOT NULL,
+              FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+            INSERT INTO detected_segments_v5 (id, job_id, source_item_id, segment_json)
+              SELECT id, job_id, source_item_id, segment_json FROM detected_segments;
+            DROP TABLE detected_segments;
+            ALTER TABLE detected_segments_v5 RENAME TO detected_segments;
+
+            CREATE TABLE segment_rows_v5 (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              job_id TEXT NOT NULL,
+              source_item_id TEXT NOT NULL,
+              start_ms INTEGER NOT NULL,
+              end_ms INTEGER NOT NULL,
+              kind TEXT NOT NULL,
+              confidence REAL NOT NULL,
+              providers_json TEXT NOT NULL,
+              evidence_count INTEGER NOT NULL,
+              track_json TEXT,
+              alternates_json TEXT NOT NULL,
+              repeat_group_id TEXT,
+              probe_count INTEGER NOT NULL DEFAULT 0,
+              provider_attempts INTEGER NOT NULL DEFAULT 0,
+              metadata_hints_json TEXT NOT NULL,
+              uncertainty REAL,
+              segment_json TEXT NOT NULL,
+              FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+            INSERT INTO segment_rows_v5 (
+              id, job_id, source_item_id, start_ms, end_ms, kind, confidence,
+              providers_json, evidence_count, track_json, alternates_json,
+              repeat_group_id, probe_count, provider_attempts,
+              metadata_hints_json, uncertainty, segment_json
+            )
+            SELECT
+              id, job_id, source_item_id, start_ms, end_ms, kind, confidence,
+              providers_json, evidence_count, track_json, alternates_json,
+              repeat_group_id, probe_count, provider_attempts,
+              metadata_hints_json, uncertainty, segment_json
+            FROM segment_rows;
+            DROP TABLE segment_rows;
+            ALTER TABLE segment_rows_v5 RENAME TO segment_rows;
+            CREATE INDEX IF NOT EXISTS idx_segment_rows_job_start ON segment_rows(job_id, source_item_id, start_ms);
+
+            CREATE TABLE job_events_v5 (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              job_id TEXT NOT NULL,
+              level TEXT NOT NULL,
+              message TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+            INSERT INTO job_events_v5 (id, job_id, level, message, created_at)
+              SELECT id, job_id, level, message, created_at FROM job_events;
+            DROP TABLE job_events;
+            ALTER TABLE job_events_v5 RENAME TO job_events;
+
+            CREATE TABLE pinned_jobs_v5 (
+              job_id TEXT PRIMARY KEY,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+            INSERT INTO pinned_jobs_v5 (job_id, created_at)
+              SELECT job_id, created_at FROM pinned_jobs;
+            DROP TABLE pinned_jobs;
+            ALTER TABLE pinned_jobs_v5 RENAME TO pinned_jobs;
+
+            CREATE TABLE artifact_entries_v5 (
+              id TEXT PRIMARY KEY,
+              category TEXT NOT NULL,
+              label TEXT NOT NULL,
+              path TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL,
+              exists_flag INTEGER NOT NULL,
+              temporary INTEGER NOT NULL,
+              job_id TEXT,
+              source_item_id TEXT,
+              pinned INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+            INSERT INTO artifact_entries_v5 (
+              id, category, label, path, size_bytes, exists_flag, temporary,
+              job_id, source_item_id, pinned, updated_at
+            )
+            SELECT
+              id, category, label, path, size_bytes, exists_flag, temporary,
+              job_id, source_item_id, pinned, updated_at
+            FROM artifact_entries;
+            DROP TABLE artifact_entries;
+            ALTER TABLE artifact_entries_v5 RENAME TO artifact_entries;
+            CREATE INDEX IF NOT EXISTS idx_artifact_entries_job ON artifact_entries(job_id, category);
+
+            CREATE TABLE discovery_state_v5 (
+              job_id TEXT NOT NULL,
+              input_value TEXT NOT NULL,
+              cursor INTEGER NOT NULL DEFAULT 0,
+              total INTEGER,
+              completed INTEGER NOT NULL DEFAULT 0,
+              payload_json TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (job_id, input_value),
+              FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+            INSERT INTO discovery_state_v5 (
+              job_id, input_value, cursor, total, completed, payload_json, updated_at
+            )
+            SELECT
+              job_id, input_value, cursor, total, completed, payload_json, updated_at
+            FROM discovery_state;
+            DROP TABLE discovery_state;
+            ALTER TABLE discovery_state_v5 RENAME TO discovery_state;
+
+            CREATE TABLE recognition_metrics_v5 (
+              id TEXT PRIMARY KEY,
+              job_id TEXT NOT NULL,
+              source_item_id TEXT,
+              provider_name TEXT,
+              cache_hit INTEGER NOT NULL DEFAULT 0,
+              matched INTEGER NOT NULL DEFAULT 0,
+              call_count INTEGER NOT NULL DEFAULT 0,
+              matched_segments INTEGER NOT NULL DEFAULT 0,
+              unresolved_segments INTEGER NOT NULL DEFAULT 0,
+              elapsed_ms INTEGER NOT NULL DEFAULT 0,
+              payload_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+            INSERT INTO recognition_metrics_v5 (
+              id, job_id, source_item_id, provider_name, cache_hit, matched,
+              call_count, matched_segments, unresolved_segments, elapsed_ms,
+              payload_json, created_at
+            )
+            SELECT
+              id, job_id, source_item_id, provider_name, cache_hit, matched,
+              call_count, matched_segments, unresolved_segments, elapsed_ms,
+              payload_json, created_at
+            FROM recognition_metrics;
+            DROP TABLE recognition_metrics;
+            ALTER TABLE recognition_metrics_v5 RENAME TO recognition_metrics;
+            CREATE INDEX IF NOT EXISTS idx_recognition_metrics_job ON recognition_metrics(job_id, source_item_id, provider_name);
+            """
+        )
+
+    def _migrate_to_v6(self, conn: sqlite3.Connection) -> None:
+        """Add observability columns used by the identity/acceptance-gate
+        instrumentation (T4.1). Non-breaking: new columns are nullable and are
+        populated lazily on the next write.
+        """
+        row_columns = {row["name"] for row in conn.execute("PRAGMA table_info(segment_rows)").fetchall()}
+        if "identity_key" not in row_columns:
+            conn.execute("ALTER TABLE segment_rows ADD COLUMN identity_key TEXT")
+        if "acceptance_gate" not in row_columns:
+            conn.execute("ALTER TABLE segment_rows ADD COLUMN acceptance_gate TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_segment_rows_identity ON segment_rows(job_id, identity_key)")
+
     def create_job(self, inputs: list[str], options: JobOptions) -> Job:
         timestamp = now_iso()
         job = Job(
@@ -359,8 +596,9 @@ class Database:
                 INSERT INTO segment_rows (
                   job_id, source_item_id, start_ms, end_ms, kind, confidence, providers_json,
                   evidence_count, track_json, alternates_json, repeat_group_id, probe_count,
-                  provider_attempts, metadata_hints_json, uncertainty, segment_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  provider_attempts, metadata_hints_json, uncertainty, segment_json,
+                  identity_key, acceptance_gate
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -380,11 +618,24 @@ class Database:
                         json.dumps(segment.metadata_hints),
                         segment.uncertainty,
                         segment.model_dump_json(),
+                        segment.identity_key,
+                        segment.acceptance_gate,
                     )
                     for segment in segments
                 ],
             )
             conn.commit()
+
+    def delete_job(self, job_id: str) -> bool:
+        """Delete a job and every dependent row (cascades via the v5 schema).
+
+        Returns True when a row was removed, False when the job did not exist.
+        This is idempotent: re-deleting a deleted job simply returns False.
+        """
+        with self.connect() as conn:
+            cur = conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+            conn.commit()
+            return cur.rowcount > 0
 
     def add_event(self, job_id: str, level: str, message: str) -> None:
         with self.connect() as conn:
@@ -532,7 +783,26 @@ class Database:
             for row in rows
         ]
 
+    # Non-column observability fields on RecognitionMetric. They travel via
+    # ``payload_json`` so adding a new one doesn't require a schema bump.
+    _EXTENDED_METRIC_FIELDS = (
+        "segments_merged",
+        "segments_bridged_across_speech",
+        "repeat_group_reconfirmed",
+        "repeat_group_rejected",
+        "gate_g1_hits",
+        "gate_g2_hits",
+        "gate_g3_hits",
+        "gate_g4_hits",
+        "gate_g5_hits",
+    )
+
     def add_recognition_metric(self, metric: RecognitionMetric) -> None:
+        payload = dict(metric.payload)
+        for field in self._EXTENDED_METRIC_FIELDS:
+            value = getattr(metric, field, 0)
+            if value:
+                payload.setdefault(field, value)
         with self.connect() as conn:
             conn.execute(
                 """
@@ -552,7 +822,7 @@ class Database:
                     metric.matched_segments,
                     metric.unresolved_segments,
                     metric.elapsed_ms,
-                    json.dumps(metric.payload),
+                    json.dumps(payload),
                     metric.created_at,
                 ),
             )
@@ -564,23 +834,28 @@ class Database:
                 "SELECT * FROM recognition_metrics WHERE job_id = ? ORDER BY created_at, id",
                 (job_id,),
             ).fetchall()
-        return [
-            RecognitionMetric(
-                id=row["id"],
-                job_id=row["job_id"],
-                source_item_id=row["source_item_id"],
-                provider_name=None if row["provider_name"] is None else ProviderName(row["provider_name"]),
-                cache_hit=bool(row["cache_hit"]),
-                matched=bool(row["matched"]),
-                call_count=row["call_count"],
-                matched_segments=row["matched_segments"],
-                unresolved_segments=row["unresolved_segments"],
-                elapsed_ms=row["elapsed_ms"],
-                payload=json.loads(row["payload_json"]),
-                created_at=row["created_at"],
+        metrics: list[RecognitionMetric] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            extended = {field: int(payload.pop(field, 0) or 0) for field in self._EXTENDED_METRIC_FIELDS}
+            metrics.append(
+                RecognitionMetric(
+                    id=row["id"],
+                    job_id=row["job_id"],
+                    source_item_id=row["source_item_id"],
+                    provider_name=None if row["provider_name"] is None else ProviderName(row["provider_name"]),
+                    cache_hit=bool(row["cache_hit"]),
+                    matched=bool(row["matched"]),
+                    call_count=row["call_count"],
+                    matched_segments=row["matched_segments"],
+                    unresolved_segments=row["unresolved_segments"],
+                    elapsed_ms=row["elapsed_ms"],
+                    payload=payload,
+                    created_at=row["created_at"],
+                    **extended,
+                )
             )
-            for row in rows
-        ]
+        return metrics
 
     def set_provider_config(self, name: ProviderName, config: ProviderConfig) -> None:
         with self.connect() as conn:

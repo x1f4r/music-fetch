@@ -88,6 +88,29 @@ class JobOptions(BaseModel):
             ProviderName.ACRCLOUD,
         ]
     )
+    # --- Reliability overhaul knobs --------------------------------------------
+    # Default gap allowance when two *same-identity* matched segments are adjacent
+    # (see duration-adaptive scaling in service._can_merge_segments). Floor/ceiling
+    # for the duration-adaptive rule — the actual gap scales with the longer of
+    # the two segments.
+    merge_gap_same_track_ms: int = 12_000
+    # Gap allowance for *bridging* a short non-MATCHED segment (speech/silence)
+    # between two MATCHED segments of the same identity.
+    merge_gap_bridge_ms: int = 8_000
+    # When True, providers with no configured credentials (free only: VIBRA +
+    # LOCAL_CATALOG) run with an effectively uncapped call budget; paid providers
+    # honor ``max_provider_calls``. See service._effective_budget.
+    budget_autoscale: bool = True
+    # Skip paid providers for a segment as soon as a free provider has already
+    # returned a strong match (score >= 0.80). Paid providers still run as a
+    # fallback when free ones return nothing.
+    prefer_free_providers: bool = True
+    # After the initial parallel pass, the long-mix path reruns unresolved
+    # segments through ``_retry_segment``. Disable to match pre-overhaul behavior.
+    auto_retry_unresolved: bool = True
+    # Parallel workers used per long-mix job when probing segments. ``0`` defers
+    # to the default computed from ``settings.max_workers``.
+    segment_workers: int = 0
 
 
 class JobCreate(BaseModel):
@@ -105,9 +128,40 @@ class TrackMatch(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
     def normalized_key(self) -> str:
-        artist = (self.artist or "").strip().lower()
-        title = self.title.strip().lower()
-        return f"{artist}::{title}"
+        """Tiered identity used throughout the pipeline for merging/deduping.
+
+        Prefers ISRC (tier A), then a provider-native id (tier B), then a
+        fuzzy artist+title key (tier C). See ``music_fetch.identity`` for the
+        exact logic and rationale.
+        """
+        from .identity import tiered_identity
+
+        return tiered_identity(self.isrc, self.provider_ids, self.artist, self.title)[1]
+
+    def identity_tier(self) -> str:
+        """Return the tier label ("isrc" | "provider_id" | "fuzzy") for this track."""
+        from .identity import tiered_identity
+
+        return tiered_identity(self.isrc, self.provider_ids, self.artist, self.title)[0]
+
+    def merges_with(self, other: "TrackMatch") -> bool:
+        """Return True if ``self`` and ``other`` describe the same song.
+
+        Uses ISRC veto (two distinct ISRCs are never merged even when fuzzy
+        keys collide) and otherwise tiered-identity equality.
+        """
+        from .identity import merges_with
+
+        return merges_with(
+            self.isrc,
+            self.provider_ids,
+            self.artist,
+            self.title,
+            other.isrc,
+            other.provider_ids,
+            other.artist,
+            other.title,
+        )
 
 
 class TrackCandidate(BaseModel):
@@ -136,6 +190,11 @@ class DetectedSegment(BaseModel):
     metadata_hints: list[str] = Field(default_factory=list)
     uncertainty: float | None = None
     explanation: list[str] = Field(default_factory=list)
+    # Observability: the identity key that produced this segment and the
+    # acceptance-gate label that promoted it from candidates → MATCHED_TRACK.
+    # Populated lazily; older rows keep these as None.
+    identity_key: str | None = None
+    acceptance_gate: str | None = None
 
 
 class SourceMetadata(BaseModel):
@@ -231,6 +290,18 @@ class RecognitionMetric(BaseModel):
     matched_segments: int = 0
     unresolved_segments: int = 0
     elapsed_ms: int = 0
+    # Reliability-overhaul observability. Stored in ``payload`` to avoid a
+    # schema change on ``recognition_metrics``; extracted here for ergonomics.
+    # See ``service._record_item_summary_metric`` for how these are populated.
+    segments_merged: int = 0
+    segments_bridged_across_speech: int = 0
+    repeat_group_reconfirmed: int = 0
+    repeat_group_rejected: int = 0
+    gate_g1_hits: int = 0
+    gate_g2_hits: int = 0
+    gate_g3_hits: int = 0
+    gate_g4_hits: int = 0
+    gate_g5_hits: int = 0
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 

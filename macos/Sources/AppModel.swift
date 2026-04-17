@@ -999,6 +999,61 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Permanently delete a library run (files + history). Mirrors the
+    /// "Delete permanently" context-menu action.
+    ///
+    /// Cache invalidation invariants:
+    ///   1. Clear our in-memory caches for the job FIRST so no stale UI
+    ///      snapshot lingers after the backend drops the row.
+    ///   2. Refresh BOTH library and storage — they're derived from the same
+    ///      DB rows, so a delete invalidates both. (Previously, cleanup
+    ///      refreshed the library but not storage, leading to stale counts.)
+    ///   3. If the deleted job was the currently-focused library/storage
+    ///      scope, move the selection to whatever's left (or clear it).
+    func deleteJob(_ jobID: String) {
+        let wasFocusedLibrary = route.libraryJobID == jobID
+        let wasFocusedStorage = route.storageJobID == jobID
+        Task {
+            do {
+                _ = try await backend.deleteJSON(
+                    "/v1/jobs/\(jobID)",
+                    command: backendCommand,
+                    type: DeleteJobResponse.self
+                )
+                // 1. Purge every in-memory cache for this job.
+                cachedResults.removeValue(forKey: jobID)
+                jobProgress.removeValue(forKey: jobID)
+                openedPrimaryLinkJobIDs.remove(jobID)
+                notifiedCompletionJobIDs.remove(jobID)
+                submittedJobIDs.remove(jobID)
+                eventStreamTasks[jobID]?.cancel()
+                eventStreamTasks.removeValue(forKey: jobID)
+                // 2. Reload library + storage atomically so UI counts stay
+                //    coherent. Both calls hit the same backend; cheap.
+                await refreshLibrary()
+                await refreshStorage(jobID: nil)
+                // 3. Move selection if the deleted run was focused.
+                if wasFocusedLibrary {
+                    route.libraryJobID = orderedLibraryEntries.first?.job_id
+                }
+                if wasFocusedStorage {
+                    route.storageJobID = orderedLibraryEntries.first?.job_id
+                }
+                if result?.job.id == jobID {
+                    result = nil
+                    selectedSegmentID = nil
+                    viewState = .idle
+                }
+            } catch {
+                viewState = .error(loc(languageCode,
+                                        "Delete failed",
+                                        "Loeschen fehlgeschlagen",
+                                        "Fallo al eliminar",
+                                        "Echec de la suppression"))
+            }
+        }
+    }
+
     func exportResults(jobID: String, format: String) {
         Task {
             do {

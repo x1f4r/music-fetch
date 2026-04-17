@@ -412,23 +412,60 @@ def choose_probe_windows(segment: SegmentDraft, max_probes: int) -> list[ProbeWi
 
 
 def assign_repeat_groups(segments: list[SegmentDraft], *, enabled: bool) -> None:
+    """Group audio-similar segments under a single ``repeat_group_id`` so a
+    later probe can reuse the first match (T2.1).
+
+    Changes vs the previous implementation:
+
+    - Similarity thresholds relaxed (``feature >= 0.88``, ``chroma >= 0.82``,
+      ``duration_ratio >= 0.35``) so that real repeats of the same song
+      across different mix positions actually get grouped.
+    - Added a temporal gate: a repeat group keeps the *position* of each
+      member so we can tell "same song, 40 min later" from "same song,
+      adjacent window". Without this the group's representative was always
+      the first occurrence and matches leaked forward indefinitely.
+    """
     if not enabled:
         return
-    representatives: list[tuple[str, np.ndarray, np.ndarray, int]] = []
+    # Track (group_id, rep_feature_vec, rep_chroma_vec, rep_duration_ms,
+    #        list_of_member_midpoint_ms) so we can require a temporal
+    # constraint on joining.
+    representatives: list[tuple[str, np.ndarray, np.ndarray, int, list[int]]] = []
+    musical_durations = [
+        segment.end_ms - segment.start_ms
+        for segment in segments
+        if segment.kind in {SegmentKind.MUSIC_UNRESOLVED, SegmentKind.MATCHED_TRACK}
+    ]
+    median_segment_ms = int(sorted(musical_durations)[len(musical_durations) // 2]) if musical_durations else 30_000
+    # Two members join the same group only if they're within this window OR
+    # their audio similarity is overwhelming (>= 0.96). The 4x-median heuristic
+    # means short-SFX clips stay separate even at high similarity.
+    temporal_window_ms = max(120_000, 4 * median_segment_ms)
     for segment in segments:
         if segment.kind not in {SegmentKind.MUSIC_UNRESOLVED, SegmentKind.MATCHED_TRACK}:
             continue
+        segment_duration = max(1, segment.end_ms - segment.start_ms)
+        segment_midpoint = segment.start_ms + segment_duration // 2
         assigned = None
-        for repeat_group_id, feature_vector, chroma_vector, duration_ms in representatives:
+        for group_id, feature_vector, chroma_vector, duration_ms, midpoints in representatives:
             feature_similarity = cosine_similarity(segment.feature_vector, feature_vector)
             chroma_similarity = cosine_similarity(segment.chroma_vector, chroma_vector)
-            duration_ratio = min(segment.end_ms - segment.start_ms, duration_ms) / max(segment.end_ms - segment.start_ms, duration_ms)
-            if feature_similarity >= 0.95 and chroma_similarity >= 0.90 and duration_ratio >= 0.45:
-                assigned = repeat_group_id
-                break
+            duration_ratio = min(segment_duration, duration_ms) / max(segment_duration, duration_ms)
+            if feature_similarity < 0.88 or chroma_similarity < 0.82 or duration_ratio < 0.35:
+                continue
+            # Temporal gate: skip unless there's a plausible nearby member, OR
+            # the similarity is extreme (same-second-of-audio-twice case).
+            nearest_distance = min(abs(segment_midpoint - existing) for existing in midpoints)
+            if nearest_distance > temporal_window_ms and feature_similarity < 0.96:
+                continue
+            assigned = group_id
+            midpoints.append(segment_midpoint)
+            break
         if assigned is None:
             assigned = sha1_text(f"{segment.start_ms}:{segment.end_ms}:{uuid.uuid4().hex}")[:12]
-            representatives.append((assigned, segment.feature_vector, segment.chroma_vector, segment.end_ms - segment.start_ms))
+            representatives.append(
+                (assigned, segment.feature_vector, segment.chroma_vector, segment_duration, [segment_midpoint])
+            )
         segment.repeat_group_id = assigned
 
 
@@ -506,13 +543,21 @@ def local_maxima(values: np.ndarray) -> list[int]:
 
 
 def classify_label(music_score: float, speech_score: float, no_music_score: float, rms: float, chroma_strength: float) -> SegmentKind:
-    if rms < 0.08 or no_music_score >= 0.68:
+    """Classify a feature frame into a coarse label.
+
+    Thresholds widened (T1.4) so fewer real-music frames get mislabelled as
+    ``SPEECH_ONLY`` / ``SILENCE_OR_FX`` and therefore skipped by the
+    recognition probe loop. The SPEECH_ONLY gate in particular was
+    aggressive on podcasts-with-BGM and quiet acoustic sections.
+    """
+    if rms < 0.06 or no_music_score >= 0.72:
         return SegmentKind.SILENCE_OR_FX
-    if music_score >= 0.55 and chroma_strength >= 0.30 and speech_score < 0.62:
+    # Widened: music_score 0.55 -> 0.48; chroma 0.30 -> 0.22; speech 0.62 -> 0.70.
+    if music_score >= 0.48 and chroma_strength >= 0.22 and speech_score < 0.70:
         return SegmentKind.MATCHED_TRACK
-    if speech_score >= 0.62 and music_score < 0.52:
+    if speech_score >= 0.70 and music_score < 0.48:
         return SegmentKind.SPEECH_ONLY
-    if music_score >= 0.38:
+    if music_score >= 0.32:
         return SegmentKind.MUSIC_UNRESOLVED
     return SegmentKind.SPEECH_ONLY
 

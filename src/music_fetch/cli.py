@@ -228,6 +228,42 @@ def library(
     console.print(table)
 
 
+@app.command("library-delete")
+def library_delete(
+    job_id: str,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Permanently delete a library run (files + history)."""
+    from .service import JobBusyError
+
+    context = create_context()
+    try:
+        result = context.manager.delete_job(job_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except JobBusyError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        raise typer.Exit(code=2) from exc
+    if json_output:
+        console.print_json(json.dumps(result))
+        return
+    console.print(f"{job_id}: deleted")
+    if result.get("failed_paths"):
+        console.print(f"[yellow]Some paths could not be removed ({len(result['failed_paths'])}).[/yellow]")
+
+
+@app.command("library-prune-zombies")
+def library_prune_zombies(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Remove library rows whose artifacts are gone."""
+    context = create_context()
+    result = context.manager.prune_zombie_library_entries()
+    if json_output:
+        console.print_json(json.dumps(result))
+        return
+    removed = result.get("removed_job_ids", [])
+    console.print(f"Pruned {len(removed)} zombie run(s).")
+
+
 @app.command("job")
 def show_job(job_id: str, json_output: bool = typer.Option(False, "--json")) -> None:
     context = create_context()
