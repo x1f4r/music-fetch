@@ -121,6 +121,19 @@ class JobManager:
     def storage_summary(self, job_id: str | None = None) -> StorageSummary:
         return self.artifact_service.storage_summary(job_id)
 
+    def system_resources(self) -> dict:
+        from .config import detect_system_resources
+
+        cpu, ram_gb = detect_system_resources()
+        with self._lock:
+            active = sum(1 for future in self._futures.values() if not future.done())
+        return {
+            "cpu_count": cpu,
+            "ram_gb": round(ram_gb, 2) if ram_gb else 0.0,
+            "max_workers": self.settings.max_workers,
+            "active_jobs": active,
+        }
+
     def set_job_pinned(self, job_id: str, pinned: bool) -> bool:
         if not self.db.get_job(job_id):
             raise ValueError(f"Unknown job: {job_id}")
@@ -441,6 +454,8 @@ class JobManager:
                     if provider_hits:
                         self.db.add_event(job.id, "info", f"{provider.name} matched {provider_hits[0].track.title} for segment {draft.start_ms}-{draft.end_ms}")
                     candidates.extend(provider_hits)
+                if self._probes_have_strong_match(candidates):
+                    break
             draft.probe_count = probe_count
             draft.provider_attempts = provider_attempts
             draft.candidates = candidates
@@ -755,8 +770,29 @@ class JobManager:
         if profile.stop_after_consensus <= 0 or not candidates:
             return False
         counts = Counter(candidate.track.normalized_key() for candidate in candidates)
-        top_count = counts.most_common(1)[0][1]
-        return top_count >= profile.stop_after_consensus
+        top_key, top_count = counts.most_common(1)[0]
+        if top_count >= profile.stop_after_consensus:
+            return True
+        top_confidence = max(
+            candidate.confidence
+            for candidate in candidates
+            if candidate.track.normalized_key() == top_key
+        )
+        return top_confidence >= 0.92
+
+    def _probes_have_strong_match(self, candidates: list[TrackCandidate]) -> bool:
+        if not candidates:
+            return False
+        counts = Counter(candidate.track.normalized_key() for candidate in candidates)
+        top_key, top_count = counts.most_common(1)[0]
+        if top_count >= 2:
+            return True
+        top_confidence = max(
+            candidate.confidence
+            for candidate in candidates
+            if candidate.track.normalized_key() == top_key
+        )
+        return top_confidence >= 0.90
 
     def _record_item_summary_metric(self, job_id: str, source_item_id: str, segments: list[DetectedSegment]) -> None:
         self.db.add_recognition_metric(

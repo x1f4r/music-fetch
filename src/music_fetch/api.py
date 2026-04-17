@@ -71,7 +71,7 @@ def _safe_upload_name(filename: str | None) -> str:
 
 
 def create_api(context: AppContext) -> FastAPI:
-    app = FastAPI(title="Music Fetch", version="0.3.8")
+    app = FastAPI(title="Music Fetch", version="0.3.9")
 
     def require_auth(authorization: str | None = Header(default=None)) -> None:
         token = context.settings.api_token
@@ -250,6 +250,10 @@ def create_api(context: AppContext) -> FastAPI:
     @app.get("/v1/storage")
     async def get_storage(job_id: str | None = None, _: None = Depends(require_auth)) -> dict:
         return {"storage": context.manager.storage_summary(job_id)}
+
+    @app.get("/v1/system/resources")
+    async def get_system_resources(_: None = Depends(require_auth)) -> dict:
+        return context.manager.system_resources()
 
     @app.delete("/v1/storage")
     async def delete_storage(job_id: str | None = None, _: None = Depends(require_auth)) -> dict:

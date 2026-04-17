@@ -9,7 +9,6 @@ final class AppModel: ObservableObject {
     @Published var inputValue = ""
     @Published var providerChecks: [DoctorCheck] = []
     @Published var result: AnalyzeResponse?
-    @Published var recentAnalyses: [RecentAnalysis] = []
     @Published var libraryEntries: [LibraryEntryPayload] = []
     @Published var storageSummary: StorageSummaryPayload?
     @Published var viewState: AppViewState = .idle
@@ -19,14 +18,19 @@ final class AppModel: ObservableObject {
     @Published var captureState: CaptureState = .idle
     @Published var latestQuickCaptureSummary = ""
 
+    @Published var jobProgress: [String: JobProgress] = [:]
+    @Published var systemResources: SystemResources?
+
     private let microphoneRecorder = MicrophoneRecorder()
     private let systemAudioRecorder = SystemAudioRecorder()
     private let backend = BackendController()
     private var analysisPhaseTask: Task<Void, Never>?
-    private var eventStreamTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
     private var cachedResults: [String: AnalyzeResponse] = [:]
     private var openedPrimaryLinkJobIDs: Set<String> = []
+    private var notifiedCompletionJobIDs: Set<String> = []
+    private var submittedJobIDs: Set<String> = []
+    private var eventStreamTasks: [String: Task<Void, Never>] = [:]
     private var terminationObserver: NSObjectProtocol?
     private var lastStorageFetchAt: Date?
     private var lastStorageFetchJobID: String?
@@ -39,7 +43,6 @@ final class AppModel: ObservableObject {
         let resolvedBackend = Self.resolveInitialBackendCommand(saved: savedBackend)
         backendCommand = resolvedBackend
         UserDefaults.standard.set(resolvedBackend, forKey: backendCommandDefaultsKey)
-        recentAnalyses = Self.loadRecentAnalyses()
         languageCode = UserDefaults.standard.string(forKey: languageDefaultsKey) ?? defaultUILanguageCode()
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
@@ -213,14 +216,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func showStorage(jobID: String?) {
-        route.workspace = .storage
-        route.storageJobID = jobID
-        Task {
-            await refreshStorage(jobID: jobID)
-        }
-    }
-
     func showDiagnostics() {
         UserDefaults.standard.set(SettingsTab.diagnostics.rawValue, forKey: settingsTabDefaultsKey)
         if providerChecks.isEmpty {
@@ -251,25 +246,6 @@ final class AppModel: ObservableObject {
         ].compactMap { $0 }
         if panel.runModal() == .OK, let url = panel.url {
             inputValue = url.path
-        }
-    }
-
-    func restoreRecent(_ analysis: RecentAnalysis) {
-        inputValue = analysis.input
-        route.workspace = .analyze
-        if let cached = cachedResults[analysis.id] {
-            result = cached
-            selectedSegmentID = cached.segments.first?.id
-            viewState = .showingResults
-            return
-        }
-        Task {
-            do {
-                let response = try await refreshJobSnapshot(analysis.id)
-                cache(response: response, source: analysis.input)
-            } catch {
-                viewState = .error(loc(languageCode, "Could not reopen analysis", "Analyse konnte nicht erneut geoeffnet werden", "No se pudo reabrir el analisis", "Impossible de reouvrir l'analyse"))
-            }
         }
     }
 
@@ -320,6 +296,8 @@ final class AppModel: ObservableObject {
             }
             await refreshLibrary()
             await refreshStorage()
+            await fetchSystemResources()
+            reconcileStreams()
             if startupFailed,
                case let .error(message) = viewState,
                Self.isRecoverableBackendStartupError(message)
@@ -711,6 +689,7 @@ final class AppModel: ObservableObject {
                 inputValue = ""
                 route.libraryJobID = jobResponse.job_id
                 route.storageJobID = jobResponse.job_id
+                submittedJobIDs.insert(jobResponse.job_id)
                 if switchToAnalyze {
                     route.workspace = .analyze
                 }
@@ -771,6 +750,10 @@ final class AppModel: ObservableObject {
 
     private func pollLiveState() async {
         await refreshLibrary()
+        reconcileStreams()
+        if hasActiveJob {
+            await fetchSystemResources()
+        }
         if route.workspace == .storage, shouldRefreshStorage(for: route.storageJobID) {
             await refreshStorage(jobID: route.storageJobID)
         }
@@ -820,19 +803,6 @@ final class AppModel: ObservableObject {
 
     private func cache(response: AnalyzeResponse, source: String) {
         cachedResults[response.job.id] = response
-        let title = response.items.first?.input_value ?? source
-        let entry = RecentAnalysis(
-            id: response.job.id,
-            input: source,
-            title: title,
-            status: response.job.status,
-            segmentCount: response.segments.count,
-            createdAt: Date()
-        )
-        recentAnalyses.removeAll { $0.id == entry.id || $0.input == entry.input }
-        recentAnalyses.insert(entry, at: 0)
-        recentAnalyses = Array(recentAnalyses.prefix(8))
-        Self.saveRecentAnalyses(recentAnalyses)
     }
 
     private func maybeOpenPrimaryLinkIfEnabled(_ response: AnalyzeResponse) {
@@ -887,35 +857,184 @@ final class AppModel: ObservableObject {
     }
 
     private func notifyCompletion(response: AnalyzeResponse) async {
-        guard let summary = Self.topMatchSummary(from: response) else { return }
         let content = UNMutableNotificationContent()
-        content.title = "Music Fetch"
-        content.body = summary
+        let matched = response.segments.filter { $0.track != nil }.count
+        switch response.job.status {
+        case "succeeded":
+            content.title = loc(languageCode, "Analysis complete", "Analyse fertig", "Analisis listo", "Analyse terminee")
+            content.body = Self.topMatchSummary(from: response)
+                ?? "\(matched) " + loc(languageCode, "tracks matched", "Treffer", "coincidencias", "correspondances")
+        case "partial_failed":
+            content.title = loc(languageCode, "Analysis finished with issues", "Analyse mit Hinweisen fertig", "Analisis con avisos", "Analyse avec avis")
+            content.body = "\(matched) " + loc(languageCode, "tracks matched", "Treffer", "coincidencias", "correspondances")
+        case "failed":
+            content.title = loc(languageCode, "Analysis failed", "Analyse fehlgeschlagen", "Fallo el analisis", "Echec de l'analyse")
+            content.body = response.job.error ?? loc(languageCode, "Open Music Fetch for details.", "Oeffne Music Fetch fuer Details.", "Abre Music Fetch para detalles.", "Ouvrez Music Fetch pour les details.")
+        case "canceled":
+            return
+        default:
+            return
+        }
         content.sound = .default
         let request = UNNotificationRequest(identifier: "music-fetch-\(response.job.id)", content: content, trigger: nil)
         try? await UNUserNotificationCenter.current().add(request)
     }
 
     private func subscribeToJob(_ jobID: String) {
-        eventStreamTask?.cancel()
-        eventStreamTask = Task { [weak self] in
+        submittedJobIDs.insert(jobID)
+        guard eventStreamTasks[jobID] == nil else { return }
+        let task = Task { [weak self] in
             guard let self else { return }
             await self.backend.streamEvents(jobID: jobID, command: self.backendCommand) { payload in
-                if let data = payload.data(using: .utf8),
-                   let event = try? JSONDecoder().decode(JobEventPayload.self, from: data),
-                   self.activeJobID == jobID || self.route.libraryJobID == jobID || self.route.storageJobID == jobID
-                {
-                    self.viewState = .analyzing(event.message)
+                let segmentCount: Int
+                let matchedCount: Int
+                if let response = self.cachedResults[jobID] {
+                    segmentCount = response.segments.count
+                    matchedCount = response.segments.filter { $0.track != nil }.count
+                } else {
+                    segmentCount = self.jobProgress[jobID]?.segmentCount ?? 0
+                    matchedCount = self.jobProgress[jobID]?.matchedCount ?? 0
                 }
+
+                if let data = payload.data(using: .utf8),
+                   let event = try? JSONDecoder().decode(JobEventPayload.self, from: data)
+                {
+                    let progress = JobProgress(
+                        status: "running",
+                        message: event.message,
+                        updatedAt: Date(),
+                        segmentCount: segmentCount,
+                        matchedCount: matchedCount
+                    )
+                    self.jobProgress[jobID] = progress
+                    if self.activeJobID == jobID {
+                        self.viewState = .analyzing(event.message)
+                    }
+                }
+
                 Task {
                     if let response = try? await self.refreshJobSnapshot(jobID) {
                         self.cache(response: response, source: response.items.first?.input_value ?? jobID)
-                        self.latestQuickCaptureSummary = Self.topMatchSummary(from: response) ?? self.latestQuickCaptureSummary
-                        if response.job.status == "succeeded" || response.job.status == "partial_failed" {
-                            await self.notifyCompletion(response: response)
+                        if self.activeJobID == jobID {
+                            self.latestQuickCaptureSummary = Self.topMatchSummary(from: response) ?? self.latestQuickCaptureSummary
+                        }
+                        let matched = response.segments.filter { $0.track != nil }.count
+                        self.jobProgress[jobID] = JobProgress(
+                            status: response.job.status,
+                            message: response.events?.last?.message ?? "",
+                            updatedAt: Date(),
+                            segmentCount: response.segments.count,
+                            matchedCount: matched
+                        )
+                        if Self.isTerminalStatus(response.job.status) {
+                            await self.maybeNotify(response: response)
                         }
                     }
                 }
+            }
+            _ = await MainActor.run {
+                self.eventStreamTasks.removeValue(forKey: jobID)
+            }
+        }
+        eventStreamTasks[jobID] = task
+    }
+
+    private static func isTerminalStatus(_ status: String) -> Bool {
+        ["succeeded", "partial_failed", "failed", "canceled"].contains(status)
+    }
+
+    private func maybeNotify(response: AnalyzeResponse) async {
+        guard !notifiedCompletionJobIDs.contains(response.job.id) else { return }
+        notifiedCompletionJobIDs.insert(response.job.id)
+        await notifyCompletion(response: response)
+    }
+
+    func snapshot(for jobID: String) async -> AnalyzeResponse? {
+        if let cached = cachedResults[jobID] { return cached }
+        do {
+            let response = try await backend.getJSON(
+                "/v1/jobs/\(jobID)/snapshot",
+                command: backendCommand,
+                type: AnalyzeResponse.self
+            )
+            cachedResults[jobID] = response
+            return response
+        } catch {
+            return nil
+        }
+    }
+
+    func retrySegments(jobID: String) {
+        Task {
+            do {
+                let payload = RetrySegmentsRequest(source_item_id: nil, options: currentJobOptions())
+                _ = try await backend.postJSON(
+                    "/v1/jobs/\(jobID)/segments/retry",
+                    command: backendCommand,
+                    body: payload,
+                    type: RetryResponse.self
+                )
+                _ = try await refreshJobSnapshot(jobID)
+                await refreshLibrary()
+            } catch {
+                // surfaced in the view's own error path
+            }
+        }
+    }
+
+    func cancelJob(_ jobID: String) {
+        Task {
+            do {
+                _ = try await backend.postJSON(
+                    "/v1/jobs/\(jobID)/cancel",
+                    command: backendCommand,
+                    body: [String: String](),
+                    type: CancelResponse.self
+                )
+                _ = try? await refreshJobSnapshot(jobID)
+                await refreshLibrary()
+            } catch {
+                // ignored
+            }
+        }
+    }
+
+    func exportResults(jobID: String, format: String) {
+        Task {
+            do {
+                let response = try await backend.getJSON(
+                    "/v1/jobs/\(jobID)/export",
+                    command: backendCommand,
+                    queryItems: [URLQueryItem(name: "format", value: format)],
+                    type: ExportResponse.self
+                )
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = response.filename
+                if panel.runModal() == .OK, let url = panel.url {
+                    try response.content.write(to: url, atomically: true, encoding: .utf8)
+                }
+            } catch {
+                viewState = .error(loc(languageCode, "Export failed", "Export fehlgeschlagen", "Fallo la exportacion", "Echec de l'export"))
+            }
+        }
+    }
+
+    func fetchSystemResources() async {
+        do {
+            systemResources = try await backend.getJSON(
+                "/v1/system/resources",
+                command: backendCommand,
+                type: SystemResources.self
+            )
+        } catch {
+            // keep the previous value; surfaces render a fallback
+        }
+    }
+
+    private func reconcileStreams() {
+        for entry in libraryEntries where ["queued", "running"].contains(entry.status) {
+            if eventStreamTasks[entry.job_id] == nil {
+                subscribeToJob(entry.job_id)
             }
         }
     }
@@ -1019,17 +1138,6 @@ final class AppModel: ObservableObject {
             return false
         }
         return saved == "music-fetch" || saved == "/usr/local/bin/music-fetch" || saved.contains("/.local/bin/music-fetch")
-    }
-
-    private static func loadRecentAnalyses() -> [RecentAnalysis] {
-        guard let data = UserDefaults.standard.data(forKey: recentAnalysesDefaultsKey) else { return [] }
-        return (try? JSONDecoder().decode([RecentAnalysis].self, from: data)) ?? []
-    }
-
-    private static func saveRecentAnalyses(_ analyses: [RecentAnalysis]) {
-        if let data = try? JSONEncoder().encode(analyses) {
-            UserDefaults.standard.set(data, forKey: recentAnalysesDefaultsKey)
-        }
     }
 
     private static func topMatchSummary(from response: AnalyzeResponse) -> String? {

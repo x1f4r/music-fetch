@@ -12,6 +12,36 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .models import ProviderName
 
 
+def detect_system_resources() -> tuple[int, float]:
+    """Return (cpu_count, ram_gb). ram_gb is 0.0 when undetectable."""
+    cpu = os.cpu_count() or 2
+    ram_gb = 0.0
+    if hasattr(os, "sysconf"):
+        try:
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            if pages > 0 and page_size > 0:
+                ram_gb = pages * page_size / (1024 ** 3)
+        except (ValueError, OSError):
+            pass
+    return cpu, ram_gb
+
+
+def recommended_max_workers() -> int:
+    """Pick a concurrent-job count that fits the machine.
+
+    Each in-flight job can load a ~500 MB separation model, decode audio in
+    librosa buffers, and run a Python thread; aim for ~1.5 GB headroom per
+    worker and leave a core free for the UI/backend server.
+    """
+    cpu, ram_gb = detect_system_resources()
+    if ram_gb <= 0:
+        return min(4, max(2, cpu))
+    by_ram = max(1, int((ram_gb - 2) / 1.5))
+    by_cpu = max(1, cpu - 1) if cpu > 2 else cpu
+    return max(1, min(8, by_cpu, by_ram))
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MUSIC_FETCH_", extra="ignore")
 
@@ -20,7 +50,7 @@ class Settings(BaseSettings):
     default_port: int = 7766
     api_token: str | None = None
     base_dir: str | None = None
-    max_workers: int = Field(default_factory=lambda: min(4, max(2, os.cpu_count() or 2)))
+    max_workers: int = Field(default_factory=recommended_max_workers)
     provider_min_interval_ms: int = 350
     retain_artifacts: bool = False
     separation_model: str | None = None
