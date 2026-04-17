@@ -7,6 +7,7 @@ struct ResultsSectionView: View {
     @ObservedObject var model: AppModel
     @AppStorage(debugDetailsDefaultsKey) private var debugDetails = false
     @State private var showOnlySongs = true
+    @State private var timelineZoom: Double = 1.0
 
     var body: some View {
         Card(padding: 18, cornerRadius: 14) {
@@ -37,12 +38,17 @@ struct ResultsSectionView: View {
                     )
 
                     if !filtered.isEmpty {
-                        ResultsTimelineView(
-                            segments: filtered,
-                            selectedID: model.selectedSegmentID,
-                            onSelect: { id in model.selectSegment(id) }
-                        )
-                        .frame(height: 30)
+                        HStack(spacing: 8) {
+                            ResultsTimelineView(
+                                segments: filtered,
+                                selectedID: model.selectedSegmentID,
+                                onSelect: { id in model.selectSegment(id) },
+                                zoom: $timelineZoom
+                            )
+                            .frame(height: 36)
+
+                            TimelineZoomControl(zoom: $timelineZoom)
+                        }
                     }
 
                     SegmentList(
@@ -167,38 +173,117 @@ struct ResultsTimelineView: View {
     let segments: [SegmentViewModel]
     let selectedID: String?
     let onSelect: (String) -> Void
+    @Binding var zoom: Double
+
+    private let minSegmentWidth: CGFloat = 3
 
     var body: some View {
         GeometryReader { geo in
             let totalDuration = max(1, segments.map(\.endMs).max() ?? 1)
-            let width = geo.size.width
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+            let containerWidth = max(1, geo.size.width)
+            let contentWidth = containerWidth * CGFloat(zoom)
+            let height = geo.size.height
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.primary.opacity(0.06))
 
-                ForEach(segments) { seg in
-                    let segWidth = max(3, CGFloat(seg.endMs - seg.startMs) / CGFloat(totalDuration) * width)
-                    let segX = CGFloat(seg.startMs) / CGFloat(totalDuration) * width
-                    let isSelected = selectedID == seg.id
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        ZStack(alignment: .leading) {
+                            Color.clear
+                                .frame(width: contentWidth, height: height)
 
-                    Button {
-                        onSelect(seg.id)
-                    } label: {
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(seg.timelineColor.opacity(isSelected ? 1.0 : 0.75))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .strokeBorder(isSelected ? Color.primary.opacity(0.55) : Color.clear, lineWidth: 1.5)
-                            )
+                            ForEach(segments) { seg in
+                                let rawWidth = CGFloat(seg.endMs - seg.startMs) / CGFloat(totalDuration) * contentWidth
+                                let segWidth = max(minSegmentWidth, rawWidth)
+                                let segX = CGFloat(seg.startMs) / CGFloat(totalDuration) * contentWidth
+                                let isSelected = selectedID == seg.id
+
+                                Button {
+                                    onSelect(seg.id)
+                                } label: {
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(seg.timelineColor.opacity(isSelected ? 1.0 : 0.75))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                                .strokeBorder(isSelected ? Color.primary.opacity(0.6) : Color.clear, lineWidth: 1.5)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .frame(width: segWidth, height: isSelected ? height - 8 : height - 14)
+                                .position(x: segX + segWidth / 2, y: height / 2)
+                                .help(seg.title)
+                                .id(seg.id)
+                            }
+                        }
+                        .frame(width: contentWidth, height: height, alignment: .leading)
                     }
-                    .buttonStyle(.plain)
-                    .frame(width: segWidth, height: isSelected ? 26 : 20)
-                    .offset(x: segX, y: isSelected ? 2 : 5)
-                    .help(seg.title)
+                    .onChange(of: selectedID) { _, newID in
+                        guard let newID else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            proxy.scrollTo(newID, anchor: .center)
+                        }
+                    }
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+            )
         }
+    }
+}
+
+struct TimelineZoomControl: View {
+    @Binding var zoom: Double
+
+    private let minZoom: Double = 1.0
+    private let maxZoom: Double = 40.0
+    private let step: Double = 1.6
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button {
+                zoom = max(minZoom, zoom / step)
+            } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(zoom <= minZoom ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+            .disabled(zoom <= minZoom)
+
+            Button {
+                zoom = minZoom
+            } label: {
+                Text("\(Int(zoom * 100))%")
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 40, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Reset zoom")
+
+            Button {
+                zoom = min(maxZoom, zoom * step)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(zoom >= maxZoom ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+            .disabled(zoom >= maxZoom)
+        }
+        .frame(height: 24)
+        .background(Color.primary.opacity(0.06), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
     }
 }
 
@@ -209,18 +294,28 @@ struct SegmentList: View {
     @Binding var selectedID: String?
 
     var body: some View {
-        List(selection: $selectedID) {
-            ForEach(segments) { seg in
-                SegmentRow(segment: seg, isSelected: selectedID == seg.id)
-                    .tag(Optional(seg.id))
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2))
-                    .listRowBackground(Color.clear)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 3) {
+                    ForEach(segments) { seg in
+                        SegmentRow(segment: seg, isSelected: selectedID == seg.id)
+                            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .onTapGesture {
+                                selectedID = seg.id
+                            }
+                            .id(seg.id)
+                    }
+                }
+                .padding(2)
+            }
+            .scrollIndicators(.automatic)
+            .onChange(of: selectedID) { _, newID in
+                guard let newID else { return }
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    proxy.scrollTo(newID, anchor: .center)
+                }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, 52)
     }
 }
 
@@ -268,10 +363,14 @@ struct SegmentRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
         )
-        .contentShape(Rectangle())
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
