@@ -2,7 +2,6 @@ import Foundation
 import SwiftUI
 
 let backendCommandDefaultsKey = "musicFetch.backendCommand"
-let recentAnalysesDefaultsKey = "musicFetch.recentAnalyses"
 let openExternalLinksDefaultsKey = "musicFetch.openExternalLinks"
 let languageDefaultsKey = "musicFetch.language"
 let launchAtLoginDefaultsKey = "musicFetch.launchAtLogin"
@@ -12,9 +11,9 @@ let metadataHintsDefaultsKey = "musicFetch.metadataHints"
 let repeatDetectionDefaultsKey = "musicFetch.repeatDetection"
 let preferSeparationDefaultsKey = "musicFetch.preferSeparation"
 let preferredInputDefaultsKey = "musicFetch.preferredInput"
-let recordingTargetDefaultsKey = "musicFetch.recordingTarget"
 let debugDetailsDefaultsKey = "musicFetch.debugDetails"
 let settingsTabDefaultsKey = "musicFetch.settingsTab"
+let libraryScopeDefaultsKey = "musicFetch.libraryScope"
 
 func defaultUILanguageCode() -> String {
     let preferred = Locale.preferredLanguages.first?.lowercased() ?? "en"
@@ -129,6 +128,21 @@ struct StorageEnvelope: Codable {
     let storage: StorageSummaryPayload
 }
 
+struct SystemResources: Codable, Equatable {
+    let cpu_count: Int
+    let ram_gb: Double
+    let max_workers: Int
+    let active_jobs: Int
+}
+
+struct JobProgress: Equatable {
+    var status: String
+    var message: String
+    var updatedAt: Date
+    var segmentCount: Int
+    var matchedCount: Int
+}
+
 struct PinResponse: Codable {
     let job_id: String
     let pinned: Bool
@@ -233,11 +247,11 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .analyze:
-            return "waveform.and.magnifyingglass"
+            return "waveform"
         case .library:
-            return "books.vertical.fill"
+            return "rectangle.stack"
         case .storage:
-            return "internaldrive.fill"
+            return "externaldrive"
         }
     }
 
@@ -255,11 +269,20 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     func subtitle(_ code: String) -> String {
         switch self {
         case .analyze:
-            return loc(code, "Capture, ingest, and inspect results.", "Aufnehmen, importieren und Ergebnisse pruefen.", "Captura, importa y revisa resultados.", "Capturez, importez et inspectez les resultats.")
+            return loc(code, "Start a run and watch it resolve.",
+                       "Starte eine Analyse und beobachte sie live.",
+                       "Inicia un analisis y obsérvalo en vivo.",
+                       "Lancez une analyse et suivez-la en direct.")
         case .library:
-            return loc(code, "Browse finished runs and reopen timelines.", "Abgeschlossene Laeufe durchsuchen und Timelines erneut oeffnen.", "Explora analisis terminados y reabre timelines.", "Parcourez les analyses terminees et reouvrez les timelines.")
+            return loc(code, "Every run, live and finished.",
+                       "Alle Laeufe, live und abgeschlossen.",
+                       "Todas las ejecuciones, en vivo y terminadas.",
+                       "Toutes les analyses, en cours et terminees.")
         case .storage:
-            return loc(code, "Control temporary artifacts and cleanup.", "Temporare Artefakte und Cleanup steuern.", "Controla artefactos temporales y limpieza.", "Controlez les artefacts temporaires et le nettoyage.")
+            return loc(code, "Artifacts and disk usage.",
+                       "Artefakte und Speichernutzung.",
+                       "Artefactos y uso de disco.",
+                       "Artefacts et utilisation du disque.")
         }
     }
 }
@@ -291,29 +314,6 @@ enum PreferredInput: String, CaseIterable, Identifiable {
             return loc(code, "Mic", "Mikro", "Mic", "Micro")
         case .system:
             return loc(code, "System", "System", "Sistema", "Systeme")
-        }
-    }
-}
-
-enum RecordingTarget: String, CaseIterable, Identifiable {
-    case microphone
-    case system
-
-    var id: String { rawValue }
-
-    var systemImage: String {
-        switch self {
-        case .microphone: return "mic.fill"
-        case .system: return "waveform"
-        }
-    }
-
-    func title(_ code: String) -> String {
-        switch self {
-        case .microphone:
-            return loc(code, "Microphone", "Mikrofon", "Microfono", "Micro")
-        case .system:
-            return loc(code, "System Audio", "Systemaudio", "Audio del sistema", "Audio systeme")
         }
     }
 }
@@ -361,7 +361,6 @@ enum RecallProfile: String, CaseIterable, Identifiable {
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
-    case input
     case recognition
     case connections
     case diagnostics
@@ -371,7 +370,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .general: return "gearshape"
-        case .input: return "square.and.arrow.down"
         case .recognition: return "waveform.path.ecg"
         case .connections: return "link"
         case .diagnostics: return "stethoscope"
@@ -382,8 +380,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general:
             return loc(code, "General", "Allgemein", "General", "General")
-        case .input:
-            return loc(code, "Input", "Eingabe", "Entrada", "Entree")
         case .recognition:
             return loc(code, "Recognition", "Erkennung", "Reconocimiento", "Reconnaissance")
         case .connections:
@@ -406,15 +402,6 @@ struct PlatformLink: Identifiable, Hashable {
     let icon: String
     let color: Color
     let url: URL
-}
-
-struct RecentAnalysis: Codable, Identifiable, Hashable {
-    let id: String
-    let input: String
-    let title: String
-    let status: String
-    let segmentCount: Int
-    let createdAt: Date
 }
 
 enum AppViewState: Equatable {

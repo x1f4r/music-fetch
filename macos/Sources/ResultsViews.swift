@@ -10,8 +10,8 @@ struct ResultsSectionView: View {
     @State private var timelineZoom: Double = 1.0
 
     var body: some View {
-        Card(padding: 18, cornerRadius: 14) {
-            VStack(alignment: .leading, spacing: 14) {
+        Panel(padding: Theme.Space.m, radius: Theme.Radius.panel) {
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
                 header
 
                 if case let .analyzing(phase) = model.viewState, model.result == nil {
@@ -38,7 +38,7 @@ struct ResultsSectionView: View {
                     )
 
                     if !filtered.isEmpty {
-                        HStack(spacing: 8) {
+                        HStack(spacing: Theme.Space.xs) {
                             ResultsTimelineView(
                                 segments: filtered,
                                 selectedID: model.selectedSegmentID,
@@ -81,13 +81,14 @@ struct ResultsSectionView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center) {
-            SectionHeading(
-                loc(model.languageCode, "Results", "Ergebnisse", "Resultados", "Resultats"),
-                subtitle: model.result.map { result in
-                    "\(result.segments.count) " + loc(model.languageCode, "segments", "Segmente", "segmentos", "segments")
-                }
-            )
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
+            SectionLabel(loc(model.languageCode, "Results", "Ergebnisse", "Resultados", "Resultats"))
+            if let result = model.result {
+                Text("\(result.segments.count) " + loc(model.languageCode, "segments", "Segmente", "segmentos", "segments"))
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.Palette.textTertiary)
+                    .monospacedDigit()
+            }
             Spacer()
         }
     }
@@ -546,16 +547,15 @@ struct InspectorView: View {
     private func metadataSection(_ segment: SegmentViewModel) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                InspectorPill(icon: "clock", text: "\(formatTime(segment.startMs)) – \(formatTime(segment.endMs))")
-                InspectorPill(icon: "sparkles", text: segment.detailLabel)
+                Pill("\(formatTime(segment.startMs)) – \(formatTime(segment.endMs))", icon: "clock")
+                Pill(segment.detailLabel, icon: "sparkles")
             }
             HStack(spacing: 6) {
                 if let quality = segment.qualityLabel {
-                    InspectorPill(icon: "checkmark.seal", text: quality)
+                    Pill(quality, icon: "checkmark.seal", tint: Theme.Palette.successTint)
                 }
                 if let uncertainty = segment.payload.uncertainty {
-                    InspectorPill(icon: "gauge.with.dots.needle.33percent",
-                                  text: String(format: "U %.2f", uncertainty))
+                    Pill(String(format: "U %.2f", uncertainty), icon: "gauge.with.dots.needle.33percent")
                 }
             }
 
@@ -691,24 +691,6 @@ struct InspectorView: View {
     private func cleanHint(_ hint: String) -> String {
         hint.replacingOccurrences(of: "tracklist:", with: "")
             .replacingOccurrences(of: "chapter:", with: "")
-    }
-}
-
-struct InspectorPill: View {
-    let icon: String
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.caption2)
-            Text(text)
-                .font(.caption.weight(.medium))
-        }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.primary.opacity(0.06), in: Capsule())
     }
 }
 
