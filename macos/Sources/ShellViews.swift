@@ -1202,6 +1202,7 @@ struct LibraryJobDetailView: View {
 
 struct StorageView: View {
     @ObservedObject var model: AppModel
+    @State private var pendingStorageDeletion: PendingStorageDeletion?
 
     var body: some View {
         ScrollView {
@@ -1259,6 +1260,30 @@ struct StorageView: View {
         }
         .background(Theme.Palette.surface)
         .task { await model.refreshStorage(jobID: model.selectedStorageJobID) }
+        .confirmationDialog(
+            pendingStorageDeletion?.title(model.languageCode) ?? "",
+            isPresented: Binding(
+                get: { pendingStorageDeletion != nil },
+                set: { if !$0 { pendingStorageDeletion = nil } }
+            ),
+            presenting: pendingStorageDeletion
+        ) { pending in
+            Button(pending.buttonTitle(model.languageCode), role: .destructive) {
+                switch pending {
+                case let .single(jobID):
+                    model.deleteJob(jobID)
+                case .allUnpinned:
+                    model.deleteJobs(includePinned: false)
+                case .all:
+                    model.deleteJobs(includePinned: true)
+                }
+                pendingStorageDeletion = nil
+            }
+            Button(loc(model.languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler"),
+                   role: .cancel) { pendingStorageDeletion = nil }
+        } message: { pending in
+            Text(pending.message(model.languageCode))
+        }
     }
 
     private var header: some View {
@@ -1283,6 +1308,36 @@ struct StorageView: View {
                            model.selectedStorageJobID == nil ? "Nettoyer non epingles" : "Nettoyer celui-ci")) {
                     model.cleanupArtifacts(jobID: model.selectedStorageJobID)
                 }
+
+                Divider()
+
+                if let jobID = model.selectedStorageJobID {
+                    Button(loc(model.languageCode,
+                               "Delete this run",
+                               "Diesen Lauf loeschen",
+                               "Eliminar este analisis",
+                               "Supprimer cette analyse"),
+                           role: .destructive) {
+                        pendingStorageDeletion = .single(jobID)
+                    }
+                } else {
+                    Button(loc(model.languageCode,
+                               "Delete unpinned runs",
+                               "Ungepinnte Laeufe loeschen",
+                               "Eliminar no fijados",
+                               "Supprimer les non epingles"),
+                           role: .destructive) {
+                        pendingStorageDeletion = .allUnpinned
+                    }
+                    Button(loc(model.languageCode,
+                               "Delete all runs",
+                               "Alle Laeufe loeschen",
+                               "Eliminar todo",
+                               "Tout supprimer"),
+                           role: .destructive) {
+                        pendingStorageDeletion = .all
+                    }
+                }
             } label: {
                 Label(loc(model.languageCode, "Clean up", "Aufraeumen", "Limpiar", "Nettoyer"),
                       systemImage: "trash")
@@ -1290,6 +1345,65 @@ struct StorageView: View {
             .menuStyle(.button)
             .fixedSize()
             .disabled(model.storageSummary?.entries.isEmpty ?? true)
+        }
+    }
+
+    private enum PendingStorageDeletion: Identifiable {
+        case single(String)
+        case allUnpinned
+        case all
+
+        var id: String {
+            switch self {
+            case let .single(jobID): return "single-\(jobID)"
+            case .allUnpinned: return "all-unpinned"
+            case .all: return "all"
+            }
+        }
+
+        func title(_ code: String) -> String {
+            switch self {
+            case .single:
+                return loc(code, "Delete this run?", "Diesen Lauf loeschen?", "¿Eliminar este analisis?", "Supprimer cette analyse ?")
+            case .allUnpinned:
+                return loc(code, "Delete unpinned runs?", "Ungepinnte Laeufe loeschen?", "¿Eliminar no fijados?", "Supprimer les non epingles ?")
+            case .all:
+                return loc(code, "Delete all runs?", "Alle Laeufe loeschen?", "¿Eliminar todo?", "Tout supprimer ?")
+            }
+        }
+
+        func buttonTitle(_ code: String) -> String {
+            switch self {
+            case .single:
+                return loc(code, "Delete run", "Lauf loeschen", "Eliminar analisis", "Supprimer")
+            case .allUnpinned:
+                return loc(code, "Delete unpinned", "Ungepinnte loeschen", "Eliminar no fijados", "Supprimer non epingles")
+            case .all:
+                return loc(code, "Delete everything", "Alles loeschen", "Eliminar todo", "Tout supprimer")
+            }
+        }
+
+        func message(_ code: String) -> String {
+            switch self {
+            case .single:
+                return loc(code,
+                           "This cancels the run if needed, then removes its history and artifact files.",
+                           "Bricht den Lauf falls noetig ab und entfernt Verlauf und Dateien.",
+                           "Cancela el analisis si hace falta y elimina historial y archivos.",
+                           "Annule l'analyse si besoin, puis supprime l'historique et les fichiers.")
+            case .allUnpinned:
+                return loc(code,
+                           "Pinned runs are kept. Running jobs are canceled before deletion.",
+                           "Gepinnte Laeufe bleiben erhalten. Laufende Jobs werden vorher abgebrochen.",
+                           "Los fijados se conservan. Los trabajos en curso se cancelan antes.",
+                           "Les analyses epinglees sont conservees. Les travaux en cours sont annules.")
+            case .all:
+                return loc(code,
+                           "This removes every run, including pinned runs. Running jobs are canceled first.",
+                           "Entfernt alle Laeufe, auch gepinnte. Laufende Jobs werden zuerst abgebrochen.",
+                           "Elimina todos los analisis, incluidos los fijados. Cancela primero los activos.",
+                           "Supprime toutes les analyses, y compris les epinglees. Les travaux actifs sont annules.")
+            }
         }
     }
 

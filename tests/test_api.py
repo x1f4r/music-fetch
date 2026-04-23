@@ -48,6 +48,14 @@ class DummyManager:
     def delete_job(self, job_id):
         return {"job_id": job_id, "deleted": True, "failed_paths": []}
 
+    def delete_jobs(self, job_ids=None, include_pinned=False):
+        return {
+            "deleted_job_ids": job_ids or ["job-1"],
+            "canceled_job_ids": [],
+            "skipped_pinned_job_ids": [] if include_pinned else ["pinned-1"],
+            "failed_paths": [],
+        }
+
     def prune_zombie_library_entries(self):
         return {"removed_job_ids": []}
 
@@ -143,20 +151,14 @@ def test_delete_job_endpoint_success_and_404() -> None:
     assert missing.status_code == 404
 
 
-def test_delete_job_endpoint_409_on_running_job() -> None:
-    from music_fetch.service import JobBusyError
-
+def test_delete_jobs_endpoint_bulk_delete() -> None:
     manager = DummyManager()
-
-    def _raise_busy(job_id):
-        raise JobBusyError(f"Job {job_id} is running")
-
-    manager.delete_job = _raise_busy  # type: ignore[method-assign]
     context = AppContext(settings=type("Settings", (), {"api_token": None})(), db=DummyDb(), manager=manager)
     client = TestClient(create_api(context))
 
-    response = client.delete("/v1/jobs/job-1")
-    assert response.status_code == 409
+    response = client.delete("/v1/jobs", params=[("job_id", "job-1"), ("job_id", "job-2")])
+    assert response.status_code == 200
+    assert response.json()["deleted_job_ids"] == ["job-1", "job-2"]
 
 
 def test_delete_library_entry_alias_and_prune_zombies_endpoint() -> None:

@@ -63,7 +63,7 @@ from .provider_registry import ProviderRegistry
 from .providers import ACRCloudProvider, AudDProvider, LocalCatalogProvider, VibraProvider
 from .providers.base import BaseProvider, ProviderError
 from .sources import SourceResolver
-from .utils import now_iso
+from .utils import cancel_job_processes, command_job_context, now_iso
 
 
 class JobBusyError(RuntimeError):
@@ -184,21 +184,49 @@ class JobManager:
     def delete_job(self, job_id: str) -> dict:
         """Delete a job entirely: files + library row (T0.2).
 
-        Refuses to delete a queued/running job (409-style). Callers should
-        cancel first. Returns a small status dict for API callers.
+        Active jobs are force-canceled first. Canceling a ``Future`` is not
+        enough once a worker has started, so this also terminates subprocesses
+        registered to the job before removing artifacts and rows.
         """
         job = self.db.get_job(job_id)
         if job is None:
             raise ValueError(f"Unknown job: {job_id}")
-        if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
-            raise JobBusyError(f"Job {job_id} is {job.status.value}; cancel it first")
+        was_active = job.status in {JobStatus.QUEUED, JobStatus.RUNNING}
+        if was_active:
+            self.cancel(job_id)
         report = self.artifact_service.delete_job_completely(job_id, strict=False)
         with self._lock:
             self._futures.pop(job_id, None)
         return {
             "job_id": job_id,
             "deleted": True,
+            "canceled": was_active,
             "failed_paths": list(report.failed_paths),
+        }
+
+    def delete_jobs(self, *, job_ids: list[str] | None = None, include_pinned: bool = False) -> dict:
+        pinned = self.db.list_pinned_job_ids()
+        jobs = self.db.list_jobs(limit=10_000) if job_ids is None else [
+            job for job_id in job_ids if (job := self.db.get_job(job_id)) is not None
+        ]
+        deleted: list[str] = []
+        canceled: list[str] = []
+        skipped_pinned: list[str] = []
+        failed_paths: list[str] = []
+        for job in jobs:
+            if job.id in pinned and not include_pinned:
+                skipped_pinned.append(job.id)
+                continue
+            result = self.delete_job(job.id)
+            deleted.append(job.id)
+            if result.get("canceled"):
+                canceled.append(job.id)
+            failed_paths.extend(result.get("failed_paths") or [])
+        return {
+            "deleted_job_ids": deleted,
+            "canceled_job_ids": canceled,
+            "skipped_pinned_job_ids": skipped_pinned,
+            "failed_paths": failed_paths,
         }
 
     def prune_zombie_library_entries(self) -> dict:
@@ -214,120 +242,149 @@ class JobManager:
         if not self.db.get_job(job_id):
             raise ValueError(f"Unknown job: {job_id}")
         self.db.request_job_cancel(job_id)
+        self.db.update_job(job_id, status=JobStatus.CANCELED)
         self.db.add_event(job_id, "warning", "Cancellation requested")
+        killed = cancel_job_processes(job_id)
+        if killed:
+            self.db.add_event(job_id, "warning", f"Stopped {killed} running subprocess(es)")
         with self._lock:
             future = self._futures.get(job_id)
         if future is not None:
             future.cancel()
 
+    def _is_canceled(self, job_id: str) -> bool:
+        job = self.db.get_job(job_id)
+        if job is None:
+            return True
+        return job.cancel_requested or job.status == JobStatus.CANCELED
+
+    def _raise_if_canceled(self, job_id: str) -> None:
+        if self._is_canceled(job_id):
+            raise RuntimeError("__CANCELLED__")
+
+    def _mark_canceled(self, job_id: str, message: str = "Job canceled") -> None:
+        if self.db.get_job(job_id) is None:
+            return
+        self.db.update_job(job_id, status=JobStatus.CANCELED)
+        self.db.add_event(job_id, "warning", message)
+
     def _providers(self) -> list[BaseProvider]:
         return self.provider_registry.active_providers()
 
     def _run_job(self, job_id: str) -> None:
-        job = self.db.get_job(job_id)
-        if not job:
-            return
-        if self.db.is_cancel_requested(job_id):
-            self.db.update_job(job_id, status=JobStatus.CANCELED)
-            self.db.add_event(job_id, "warning", "Job canceled before execution")
-            return
-        self.db.update_job(job_id, status=JobStatus.RUNNING)
-        self.db.add_event(job_id, "info", "Resolving inputs")
-        try:
-            items: list[SourceItem] = []
-            failures = 0
-            failure_messages: list[str] = []
-            discovered_per_input = {raw: 0 for raw in job.inputs}
-            for raw in job.inputs:
+        with command_job_context(job_id):
+            job = self.db.get_job(job_id)
+            if not job:
+                return
+            if self._is_canceled(job_id):
+                self._mark_canceled(job_id, "Job canceled before execution")
+                return
+            self.db.update_job(job_id, status=JobStatus.RUNNING)
+            self.db.add_event(job_id, "info", "Resolving inputs")
+            try:
+                self._run_job_inner(job_id, job)
+            except Exception as exc:
+                if str(exc) == "__CANCELLED__" or self._is_canceled(job_id):
+                    self._mark_canceled(job_id)
+                    return
+                if self.db.get_job(job_id) is None:
+                    return
+                self.db.update_job(job_id, status=JobStatus.FAILED, error=str(exc))
+                self.db.add_event(job_id, "error", f"Job failed: {exc}")
+
+    def _run_job_inner(self, job_id: str, job: Job) -> None:
+        items: list[SourceItem] = []
+        failures = 0
+        failure_messages: list[str] = []
+        discovered_per_input = {raw: 0 for raw in job.inputs}
+        for raw in job.inputs:
+            self.db.upsert_discovery_state(
+                DiscoveryState(
+                    job_id=job_id,
+                    input_value=raw,
+                    cursor=0,
+                    total=None,
+                    completed=False,
+                    payload={},
+                    updated_at=job.updated_at,
+                )
+            )
+        worker_count = max(1, min(self.settings.max_workers, max(1, len(job.inputs))))
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="music-fetch-item") as item_executor:
+            future_map: dict[Future[None], SourceItem] = {}
+            for item in self.source_resolver.iter_resolve_inputs(job_id, job.inputs):
+                self._raise_if_canceled(job_id)
+                items.append(item)
+                discovered_per_input[item.input_value] = discovered_per_input.get(item.input_value, 0) + 1
+                self.db.add_source_items([item])
+                self.db.upsert_discovery_state(
+                    DiscoveryState(
+                        job_id=job_id,
+                        input_value=item.input_value,
+                        cursor=discovered_per_input[item.input_value],
+                        total=None,
+                        completed=False,
+                        payload={"latest_item_id": item.id},
+                        updated_at=now_iso(),
+                    )
+                )
+                future_map[item_executor.submit(self._process_item, job, item)] = item
+            for raw, count in discovered_per_input.items():
                 self.db.upsert_discovery_state(
                     DiscoveryState(
                         job_id=job_id,
                         input_value=raw,
-                        cursor=0,
-                        total=None,
-                        completed=False,
+                        cursor=count,
+                        total=count,
+                        completed=True,
                         payload={},
-                        updated_at=job.updated_at,
+                        updated_at=now_iso(),
                     )
                 )
-            worker_count = max(1, min(self.settings.max_workers, max(1, len(job.inputs))))
-            with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="music-fetch-item") as item_executor:
-                future_map: dict[Future[None], SourceItem] = {}
-                for item in self.source_resolver.iter_resolve_inputs(job_id, job.inputs):
-                    if self.db.is_cancel_requested(job_id):
-                        raise RuntimeError("__CANCELLED__")
-                    items.append(item)
-                    discovered_per_input[item.input_value] = discovered_per_input.get(item.input_value, 0) + 1
-                    self.db.add_source_items([item])
-                    self.db.upsert_discovery_state(
-                        DiscoveryState(
-                            job_id=job_id,
-                            input_value=item.input_value,
-                            cursor=discovered_per_input[item.input_value],
-                            total=None,
-                            completed=False,
-                            payload={"latest_item_id": item.id},
-                            updated_at=now_iso(),
-                        )
-                    )
-                    future_map[item_executor.submit(self._process_item, job, item)] = item
-                for raw, count in discovered_per_input.items():
-                    self.db.upsert_discovery_state(
-                        DiscoveryState(
-                            job_id=job_id,
-                            input_value=raw,
-                            cursor=count,
-                            total=count,
-                            completed=True,
-                            payload={},
-                            updated_at=now_iso(),
-                        )
-                    )
-                for future in as_completed(future_map):
-                    item = future_map[future]
-                    try:
-                        future.result()
-                    except Exception as exc:
-                        if str(exc) == "__CANCELLED__":
-                            item.status = ItemStatus.CANCELED
-                            self.db.update_source_item(item)
-                            continue
-                        failures += 1
-                        item.status = ItemStatus.FAILED
-                        item.error = str(exc)
-                        failure_messages.append(f"{item.input_value}: {exc}")
-                        self.db.update_source_item(item)
-                        self.db.add_event(job_id, "error", f"{item.input_value}: {exc}")
-            if self.db.is_cancel_requested(job_id):
-                self.db.update_job(job_id, status=JobStatus.CANCELED)
-                self.db.add_event(job_id, "warning", "Job canceled")
-                return
-            if failures == 0:
-                status = JobStatus.SUCCEEDED
-            elif failures < len(items):
-                status = JobStatus.PARTIAL_FAILED
-            else:
-                status = JobStatus.FAILED
-            error_summary = None
-            if failure_messages:
-                error_summary = failure_messages[0] if len(failure_messages) == 1 else "\n".join(failure_messages[:3])
-            self.db.update_job(job_id, status=status, error=error_summary)
-            if status in {JobStatus.SUCCEEDED, JobStatus.PARTIAL_FAILED} and not self.settings.retain_artifacts and not self.db.is_job_pinned(job_id):
+            for future in as_completed(future_map):
+                item = future_map[future]
                 try:
-                    self.cleanup_job_artifacts(job_id, force=False)
+                    future.result()
                 except Exception as exc:
-                    self.db.add_event(job_id, "warning", f"Artifact cleanup failed: {exc}")
-            self.db.add_event(job_id, "info", f"Job finished with status {status}")
-        except Exception as exc:
-            if str(exc) == "__CANCELLED__":
-                self.db.update_job(job_id, status=JobStatus.CANCELED)
-                self.db.add_event(job_id, "warning", "Job canceled")
-                return
-            self.db.update_job(job_id, status=JobStatus.FAILED, error=str(exc))
-            self.db.add_event(job_id, "error", f"Job failed: {exc}")
+                    if str(exc) == "__CANCELLED__" or self._is_canceled(job_id):
+                        item.status = ItemStatus.CANCELED
+                        self.db.update_source_item(item)
+                        continue
+                    failures += 1
+                    item.status = ItemStatus.FAILED
+                    item.error = str(exc)
+                    failure_messages.append(f"{item.input_value}: {exc}")
+                    self.db.update_source_item(item)
+                    self.db.add_event(job_id, "error", f"{item.input_value}: {exc}")
+        if self._is_canceled(job_id):
+            self._mark_canceled(job_id)
+            return
+        if failures == 0:
+            status = JobStatus.SUCCEEDED
+        elif failures < len(items):
+            status = JobStatus.PARTIAL_FAILED
+        else:
+            status = JobStatus.FAILED
+        error_summary = None
+        if failure_messages:
+            error_summary = failure_messages[0] if len(failure_messages) == 1 else "\n".join(failure_messages[:3])
+        if self._is_canceled(job_id):
+            self._mark_canceled(job_id)
+            return
+        self.db.update_job(job_id, status=status, error=error_summary)
+        if status in {JobStatus.SUCCEEDED, JobStatus.PARTIAL_FAILED} and not self.settings.retain_artifacts and not self.db.is_job_pinned(job_id):
+            try:
+                self.cleanup_job_artifacts(job_id, force=False)
+            except Exception as exc:
+                self.db.add_event(job_id, "warning", f"Artifact cleanup failed: {exc}")
+        self.db.add_event(job_id, "info", f"Job finished with status {status}")
 
     def _process_item(self, job: Job, item: SourceItem) -> None:
-        if self.db.is_cancel_requested(job.id):
+        with command_job_context(job.id):
+            self._process_item_inner(job, item)
+
+    def _process_item_inner(self, job: Job, item: SourceItem) -> None:
+        if self._is_canceled(job.id):
             item.status = ItemStatus.CANCELED
             self.db.update_source_item(item)
             raise RuntimeError("__CANCELLED__")
@@ -348,6 +405,7 @@ class JobManager:
                 local_media = candidate
             else:
                 local_media = ensure_local_media(self.settings, item)
+            self._raise_if_canceled(job.id)
         except MediaToolError:
             if self._has_metadata_only_track(item):
                 self.db.add_event(job.id, "warning", f"Media unavailable, falling back to metadata for {item.metadata.title or item.input_value}")
@@ -360,9 +418,11 @@ class JobManager:
 
         normalized_dir = self.settings.cache_dir / "normalized" / job.id / item.id
         normalized = normalize_media(local_media, normalized_dir / "normalized.wav")
+        self._raise_if_canceled(job.id)
         item.normalized_path = str(normalized)
         if not item.metadata.duration_ms:
             item.metadata.duration_ms = probe_duration_ms(normalized)
+            self._raise_if_canceled(job.id)
 
         profile = classify_source(
             item.metadata.duration_ms or 0,
@@ -389,11 +449,13 @@ class JobManager:
         if job.options.prefer_separation and profile.use_source_separation:
             self.db.add_event(job.id, "info", f"Separating music stem for {item.id}")
             instrumental = isolate_music(self.settings, normalized, normalized_dir / "stems")
+            self._raise_if_canceled(job.id)
             item.instrumental_path = str(instrumental)
         self.db.update_source_item(item)
 
         if profile.strategy in {"long_mix", "multi_track"}:
             segments = self._process_long_mix_item(job, item, normalized, instrumental)
+            self._raise_if_canceled(job.id)
             self.db.replace_segments(job.id, item.id, segments)
             self._record_item_summary_metric(job.id, item.id, segments)
             item.status = ItemStatus.SUCCEEDED
@@ -406,7 +468,7 @@ class JobManager:
         excerpts_dir = normalized_dir / "clips"
         remaining_budget = profile.request_budget
         for plan in plans:
-            if self.db.is_cancel_requested(job.id):
+            if self._is_canceled(job.id):
                 item.status = ItemStatus.CANCELED
                 self.db.update_source_item(item)
                 raise RuntimeError("__CANCELLED__")
@@ -416,6 +478,7 @@ class JobManager:
             excerpt_path = build_excerpt_path(excerpts_dir, Path(plan.source_path), plan.start_ms, plan.end_ms, plan.label)
             if not excerpt_path.exists():
                 create_excerpt(Path(plan.source_path), plan.start_ms, plan.end_ms, excerpt_path)
+                self._raise_if_canceled(job.id)
             for provider in providers:
                 if remaining_budget <= 0:
                     break
@@ -423,6 +486,7 @@ class JobManager:
                 if not state.available:
                     continue
                 provider_hits = self._recognize_with_cache(job.id, item, provider, excerpt_path, plan.start_ms, plan.end_ms)
+                self._raise_if_canceled(job.id)
                 remaining_budget -= 1
                 if provider_hits:
                     self.db.add_event(job.id, "info", f"{provider.name} matched {provider_hits[0].track.title}")
@@ -440,6 +504,7 @@ class JobManager:
         # title/artist variance can yield two same-identity segments that only
         # merge once tiered-identity does its thing.
         segments = self._stitch_segment_timeline(segments, options=job.options)
+        self._raise_if_canceled(job.id)
         self.db.replace_segments(job.id, item.id, segments)
         self._record_item_summary_metric(job.id, item.id, segments)
         item.status = ItemStatus.SUCCEEDED
@@ -526,8 +591,11 @@ class JobManager:
         total_segments = len(analysis.segments)
 
         def process_one(index: int, draft: SegmentDraft) -> DetectedSegment:
-            if self.db.is_cancel_requested(job.id):
-                raise RuntimeError("__CANCELLED__")
+            with command_job_context(job.id):
+                return process_one_inner(index, draft)
+
+        def process_one_inner(index: int, draft: SegmentDraft) -> DetectedSegment:
+            self._raise_if_canceled(job.id)
             candidates: list[TrackCandidate] = []
             provider_attempts = 0
             probe_count = 0
@@ -570,7 +638,9 @@ class JobManager:
                 )
                 if not excerpt_path.exists():
                     create_excerpt(excerpt_source, probe.start_ms, probe.end_ms, excerpt_path)
+                    self._raise_if_canceled(job.id)
                 for provider in providers:
+                    self._raise_if_canceled(job.id)
                     state = provider.state()
                     if not state.available:
                         continue
@@ -588,6 +658,7 @@ class JobManager:
                     provider_hits = self._recognize_with_cache(
                         job.id, item, provider, excerpt_path, probe.start_ms, probe.end_ms
                     )
+                    self._raise_if_canceled(job.id)
                     provider_attempts += 1
                     if provider_hits:
                         self.db.add_event(
@@ -632,8 +703,7 @@ class JobManager:
         order_index = {id(draft): index for index, draft in draft_order.items() if id(draft) in probeable_ids}
         if workers <= 1 or len(probeable) <= 1:
             for draft in probeable:
-                if self.db.is_cancel_requested(job.id):
-                    raise RuntimeError("__CANCELLED__")
+                self._raise_if_canceled(job.id)
                 idx = order_index[id(draft)]
                 per_draft_result[idx] = process_one(idx, draft)
         else:
@@ -666,7 +736,7 @@ class JobManager:
             for index in unresolved_indices:
                 if not budget.try_spend(0):
                     break
-                if self.db.is_cancel_requested(job.id):
+                if self._is_canceled(job.id):
                     break
                 retried = self._retry_segment(
                     job,
@@ -1252,6 +1322,7 @@ class JobManager:
         start_ms: int,
         end_ms: int,
     ) -> list[TrackCandidate]:
+        self._raise_if_canceled(job_id)
         started_at = time.monotonic()
         cache_key = fingerprint_cache_key(excerpt_path)
         cached = self.db.get_provider_cache(cache_key, provider.name)
@@ -1274,12 +1345,19 @@ class JobManager:
             )
             return hits
         try:
+            self._raise_if_canceled(job_id)
             self._throttle_provider(provider.name)
+            self._raise_if_canceled(job_id)
             provider_hits = provider.recognize(excerpt_path, start_ms, end_ms)
+            self._raise_if_canceled(job_id)
         except ProviderError as exc:
+            if self._is_canceled(job_id):
+                raise RuntimeError("__CANCELLED__") from exc
             self.db.add_event(job_id, "warning", f"{provider.name} failed on {item.id}: {exc}")
             return []
         except Exception as exc:
+            if self._is_canceled(job_id):
+                raise RuntimeError("__CANCELLED__") from exc
             self.db.add_event(job_id, "warning", f"{provider.name} crashed on {item.id}: {exc}")
             return []
         self.db.set_provider_cache(cache_key, provider.name, json.dumps([candidate.model_dump(mode="json") for candidate in provider_hits]))

@@ -160,6 +160,14 @@ struct CancelResponse: Codable {
 struct DeleteJobResponse: Codable {
     let job_id: String
     let deleted: Bool
+    let canceled: Bool?
+    let failed_paths: [String]?
+}
+
+struct DeleteJobsResponse: Codable {
+    let deleted_job_ids: [String]
+    let canceled_job_ids: [String]
+    let skipped_pinned_job_ids: [String]
     let failed_paths: [String]?
 }
 
@@ -471,4 +479,3 @@ func formatTime(_ milliseconds: Int) -> String {
     }
     return String(format: "%02d:%02d", minutes, seconds)
 }
-

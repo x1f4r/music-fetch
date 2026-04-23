@@ -7,14 +7,13 @@ import tempfile
 from typing import Annotated
 import uuid
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .artifact_service import ArtifactCleanupError
 from .context import AppContext
 from .models import DetectedSegment, JobCreate, JobOptions, ProviderConfig, ProviderName
-from .service import JobBusyError
 
 
 class ProviderUpdate(BaseModel):
@@ -285,8 +284,14 @@ def create_api(context: AppContext) -> FastAPI:
             return context.manager.delete_job(job_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except JobBusyError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.delete("/v1/jobs")
+    async def delete_jobs(
+        job_id: Annotated[list[str] | None, Query()] = None,
+        include_pinned: bool = False,
+        _: None = Depends(require_auth),
+    ) -> dict:
+        return context.manager.delete_jobs(job_ids=job_id, include_pinned=include_pinned)
 
     @app.delete("/v1/library/{job_id}")
     async def delete_library_entry(job_id: str, _: None = Depends(require_auth)) -> dict:
@@ -295,8 +300,6 @@ def create_api(context: AppContext) -> FastAPI:
             return context.manager.delete_job(job_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except JobBusyError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/v1/library/prune-zombies")
     async def prune_library_zombies(_: None = Depends(require_auth)) -> dict:

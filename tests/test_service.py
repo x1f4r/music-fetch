@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from music_fetch.media import MediaToolError, SourceProfile
 from music_fetch.long_mix import ProbeWindow, SegmentDraft
 from music_fetch.models import (
@@ -918,19 +916,16 @@ def test_pick_candidate_accepts_isrc_backed_hit_below_normal_threshold(app_env) 
     assert pick.raw.get("_acceptance_gate") == "G5"
 
 
-def test_delete_job_refuses_running_job(app_env) -> None:
-    """Can't delete an in-flight job — cancel first. T0.2."""
-    from music_fetch.service import JobBusyError
-
+def test_delete_job_cancels_running_job_before_delete(app_env) -> None:
     settings, db, manager = app_env
     job = db.create_job(["/tmp/x.wav"], JobOptions())
     db.update_job(job.id, status=JobStatus.RUNNING)
 
-    with pytest.raises(JobBusyError):
-        manager.delete_job(job.id)
+    result = manager.delete_job(job.id)
 
-    # Still present.
-    assert db.get_job(job.id) is not None
+    assert result["deleted"] is True
+    assert result["canceled"] is True
+    assert db.get_job(job.id) is None
 
 
 def test_delete_job_removes_library_row_and_children(app_env, tmp_path) -> None:

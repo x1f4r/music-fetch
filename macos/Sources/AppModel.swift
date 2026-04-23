@@ -1020,14 +1020,7 @@ final class AppModel: ObservableObject {
                     command: backendCommand,
                     type: DeleteJobResponse.self
                 )
-                // 1. Purge every in-memory cache for this job.
-                cachedResults.removeValue(forKey: jobID)
-                jobProgress.removeValue(forKey: jobID)
-                openedPrimaryLinkJobIDs.remove(jobID)
-                notifiedCompletionJobIDs.remove(jobID)
-                submittedJobIDs.remove(jobID)
-                eventStreamTasks[jobID]?.cancel()
-                eventStreamTasks.removeValue(forKey: jobID)
+                purgeLocalJobState(jobID)
                 // 2. Reload library + storage atomically so UI counts stay
                 //    coherent. Both calls hit the same backend; cheap.
                 await refreshLibrary()
@@ -1052,6 +1045,61 @@ final class AppModel: ObservableObject {
                                         "Echec de la suppression"))
             }
         }
+    }
+
+    func deleteJobs(jobIDs: [String]? = nil, includePinned: Bool = false) {
+        let focusedLibrary = route.libraryJobID
+        let focusedStorage = route.storageJobID
+        Task {
+            do {
+                let response = try await backend.deleteJSON(
+                    "/v1/jobs",
+                    command: backendCommand,
+                    queryItems: deleteJobsQuery(jobIDs: jobIDs, includePinned: includePinned),
+                    type: DeleteJobsResponse.self
+                )
+                for jobID in response.deleted_job_ids {
+                    purgeLocalJobState(jobID)
+                }
+                await refreshLibrary()
+                await refreshStorage(jobID: nil)
+                if let focusedLibrary, response.deleted_job_ids.contains(focusedLibrary) {
+                    route.libraryJobID = orderedLibraryEntries.first?.job_id
+                }
+                if let focusedStorage, response.deleted_job_ids.contains(focusedStorage) {
+                    route.storageJobID = orderedLibraryEntries.first?.job_id
+                }
+                if let currentJobID = result?.job.id, response.deleted_job_ids.contains(currentJobID) {
+                    result = nil
+                    selectedSegmentID = nil
+                    viewState = .idle
+                }
+            } catch {
+                viewState = .error(loc(languageCode,
+                                        "Delete failed",
+                                        "Loeschen fehlgeschlagen",
+                                        "Fallo al eliminar",
+                                        "Echec de la suppression"))
+            }
+        }
+    }
+
+    private func deleteJobsQuery(jobIDs: [String]?, includePinned: Bool) -> [URLQueryItem] {
+        var items = [URLQueryItem(name: "include_pinned", value: includePinned ? "true" : "false")]
+        for jobID in jobIDs ?? [] {
+            items.append(URLQueryItem(name: "job_id", value: jobID))
+        }
+        return items
+    }
+
+    private func purgeLocalJobState(_ jobID: String) {
+        cachedResults.removeValue(forKey: jobID)
+        jobProgress.removeValue(forKey: jobID)
+        openedPrimaryLinkJobIDs.remove(jobID)
+        notifiedCompletionJobIDs.remove(jobID)
+        submittedJobIDs.remove(jobID)
+        eventStreamTasks[jobID]?.cancel()
+        eventStreamTasks.removeValue(forKey: jobID)
     }
 
     func exportResults(jobID: String, format: String) {

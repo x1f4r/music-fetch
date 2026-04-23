@@ -639,10 +639,13 @@ class Database:
 
     def add_event(self, job_id: str, level: str, message: str) -> None:
         with self.connect() as conn:
-            conn.execute(
-                "INSERT INTO job_events (job_id, level, message, created_at) VALUES (?, ?, ?, ?)",
-                (job_id, level, message, now_iso()),
-            )
+            try:
+                conn.execute(
+                    "INSERT INTO job_events (job_id, level, message, created_at) VALUES (?, ?, ?, ?)",
+                    (job_id, level, message, now_iso()),
+                )
+            except sqlite3.IntegrityError:
+                return
             conn.commit()
 
     def list_events(self, job_id: str, after_id: int = 0) -> list[JobEvent]:
