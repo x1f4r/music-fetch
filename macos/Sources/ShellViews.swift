@@ -268,17 +268,12 @@ struct AnalyzeView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        ScrollView {
+        WorkspacePage {
             VStack(alignment: .leading, spacing: Theme.Space.l) {
                 InputCard(model: model)
                 ResultsSectionView(model: model)
             }
-            .padding(.horizontal, Theme.Space.xl)
-            .padding(.vertical, Theme.Space.l)
-            .frame(maxWidth: 940, alignment: .topLeading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(Theme.Palette.surface)
     }
 }
 
@@ -290,22 +285,21 @@ struct InputCard: View {
     var body: some View {
         Panel(padding: Theme.Space.l, radius: Theme.Radius.panel) {
             VStack(alignment: .leading, spacing: Theme.Space.m) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(heroTitle)
-                            .font(Theme.Font.display)
-                        Text(subtitle)
-                            .font(Theme.Font.body)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2, reservesSpace: false)
-                            .fixedSize(horizontal: false, vertical: true)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: Theme.Space.m) {
+                        inputHeader
+                            .layoutPriority(1)
+                        sourcePicker
                     }
-                    Spacer(minLength: 0)
-                    sourcePicker
+
+                    VStack(alignment: .leading, spacing: Theme.Space.s) {
+                        inputHeader
+                        sourcePicker
+                    }
                 }
 
                 sourceRow
-                    .frame(height: 44)
+                    .frame(minHeight: 44)
 
                 if case let .analyzing(phase) = model.viewState {
                     phaseBar(phase)
@@ -332,7 +326,21 @@ struct InputCard: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .controlSize(.regular)
-        .fixedSize()
+        .frame(width: 332)
+    }
+
+    private var inputHeader: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(heroTitle)
+                .font(Theme.Font.display)
+                .lineLimit(1)
+                .minimumScaleFactor(0.88)
+            Text(subtitle)
+                .font(Theme.Font.body)
+                .foregroundStyle(.secondary)
+                .lineLimit(2, reservesSpace: false)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder
@@ -364,11 +372,13 @@ struct InputCard: View {
             .focused($focused)
             .submitLabel(.go)
             .onSubmit { runPrimary() }
+            .lineLimit(1)
 
             primaryButton(Color.accentColor)
         }
         .padding(.horizontal, Theme.Space.s)
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 .fill(Theme.Palette.surfaceSunken.opacity(0.55))
@@ -394,6 +404,7 @@ struct InputCard: View {
             .focused($focused)
             .submitLabel(.go)
             .onSubmit { runPrimary() }
+            .lineLimit(1)
 
             Button {
                 model.chooseFile()
@@ -411,6 +422,7 @@ struct InputCard: View {
         }
         .padding(.horizontal, Theme.Space.s)
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 .fill(Theme.Palette.surfaceSunken.opacity(0.55))
@@ -427,11 +439,14 @@ struct InputCard: View {
             Text(status)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 4)
             primaryButton(tint)
         }
         .padding(.horizontal, Theme.Space.s)
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 .fill(tint.opacity(0.06))
@@ -455,9 +470,11 @@ struct InputCard: View {
         Button {
             runPrimary()
         } label: {
-            Text(primaryLabel)
+            Label(primaryLabel, systemImage: primarySystemImage)
                 .font(.system(size: 13, weight: .semibold))
-                .frame(minWidth: 90)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(minWidth: 104)
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.regular)
@@ -597,6 +614,21 @@ struct InputCard: View {
             return (model.captureState == .recordingSystem || model.captureState == .stoppingSystem)
                 ? loc(model.languageCode, "Stop", "Stopp", "Detener", "Arreter")
                 : loc(model.languageCode, "Start", "Start", "Iniciar", "Demarrer")
+        }
+    }
+
+    private var primarySystemImage: String {
+        switch preferredInput {
+        case .link, .file:
+            return "waveform.badge.magnifyingglass"
+        case .microphone:
+            return (model.captureState == .recordingMic || model.captureState == .stoppingMic)
+                ? "stop.fill"
+                : "play.fill"
+        case .system:
+            return (model.captureState == .recordingSystem || model.captureState == .stoppingSystem)
+                ? "stop.fill"
+                : "play.fill"
         }
     }
 
@@ -743,20 +775,37 @@ struct LibraryView: View {
     }
 
     private var scopeRow: some View {
-        HStack(spacing: Theme.Space.s) {
-            Picker("", selection: scopeBinding) {
-                ForEach(LibraryScope.allCases) { scope in
-                    Text(scope.title(model.languageCode)).tag(scope)
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Theme.Space.s) {
+                scopePicker
+                Spacer()
+                activeJobsPill
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 460)
-            Spacer()
-            if let resources = model.systemResources, resources.active_jobs > 0 {
-                Pill("\(resources.active_jobs)/\(resources.max_workers) " + loc(model.languageCode, "parallel", "parallel", "en paralelo", "en parallele"),
-                     icon: "square.stack.3d.up",
-                     tint: Theme.Palette.accent)
+
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                scopePicker
+                activeJobsPill
             }
+        }
+    }
+
+    private var scopePicker: some View {
+        Picker("", selection: scopeBinding) {
+            ForEach(LibraryScope.allCases) { scope in
+                Text(scope.title(model.languageCode)).tag(scope)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 460)
+    }
+
+    @ViewBuilder
+    private var activeJobsPill: some View {
+        if let resources = model.systemResources, resources.active_jobs > 0 {
+            Pill("\(resources.active_jobs)/\(resources.max_workers) " + loc(model.languageCode, "parallel", "parallel", "en paralelo", "en parallele"),
+                 icon: "square.stack.3d.up",
+                 tint: Theme.Palette.accent)
+                .fixedSize()
         }
     }
 
@@ -850,12 +899,19 @@ struct LibraryRunCard: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                .layoutPriority(1)
                 Spacer(minLength: 0)
-                if entry.pinned {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.orange)
+                HStack(spacing: 6) {
+                    if isRunning {
+                        runningChip
+                    }
+                    if entry.pinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.orange)
+                    }
                 }
+                .fixedSize()
             }
 
             if isRunning {
@@ -865,6 +921,7 @@ struct LibraryRunCard: View {
                             .font(Theme.Font.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     } else {
                         Text(loc(languageCode, "Analyzing", "Analysiere", "Analizando", "Analyse"))
                             .font(Theme.Font.caption)
@@ -878,21 +935,15 @@ struct LibraryRunCard: View {
                     Pill("\(entry.segment_count)", icon: "rectangle.split.3x1")
                     Pill("\(entry.matched_count)", icon: "checkmark.seal", tint: Theme.Palette.successTint)
                     Pill(formatBytes(entry.artifact_size_bytes), icon: "internaldrive")
-                    Spacer()
+                    Spacer(minLength: 4)
                     statusBadge
+                        .fixedSize()
                 }
             }
         }
         .padding(Theme.Space.m)
         .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
         .panelBackground(radius: Theme.Radius.card, elevated: true)
-        .overlay(alignment: .topTrailing) {
-            if isRunning {
-                runningChip
-                    .padding(.top, 10)
-                    .padding(.trailing, 10)
-            }
-        }
     }
 
     private var statusIcon: some View {
@@ -976,7 +1027,7 @@ struct LibraryJobDetailView: View {
     @State private var detailPendingDeletion: DetailPendingDeletion?
 
     var body: some View {
-        ScrollView {
+        WorkspacePage {
             VStack(alignment: .leading, spacing: Theme.Space.l) {
                 header
                 if let response {
@@ -987,12 +1038,7 @@ struct LibraryJobDetailView: View {
                         .frame(maxWidth: .infinity, minHeight: 220)
                 }
             }
-            .padding(.horizontal, Theme.Space.xl)
-            .padding(.vertical, Theme.Space.l)
-            .frame(maxWidth: 940, alignment: .topLeading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(Theme.Palette.surface)
         .task(id: jobID) { await load() }
         .onDisappear {
             refreshTask?.cancel()
@@ -1039,21 +1085,34 @@ struct LibraryJobDetailView: View {
     @ViewBuilder
     private var header: some View {
         if let entry = model.libraryEntries.first(where: { $0.job_id == jobID }) {
-            HStack(alignment: .top, spacing: Theme.Space.m) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.title)
-                        .font(Theme.Font.largeTitle)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(entry.input_value)
-                        .font(Theme.Font.body)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .lineLimit(2)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: Theme.Space.m) {
+                    detailTitle(entry)
+                        .layoutPriority(1)
+                    Spacer(minLength: Theme.Space.m)
+                    headerActions(entry: entry)
                 }
-                Spacer()
-                headerActions(entry: entry)
+
+                VStack(alignment: .leading, spacing: Theme.Space.s) {
+                    detailTitle(entry)
+                    headerActions(entry: entry)
+                }
             }
+        }
+    }
+
+    private func detailTitle(_ entry: LibraryEntryPayload) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(entry.title)
+                .font(Theme.Font.largeTitle)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(entry.input_value)
+                .font(Theme.Font.body)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.middle)
         }
     }
 
@@ -1204,7 +1263,7 @@ struct StorageView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        ScrollView {
+        WorkspacePage {
             VStack(alignment: .leading, spacing: Theme.Space.l) {
                 header
                 if let summary = model.storageSummary {
@@ -1252,45 +1311,53 @@ struct StorageView: View {
                     emptyState
                 }
             }
-            .padding(.horizontal, Theme.Space.xl)
-            .padding(.vertical, Theme.Space.l)
-            .frame(maxWidth: 940, alignment: .topLeading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(Theme.Palette.surface)
         .task { await model.refreshStorage(jobID: model.selectedStorageJobID) }
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: Theme.Space.s) {
-            Picker("", selection: scopeBinding) {
-                Text(loc(model.languageCode, "All runs", "Alle Laeufe", "Todos", "Tous")).tag(Optional<String>.none)
-                ForEach(model.orderedLibraryEntries) { entry in
-                    Text(entry.title).tag(Optional(entry.job_id))
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: Theme.Space.s) {
+                storageScopePicker
+                Spacer(minLength: Theme.Space.m)
+                cleanUpMenu
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(maxWidth: 320)
 
-            Spacer()
-
-            Menu {
-                Button(loc(model.languageCode,
-                           model.selectedStorageJobID == nil ? "Clean unpinned" : "Clean this run",
-                           model.selectedStorageJobID == nil ? "Ungepinntes aufraeumen" : "Diesen Lauf aufraeumen",
-                           model.selectedStorageJobID == nil ? "Limpiar no fijados" : "Limpiar este",
-                           model.selectedStorageJobID == nil ? "Nettoyer non epingles" : "Nettoyer celui-ci")) {
-                    model.cleanupArtifacts(jobID: model.selectedStorageJobID)
-                }
-            } label: {
-                Label(loc(model.languageCode, "Clean up", "Aufraeumen", "Limpiar", "Nettoyer"),
-                      systemImage: "trash")
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                storageScopePicker
+                cleanUpMenu
             }
-            .menuStyle(.button)
-            .fixedSize()
-            .disabled(model.storageSummary?.entries.isEmpty ?? true)
         }
+    }
+
+    private var storageScopePicker: some View {
+        Picker("", selection: scopeBinding) {
+            Text(loc(model.languageCode, "All runs", "Alle Laeufe", "Todos", "Tous")).tag(Optional<String>.none)
+            ForEach(model.orderedLibraryEntries) { entry in
+                Text(entry.title).tag(Optional(entry.job_id))
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .frame(maxWidth: 360, alignment: .leading)
+    }
+
+    private var cleanUpMenu: some View {
+        Menu {
+            Button(loc(model.languageCode,
+                       model.selectedStorageJobID == nil ? "Clean unpinned" : "Clean this run",
+                       model.selectedStorageJobID == nil ? "Ungepinntes aufraeumen" : "Diesen Lauf aufraeumen",
+                       model.selectedStorageJobID == nil ? "Limpiar no fijados" : "Limpiar este",
+                       model.selectedStorageJobID == nil ? "Nettoyer non epingles" : "Nettoyer celui-ci")) {
+                model.cleanupArtifacts(jobID: model.selectedStorageJobID)
+            }
+        } label: {
+            Label(loc(model.languageCode, "Clean up", "Aufraeumen", "Limpiar", "Nettoyer"),
+                  systemImage: "trash")
+        }
+        .menuStyle(.button)
+        .fixedSize()
+        .disabled(model.storageSummary?.entries.isEmpty ?? true)
     }
 
     private var scopeBinding: Binding<String?> {
@@ -1329,24 +1396,38 @@ struct StorageHeroPanel: View {
 
     var body: some View {
         Panel(padding: Theme.Space.l, radius: Theme.Radius.panel) {
-            HStack(alignment: .center, spacing: Theme.Space.xl) {
-                VStack(alignment: .leading, spacing: 6) {
-                    SectionLabel(loc(languageCode, "On disk", "Auf dem Mac", "En disco", "Sur le disque"))
-                    Text(formatBytes(summary.total_size_bytes))
-                        .font(.system(size: 36, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                    HStack(spacing: Theme.Space.xs) {
-                        Pill("\(summary.entries.count) " + loc(languageCode, "items", "Eintraege", "elementos", "elements"), icon: "doc.on.doc")
-                        Pill(summary.auto_clean
-                             ? loc(languageCode, "Auto-clean", "Auto-Clean", "Auto-limpiar", "Auto-nettoyage")
-                             : loc(languageCode, "Retained", "Behalten", "Retenido", "Conserve"),
-                             icon: summary.auto_clean ? "sparkles" : "lock",
-                             tint: summary.auto_clean ? Theme.Palette.accent : Theme.Palette.textSecondary)
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: Theme.Space.xl) {
+                    storageSummaryBlock
+                    Spacer(minLength: Theme.Space.l)
+                    categoryBar
+                        .frame(maxWidth: 360)
                 }
-                Spacer()
-                categoryBar
-                    .frame(maxWidth: 360)
+
+                VStack(alignment: .leading, spacing: Theme.Space.l) {
+                    storageSummaryBlock
+                    categoryBar
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    private var storageSummaryBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionLabel(loc(languageCode, "On disk", "Auf dem Mac", "En disco", "Sur le disque"))
+            Text(formatBytes(summary.total_size_bytes))
+                .font(.system(size: 36, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+            HStack(spacing: Theme.Space.xs) {
+                Pill("\(summary.entries.count) " + loc(languageCode, "items", "Eintraege", "elementos", "elements"), icon: "doc.on.doc")
+                Pill(summary.auto_clean
+                     ? loc(languageCode, "Auto-clean", "Auto-Clean", "Auto-limpiar", "Auto-nettoyage")
+                     : loc(languageCode, "Retained", "Behalten", "Retenido", "Conserve"),
+                     icon: summary.auto_clean ? "wand.and.stars" : "lock",
+                     tint: summary.auto_clean ? Theme.Palette.accent : Theme.Palette.textSecondary)
             }
         }
     }
@@ -1355,16 +1436,20 @@ struct StorageHeroPanel: View {
         let total = max(1, summary.total_size_bytes)
         return VStack(alignment: .leading, spacing: 6) {
             SectionLabel(loc(languageCode, "Split", "Verteilung", "Reparto", "Repartition"))
-            HStack(spacing: 2) {
-                ForEach(Array(summary.categories.enumerated()), id: \.element.category) { index, category in
-                    Rectangle()
-                        .fill(colorFor(index: index))
-                        .frame(height: 10)
-                        .frame(width: nil)
-                        .layoutPriority(Double(category.size_bytes) / Double(total))
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    ForEach(Array(summary.categories.enumerated()), id: \.element.category) { index, category in
+                        let share = CGFloat(category.size_bytes) / CGFloat(total)
+                        Rectangle()
+                            .fill(colorFor(index: index))
+                            .frame(width: max(3, geo.size.width * share), height: 10)
+                    }
                 }
+                .frame(width: geo.size.width, alignment: .leading)
+                .clipShape(Capsule())
             }
-            .clipShape(Capsule())
+            .frame(height: 10)
+            .clipped()
 
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(Array(summary.categories.prefix(4).enumerated()), id: \.element.category) { index, category in

@@ -19,8 +19,8 @@ enum Theme {
     enum Radius {
         static let pill: CGFloat = 999
         static let row: CGFloat = 8
-        static let card: CGFloat = 12
-        static let panel: CGFloat = 16
+        static let card: CGFloat = 8
+        static let panel: CGFloat = 10
     }
 
     // MARK: - Typography
@@ -158,6 +158,24 @@ struct Panel<Content: View>: View {
     }
 }
 
+struct WorkspacePage<Content: View>: View {
+    var maxWidth: CGFloat = 980
+    var horizontalPadding: CGFloat = Theme.Space.xl
+    var verticalPadding: CGFloat = Theme.Space.l
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView {
+            content
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, verticalPadding)
+                .frame(maxWidth: maxWidth, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .background(Theme.Palette.surface)
+    }
+}
+
 struct SectionLabel: View {
     let title: String
 
@@ -193,6 +211,8 @@ struct Pill: View {
             Text(text)
                 .font(.system(size: 11, weight: .medium))
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 7)

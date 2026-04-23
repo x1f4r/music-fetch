@@ -853,6 +853,7 @@ final class AppModel: ObservableObject {
     }
 
     private func requestNotificationAuthorization() async {
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
         _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
     }
 

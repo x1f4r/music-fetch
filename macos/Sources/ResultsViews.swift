@@ -122,19 +122,35 @@ struct ResultsToolbar: View {
     let languageCode: String
 
     var body: some View {
-        HStack(spacing: 10) {
-            if hasSongs {
-                Picker("", selection: $showOnlySongs) {
-                    Text("\(loc(languageCode, "Songs", "Songs", "Canciones", "Titres")) (\(songs))").tag(true)
-                    Text("\(loc(languageCode, "All", "Alle", "Todo", "Tout")) (\(total))").tag(false)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 220)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                filterPicker
+                Spacer(minLength: Theme.Space.s)
+                toolbarActions
             }
 
-            Spacer()
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                filterPicker
+                toolbarActions
+            }
+        }
+    }
 
+    @ViewBuilder
+    private var filterPicker: some View {
+        if hasSongs {
+            Picker("", selection: $showOnlySongs) {
+                Text("\(loc(languageCode, "Songs", "Songs", "Canciones", "Titres")) (\(songs))").tag(true)
+                Text("\(loc(languageCode, "All", "Alle", "Todo", "Tout")) (\(total))").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 220)
+        }
+    }
+
+    private var toolbarActions: some View {
+        HStack(spacing: 10) {
             if unresolved > 0 {
                 Button {
                     onRetry()
@@ -143,6 +159,8 @@ struct ResultsToolbar: View {
                           systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             Menu {
@@ -163,6 +181,7 @@ struct ResultsToolbar: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.orange)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -335,11 +354,15 @@ struct SegmentRow: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 HStack(spacing: 6) {
                     Text("\(formatTime(segment.startMs)) – \(formatTime(segment.endMs))")
                         .monospacedDigit()
+                        .fixedSize()
                     Text("·")
                     Text(segment.detailLabel)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     if segment.repeatGroupID != nil {
                         Text("·")
                         Image(systemName: "repeat")
@@ -349,6 +372,7 @@ struct SegmentRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 8)
 
@@ -359,6 +383,7 @@ struct SegmentRow: View {
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.primary.opacity(0.08), in: Capsule())
+                    .fixedSize()
             }
         }
         .padding(.horizontal, 10)
@@ -533,12 +558,15 @@ struct InspectorView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(segment.title)
                         .font(.title3.weight(.semibold))
+                        .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(segment.subtitle)
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .layoutPriority(1)
                 Spacer(minLength: 0)
             }
         }
@@ -627,8 +655,11 @@ struct InspectorView: View {
                         Text(line)
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                            .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -646,6 +677,7 @@ struct InspectorView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
         }
@@ -700,30 +732,33 @@ struct FlowLinks: View {
     let languageCode: String
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(primary) { link in
-                Link(destination: link.url) {
-                    FlowLinkContent(icon: link.icon, iconColor: link.color, text: link.label)
-                }
-                .buttonStyle(FlowLinkButtonStyle())
-            }
-
-            if !overflow.isEmpty {
-                Menu {
-                    ForEach(overflow) { link in
-                        Link(destination: link.url) {
-                            Label(link.label, systemImage: link.icon)
-                        }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(primary) { link in
+                    Link(destination: link.url) {
+                        FlowLinkContent(icon: link.icon, iconColor: link.color, text: link.label)
                     }
-                } label: {
-                    FlowLinkContent(icon: "ellipsis", iconColor: .secondary, text: nil)
+                    .buttonStyle(FlowLinkButtonStyle())
                 }
-                .menuStyle(.button)
-                .buttonStyle(FlowLinkButtonStyle())
-                .menuIndicator(.hidden)
-                .fixedSize()
+
+                if !overflow.isEmpty {
+                    Menu {
+                        ForEach(overflow) { link in
+                            Link(destination: link.url) {
+                                Label(link.label, systemImage: link.icon)
+                            }
+                        }
+                    } label: {
+                        FlowLinkContent(icon: "ellipsis", iconColor: .secondary, text: nil)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(FlowLinkButtonStyle())
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
