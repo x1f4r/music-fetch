@@ -80,12 +80,32 @@ enum Theme {
         static var micTint: Color { .red }
         static var systemTint: Color { .orange }
         static var successTint: Color { .green }
-        static var warningTint: Color { .yellow }
-        static var dangerTint: Color { .orange }
+        static var warningTint: Color { .orange }
+        static var dangerTint: Color { .red }
 
         static var textPrimary: Color { .primary }
         static var textSecondary: Color { .secondary }
         static var textTertiary: Color { Color.primary.opacity(0.45) }
+
+        static var rowHover: Color { Color.primary.opacity(0.05) }
+        static var rowSelected: Color { Color.accentColor.opacity(0.16) }
+    }
+
+    // MARK: - Motion
+
+    enum Motion {
+        static var snap: Animation { .easeOut(duration: 0.12) }
+        static var quick: Animation { .easeInOut(duration: 0.18) }
+        static var smooth: Animation { .easeInOut(duration: 0.24) }
+        static var scroll: Animation { .easeInOut(duration: 0.2) }
+    }
+
+    // MARK: - Strokes
+
+    enum Stroke {
+        static let hairline: CGFloat = 0.5
+        static let standard: CGFloat = 1
+        static let emphasized: CGFloat = 1.5
     }
 
     // MARK: - Surface modifiers
@@ -119,14 +139,15 @@ enum Theme {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: Radius.row, style: .continuous)
-                        .strokeBorder(selected ? Palette.accent.opacity(0.35) : Color.clear, lineWidth: 1)
+                        .strokeBorder(selected ? Palette.accent.opacity(0.35) : Color.clear, lineWidth: Stroke.standard)
                 )
                 .onHover { hovering = $0 }
+                .animation(Motion.snap, value: hovering)
         }
 
         private var background: Color {
-            if selected { return Palette.accentSoft }
-            if hovering { return Color.primary.opacity(0.05) }
+            if selected { return Palette.rowSelected }
+            if hovering { return Palette.rowHover }
             return Color.clear
         }
     }
@@ -170,6 +191,26 @@ struct SectionLabel: View {
             .font(Theme.Font.sectionHeader)
             .tracking(0.4)
             .foregroundStyle(Theme.Palette.textSecondary)
+    }
+}
+
+/// Square rounded badge used to wrap an SF Symbol in a tinted surface.
+/// Replaces 4 separate hand-rolled implementations across the app.
+struct IconTile: View {
+    let icon: String
+    var size: CGFloat = 28
+    var tint: Color = Theme.Palette.accent
+    var weight: SwiftUI.Font.Weight = .semibold
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: size * 0.46, weight: weight))
+            .foregroundStyle(tint)
+            .frame(width: size, height: size)
+            .background(
+                RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+                    .fill(tint.opacity(0.14))
+            )
     }
 }
 

@@ -62,18 +62,12 @@ struct SidebarView: View {
 
             SidebarFooter(model: model)
         }
+        .background(.ultraThinMaterial)
     }
 
     private var header: some View {
         HStack(spacing: Theme.Space.xs) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.16))
-                    .frame(width: 30, height: 30)
-                Image(systemName: "waveform")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.tint)
-            }
+            IconTile(icon: "waveform", size: 30, tint: Theme.Palette.accent)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Music Fetch")
                     .font(Theme.Font.title)
@@ -444,11 +438,7 @@ struct InputCard: View {
 
     @ViewBuilder
     private func leadingIcon(_ name: String, tint: Color) -> some View {
-        Image(systemName: name)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(tint)
-            .frame(width: 28, height: 28)
-            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        IconTile(icon: name, size: 28, tint: tint)
     }
 
     private func primaryButton(_ tint: Color) -> some View {
@@ -897,14 +887,7 @@ struct LibraryRunCard: View {
 
     private var statusIcon: some View {
         let (name, color) = iconDescriptor
-        return ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(color.opacity(0.16))
-                .frame(width: 26, height: 26)
-            Image(systemName: name)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(color)
-        }
+        return IconTile(icon: name, size: 26, tint: color)
     }
 
     private var iconDescriptor: (String, Color) {
@@ -1091,7 +1074,7 @@ struct LibraryJobDetailView: View {
                           systemImage: "stop.circle")
                 }
                 .buttonStyle(.bordered)
-                .tint(.orange)
+                .tint(.red)
             } else {
                 Menu {
                     Button(loc(model.languageCode,
@@ -1154,7 +1137,7 @@ struct LibraryJobDetailView: View {
                             zoom: $zoom
                         )
                         .frame(height: 36)
-                        TimelineZoomControl(zoom: $zoom)
+                        TimelineZoomControl(zoom: $zoom, languageCode: model.languageCode)
                     }
                     SegmentList(
                         segments: filtered,

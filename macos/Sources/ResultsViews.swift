@@ -47,7 +47,7 @@ struct ResultsSectionView: View {
                             )
                             .frame(height: 36)
 
-                            TimelineZoomControl(zoom: $timelineZoom)
+                            TimelineZoomControl(zoom: $timelineZoom, languageCode: model.languageCode)
                         }
                     }
 
@@ -156,13 +156,13 @@ struct ResultsToolbar: View {
             .fixedSize()
 
             if jobStatus == "queued" || jobStatus == "running" {
-                Button {
+                Button(role: .destructive) {
                     onCancel()
                 } label: {
                     Label(loc(languageCode, "Cancel", "Abbrechen", "Cancelar", "Annuler"), systemImage: "xmark.circle")
                 }
                 .buttonStyle(.bordered)
-                .tint(.orange)
+                .tint(.red)
             }
         }
     }
@@ -186,8 +186,8 @@ struct ResultsTimelineView: View {
             let height = geo.size.height
 
             ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(0.06))
+                RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                    .fill(Theme.Palette.divider)
 
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -208,7 +208,7 @@ struct ResultsTimelineView: View {
                                         .fill(seg.timelineColor.opacity(isSelected ? 1.0 : 0.75))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                                .strokeBorder(isSelected ? Color.primary.opacity(0.6) : Color.clear, lineWidth: 1.5)
+                                                .strokeBorder(isSelected ? Color.primary.opacity(0.6) : Color.clear, lineWidth: Theme.Stroke.emphasized)
                                         )
                                 }
                                 .buttonStyle(.plain)
@@ -222,16 +222,16 @@ struct ResultsTimelineView: View {
                     }
                     .onChange(of: selectedID) { _, newID in
                         guard let newID else { return }
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        withAnimation(Theme.Motion.scroll) {
                             proxy.scrollTo(newID, anchor: .center)
                         }
                     }
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: Theme.Stroke.hairline)
             )
         }
     }
@@ -239,6 +239,7 @@ struct ResultsTimelineView: View {
 
 struct TimelineZoomControl: View {
     @Binding var zoom: Double
+    var languageCode: String = "en"
 
     private let minZoom: Double = 1.0
     private let maxZoom: Double = 40.0
@@ -268,7 +269,7 @@ struct TimelineZoomControl: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Reset zoom")
+            .help(loc(languageCode, "Reset zoom", "Zoom zuruecksetzen", "Restablecer zoom", "Reinitialiser le zoom"))
 
             Button {
                 zoom = min(maxZoom, zoom * step)
@@ -283,8 +284,8 @@ struct TimelineZoomControl: View {
             .disabled(zoom >= maxZoom)
         }
         .frame(height: 24)
-        .background(Color.primary.opacity(0.06), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+        .background(Theme.Palette.divider, in: Capsule())
+        .overlay(Capsule().strokeBorder(Theme.Palette.hairline, lineWidth: Theme.Stroke.hairline))
     }
 }
 
@@ -296,23 +297,19 @@ struct SegmentList: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 3) {
-                    ForEach(segments) { seg in
-                        SegmentRow(segment: seg, isSelected: selectedID == seg.id)
-                            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .onTapGesture {
-                                selectedID = seg.id
-                            }
-                            .id(seg.id)
-                    }
-                }
-                .padding(2)
+            List(segments, selection: $selectedID) { seg in
+                SegmentRow(segment: seg, isSelected: selectedID == seg.id)
+                    .listRowInsets(EdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .tag(seg.id)
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             .scrollIndicators(.automatic)
             .onChange(of: selectedID) { _, newID in
                 guard let newID else { return }
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(Theme.Motion.quick) {
                     proxy.scrollTo(newID, anchor: .center)
                 }
             }
@@ -325,15 +322,15 @@ struct SegmentRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: Theme.Space.s) {
             RoundedRectangle(cornerRadius: 2, style: .continuous)
                 .fill(segment.timelineColor)
                 .frame(width: 4, height: 36)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(segment.title)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.primary)
+                    .font(Theme.Font.rowTitle)
+                    .foregroundStyle(Theme.Palette.textPrimary)
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     Text("\(formatTime(segment.startMs)) – \(formatTime(segment.endMs))")
@@ -346,8 +343,8 @@ struct SegmentRow: View {
                             .font(.caption2)
                     }
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Theme.Font.rowSubtitle)
+                .foregroundStyle(Theme.Palette.textSecondary)
             }
 
             Spacer(minLength: 8)
@@ -355,23 +352,16 @@ struct SegmentRow: View {
             if let quality = segment.qualityLabel {
                 Text(quality)
                     .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.Palette.textSecondary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Color.primary.opacity(0.08), in: Capsule())
+                    .background(Theme.Palette.hairline, in: Capsule())
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, Theme.Space.s)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(isSelected ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .rowHoverable(selected: isSelected)
     }
 }
 
@@ -382,27 +372,27 @@ struct LoadingResultsView: View {
     let languageCode: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            HStack(spacing: Theme.Space.xs) {
                 ProgressView().controlSize(.small)
                 Text(phase)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.primary)
+                    .font(Theme.Font.rowTitle)
+                    .foregroundStyle(Theme.Palette.textPrimary)
                 Spacer()
             }
             Text(loc(languageCode, "Long mixes are segmented first, then matched to songs.",
                      "Lange Mixe werden erst segmentiert und dann Songs zugeordnet.",
                      "Las mezclas largas se segmentan primero y luego se identifican.",
                      "Les longs mixes sont d'abord segmentes puis identifies."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Theme.Font.caption)
+                .foregroundStyle(Theme.Palette.textSecondary)
             ForEach(0..<3, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(0.06))
+                RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                    .fill(Theme.Palette.divider)
                     .frame(height: 44)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Theme.Space.xxs)
     }
 }
 
@@ -430,10 +420,8 @@ struct DebugEventsPanel: View {
     let languageCode: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(loc(languageCode, "Debug events", "Debug-Events", "Eventos debug", "Evenements debug"))
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            SectionLabel(loc(languageCode, "Debug events", "Debug-Events", "Eventos debug", "Evenements debug"))
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(events) { event in
@@ -443,8 +431,8 @@ struct DebugEventsPanel: View {
                                 .foregroundStyle(color(for: event.level))
                                 .frame(width: 54, alignment: .leading)
                             Text(event.message)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(Theme.Font.caption)
+                                .foregroundStyle(Theme.Palette.textSecondary)
                                 .textSelection(.enabled)
                         }
                         .padding(.vertical, 2)
@@ -452,16 +440,16 @@ struct DebugEventsPanel: View {
                 }
             }
             .frame(minHeight: 100, maxHeight: 200)
-            .padding(10)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(Theme.Space.xs)
+            .background(Theme.Palette.divider, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
         }
     }
 
     private func color(for level: String) -> Color {
         switch level.lowercased() {
-        case "error": return .red
-        case "warning": return .orange
-        default: return .blue
+        case "error": return Theme.Palette.dangerTint
+        case "warning": return Theme.Palette.warningTint
+        default: return Theme.Palette.accent
         }
     }
 }
@@ -480,7 +468,7 @@ struct InspectorView: View {
         Group {
             if let segment = currentSegment {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: Theme.Space.l) {
                         headerSection(segment)
                         metadataSection(segment)
                         actionsSection(segment)
@@ -491,7 +479,7 @@ struct InspectorView: View {
                             alternatesSection(segment.payload.alternates)
                         }
                     }
-                    .padding(18)
+                    .padding(Theme.Space.l)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             } else {
@@ -506,7 +494,7 @@ struct InspectorView: View {
                 )
             }
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.regularMaterial)
         .sheet(isPresented: $correctionSheetPresented) {
             correctionSheet
         }
@@ -525,18 +513,18 @@ struct InspectorView: View {
     // MARK: sections
 
     private func headerSection(_ segment: SegmentViewModel) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            HStack(alignment: .top, spacing: Theme.Space.xs) {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(segment.timelineColor)
                     .frame(width: 6, height: 46)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(segment.title)
-                        .font(.title3.weight(.semibold))
+                        .font(Theme.Font.title)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(segment.subtitle)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.Palette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
@@ -545,7 +533,7 @@ struct InspectorView: View {
     }
 
     private func metadataSection(_ segment: SegmentViewModel) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
             HStack(spacing: 6) {
                 Pill("\(formatTime(segment.startMs)) – \(formatTime(segment.endMs))", icon: "clock")
                 Pill(segment.detailLabel, icon: "sparkles")
@@ -561,21 +549,18 @@ struct InspectorView: View {
 
             if let hint = segment.metadataHint, !hint.isEmpty {
                 Text(cleanHint(hint))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.Palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
     private func actionsSection(_ segment: SegmentViewModel) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(loc(model.languageCode, "Actions", "Aktionen", "Acciones", "Actions"))
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            SectionLabel(loc(model.languageCode, "Actions", "Aktionen", "Acciones", "Actions"))
 
-            HStack(spacing: 8) {
+            HStack(spacing: Theme.Space.xs) {
                 Button {
                     model.copy(segment.title)
                 } label: {
@@ -602,31 +587,25 @@ struct InspectorView: View {
 
             if !segment.primaryLinks.isEmpty || !segment.overflowLinks.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(loc(model.languageCode, "Listen", "Anhoeren", "Escuchar", "Ecouter"))
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
+                    SectionLabel(loc(model.languageCode, "Listen", "Anhoeren", "Escuchar", "Ecouter"))
                     FlowLinks(primary: segment.primaryLinks, overflow: segment.overflowLinks, languageCode: model.languageCode)
                 }
-                .padding(.top, 4)
+                .padding(.top, Theme.Space.xxs)
             }
         }
     }
 
     private func explanationSection(_ lines: [String]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(loc(model.languageCode, "Why this result", "Warum dieses Ergebnis", "Por que este resultado", "Pourquoi ce resultat"))
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+            SectionLabel(loc(model.languageCode, "Why this result", "Warum dieses Ergebnis", "Por que este resultado", "Pourquoi ce resultat"))
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(lines, id: \.self) { line in
                     HStack(alignment: .top, spacing: 6) {
                         Text("•")
                             .foregroundStyle(.tertiary)
                         Text(line)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .font(Theme.Font.body)
+                            .foregroundStyle(Theme.Palette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -636,15 +615,12 @@ struct InspectorView: View {
 
     private func alternatesSection(_ tracks: [TrackMatchPayload]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(loc(model.languageCode, "Alternates", "Weitere Kandidaten", "Alternativas", "Alternatives"))
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+            SectionLabel(loc(model.languageCode, "Alternates", "Weitere Kandidaten", "Alternativas", "Alternatives"))
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(tracks, id: \.self) { track in
                     Text(track.artist.map { "\($0) · \(track.title)" } ?? track.title)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.Palette.textSecondary)
                         .lineLimit(1)
                 }
             }
@@ -760,9 +736,9 @@ private struct FlowLinkButtonStyle: ButtonStyle {
             )
             .overlay(
                 Capsule(style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: Theme.Stroke.hairline)
             )
             .contentShape(Capsule(style: .continuous))
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(Theme.Motion.snap, value: configuration.isPressed)
     }
 }
