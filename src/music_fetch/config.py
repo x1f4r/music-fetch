@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     max_workers: int = Field(default_factory=recommended_max_workers)
     provider_min_interval_ms: int = 350
     retain_artifacts: bool = False
+    # Wall-clock cap for a single HTTP upload, in bytes. Defaults to 4 GiB —
+    # large enough for a long-form video file, small enough that a runaway
+    # client can't fill the cache disk. Set MUSIC_FETCH_MAX_UPLOAD_BYTES=0
+    # to disable the cap (not recommended on shared machines).
+    max_upload_bytes: int = 4 * 1024 * 1024 * 1024
     separation_model: str | None = None
     vibra_binary: str = "vibra"
     audio_separator_binary: str = "audio-separator"

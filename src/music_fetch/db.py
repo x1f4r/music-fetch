@@ -37,12 +37,16 @@ class Database:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=5.0)
         conn.row_factory = sqlite3.Row
-        # Enforce foreign-key constraints (including ON DELETE CASCADE). This is
-        # per-connection in SQLite and defaults OFF, so every connection needs it.
+        # Per-connection PRAGMAs. ``foreign_keys`` enforces ON DELETE CASCADE
+        # and defaults OFF in SQLite. ``busy_timeout`` makes contending
+        # writers wait up to 5s for the WAL lock instead of raising
+        # SQLITE_BUSY — without it, the nested executor pools (top-level ×
+        # per-job × per-segment) collide and fail under load.
         try:
             conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute("PRAGMA busy_timeout = 5000;")
         except sqlite3.DatabaseError:
             pass
         try:
@@ -508,7 +512,15 @@ class Database:
         status: JobStatus | None = None,
         error: str | None = None,
         cancel_requested: bool | None = None,
-    ) -> None:
+        not_if_status_in: list[JobStatus] | None = None,
+    ) -> bool:
+        """Update a job row. Returns True iff a row was actually written.
+
+        ``not_if_status_in`` adds a ``WHERE status NOT IN (...)`` guard. The
+        worker uses this so that a cancel request that lands between the
+        worker's pre-check and the worker's status write doesn't get
+        clobbered by RUNNING/SUCCEEDED.
+        """
         updates = ["updated_at = ?"]
         values: list[Any] = [now_iso()]
         if status is not None:
@@ -520,10 +532,16 @@ class Database:
         if cancel_requested is not None:
             updates.append("cancel_requested = ?")
             values.append(int(cancel_requested))
+        where = "WHERE id = ?"
         values.append(job_id)
+        if not_if_status_in:
+            placeholders = ",".join(["?"] * len(not_if_status_in))
+            where += f" AND status NOT IN ({placeholders})"
+            values.extend(not_if_status_in)
         with self.connect() as conn:
-            conn.execute(f"UPDATE jobs SET {', '.join(updates)} WHERE id = ?", values)
+            cursor = conn.execute(f"UPDATE jobs SET {', '.join(updates)} {where}", values)
             conn.commit()
+            return cursor.rowcount > 0
 
     def request_job_cancel(self, job_id: str) -> None:
         self.update_job(job_id, cancel_requested=True)
@@ -667,6 +685,56 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._row_to_job(row) for row in rows]
+
+    def sweep_orphan_running_jobs(self, *, reason: str = "Backend restarted before this job finished") -> list[str]:
+        """Mark RUNNING/QUEUED jobs as FAILED on startup.
+
+        A process killed mid-job leaves rows stuck in those states forever —
+        the worker that owned them is gone but the DB doesn't know. Returns
+        the IDs that were swept so callers can log them.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM jobs WHERE status IN (?, ?)",
+                (JobStatus.RUNNING, JobStatus.QUEUED),
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            if not ids:
+                return []
+            stamp = now_iso()
+            conn.executemany(
+                "UPDATE jobs SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+                [(JobStatus.FAILED, reason, stamp, jid) for jid in ids],
+            )
+            conn.executemany(
+                "INSERT INTO job_events (job_id, level, message, created_at) VALUES (?, ?, ?, ?)",
+                [(jid, "error", reason, stamp) for jid in ids],
+            )
+            conn.commit()
+        return ids
+
+    def delete_jobs_bulk(self, job_ids: list[str]) -> int:
+        """Cascade-delete every row associated with ``job_ids`` in one txn.
+
+        Replaces the row-at-a-time loop that opened a new connection per
+        job and serialized hundreds of delete operations. With ON DELETE
+        CASCADE (v5) a single ``DELETE FROM jobs WHERE id IN (...)`` wipes
+        every dependent table. Returns the number of job rows removed.
+        """
+        if not job_ids:
+            return 0
+        with self.connect() as conn:
+            # Chunk to stay under SQLite's parameter limit (default 999).
+            removed = 0
+            for start in range(0, len(job_ids), 500):
+                chunk = job_ids[start : start + 500]
+                placeholders = ",".join(["?"] * len(chunk))
+                cursor = conn.execute(
+                    f"DELETE FROM jobs WHERE id IN ({placeholders})", chunk
+                )
+                removed += cursor.rowcount
+            conn.commit()
+        return removed
 
     def get_source_items(self, job_id: str) -> list[SourceItem]:
         with self.connect() as conn:

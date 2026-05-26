@@ -37,9 +37,16 @@ class AudDProvider(BaseProvider):
         response.raise_for_status()
         payload = response.json()
         result = payload.get("result")
-        if not result:
+        if not result or not isinstance(result, dict):
             return []
-        external_links = build_search_links(result["title"], result.get("artist"))
+        title = result.get("title")
+        # AudD's free tier sometimes returns a result envelope with no
+        # ``title`` field (partial humming match, fingerprint near-miss);
+        # treat that as "no result" rather than KeyError-ing the worker.
+        if not title or not isinstance(title, str):
+            return []
+        artist = result.get("artist")
+        external_links = build_search_links(title, artist)
         external_links.update(
             {
                 "audd": result.get("song_link", ""),
@@ -48,8 +55,8 @@ class AudDProvider(BaseProvider):
             }
         )
         match = TrackMatch(
-            title=result["title"],
-            artist=result.get("artist"),
+            title=title,
+            artist=artist,
             album=result.get("album"),
             isrc=(result.get("spotify") or {}).get("external_ids", {}).get("isrc"),
             provider_ids={"audd": result.get("song_link", "")},

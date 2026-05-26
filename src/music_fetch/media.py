@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import functools as _functools
 import json
+import logging
 import math
 import re
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -14,6 +16,9 @@ from .config import Settings
 from .models import SourceItem, SourceKind, SourceMetadata, WindowPlan
 from .sources import download_direct_http, yt_dlp_base_args
 from .utils import run_command, sha1_text
+
+
+logger = logging.getLogger(__name__)
 
 
 class MediaToolError(RuntimeError):
@@ -174,15 +179,42 @@ def heuristic_music_stem(input_path: Path, output_path: Path) -> Path:
     return output_path
 
 
-def isolate_music(settings: Settings, normalized_path: Path, output_dir: Path) -> Path:
+def isolate_music(
+    settings: Settings,
+    normalized_path: Path,
+    output_dir: Path,
+    *,
+    on_warning: Callable[[str], None] | None = None,
+) -> Path:
+    """Produce an instrumental stem for ``normalized_path``.
+
+    Falls back to an ffmpeg-based heuristic when ``audio_separator`` is
+    unavailable or fails. ``on_warning`` is invoked with a human-readable
+    reason when the high-quality separator path errors out — pass a
+    ``self.db.add_event`` adapter so users investigating "why isn't
+    separation helping?" can see the cause in the job event stream
+    instead of staring at a silent fallback.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     target = output_dir / f"{normalized_path.stem}.instrumental.wav"
     if target.exists():
         return target
 
+    def _warn(reason: str) -> None:
+        logger.warning("audio_separator unavailable, using heuristic stem: %s", reason)
+        if on_warning is not None:
+            try:
+                on_warning(reason)
+            except Exception:
+                logger.debug("on_warning callback raised", exc_info=True)
+
     try:
         from audio_separator.separator import Separator  # type: ignore
+    except Exception as exc:  # noqa: BLE001 — separator is optional
+        _warn(f"audio_separator import failed: {exc}")
+        return heuristic_music_stem(normalized_path, target)
 
+    try:
         separator = Separator(
             log_level=30,
             output_dir=str(output_dir),
@@ -196,8 +228,9 @@ def isolate_music(settings: Settings, normalized_path: Path, output_dir: Path) -
             path = Path(value)
             if "instrumental" in path.name.lower() or "no_vocals" in path.name.lower():
                 return path
-    except Exception:
-        pass
+        _warn("audio_separator returned no instrumental output")
+    except Exception as exc:  # noqa: BLE001 — separator quality varies
+        _warn(f"audio_separator failed: {exc}")
 
     return heuristic_music_stem(normalized_path, target)
 

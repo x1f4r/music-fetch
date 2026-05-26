@@ -59,17 +59,28 @@ class ACRCloudProvider(BaseProvider):
         response.raise_for_status()
         body = response.json()
         music = (body.get("metadata") or {}).get("music") or []
-        if not music:
+        if not music or not isinstance(music, list):
             return []
         top = music[0]
-        artist_names = ", ".join(artist["name"] for artist in top.get("artists") or [])
+        if not isinstance(top, dict):
+            return []
+        title = top.get("title")
+        # ACRCloud occasionally returns matches missing the title field on
+        # partial fingerprints. Surface as "no match" rather than crash.
+        if not title or not isinstance(title, str):
+            return []
+        artist_names = ", ".join(
+            artist.get("name", "")
+            for artist in (top.get("artists") or [])
+            if isinstance(artist, dict) and artist.get("name")
+        )
         match = TrackMatch(
-            title=top["title"],
-            artist=artist_names,
-            album=(top.get("album") or {}).get("name"),
-            isrc=top.get("external_ids", {}).get("isrc"),
+            title=title,
+            artist=artist_names or None,
+            album=(top.get("album") or {}).get("name") if isinstance(top.get("album"), dict) else None,
+            isrc=(top.get("external_ids") or {}).get("isrc") if isinstance(top.get("external_ids"), dict) else None,
             provider_ids={"acrcloud": top.get("acrid", "")},
-            external_links=build_search_links(top["title"], artist_names),
+            external_links=build_search_links(title, artist_names),
             raw=body,
         )
         score = float(body.get("metadata", {}).get("score", 80)) / 100.0

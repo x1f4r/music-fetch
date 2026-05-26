@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import shutil
 import threading
 import tempfile
@@ -74,6 +75,17 @@ class JobBusyError(RuntimeError):
     """
 
 
+class JobCanceled(BaseException):
+    """Internal sentinel used to short-circuit a worker on cancel.
+
+    Inherits :class:`BaseException` so it isn't caught by ``except Exception``
+    blocks that aren't meant to swallow cancellation. Previously this was
+    ``RuntimeError("__CANCELLED__")`` with string compares — fragile and
+    impossible to distinguish from a real RuntimeError whose message happened
+    to contain that literal.
+    """
+
+
 class _BudgetCounter:
     """Thread-safe integer budget shared across parallel segment workers.
 
@@ -109,10 +121,19 @@ class JobManager:
         self.artifact_service = ArtifactService(settings, db)
         self.library_service = LibraryQueryService(db, self.artifact_service)
         self.executor = ThreadPoolExecutor(max_workers=settings.max_workers, thread_name_prefix="music-fetch")
+        # Dedicated low-priority pool for background artifact deletes so a
+        # large library purge doesn't starve recognition workers.
+        self.cleanup_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="music-fetch-cleanup")
         self._futures: dict[str, Future[None]] = {}
         self._lock = threading.Lock()
         self._provider_call_lock = threading.Lock()
         self._provider_next_call_at: dict[ProviderName, float] = {}
+        # Mark jobs stuck in QUEUED/RUNNING from a previous process as
+        # FAILED. Without this the UI keeps showing a phantom spinner for
+        # work that's no longer happening.
+        swept = self.db.sweep_orphan_running_jobs()
+        if swept:
+            logging.getLogger(__name__).info("startup: swept %d orphan job(s)", len(swept))
 
     def submit(self, payload: JobCreate) -> Job:
         job = self.db.create_job(payload.inputs, payload.options)
@@ -205,28 +226,77 @@ class JobManager:
         }
 
     def delete_jobs(self, *, job_ids: list[str] | None = None, include_pinned: bool = False) -> dict:
+        """Bulk-delete jobs. DB rows go in one cascade; artifacts go async.
+
+        Previously this opened a new DB connection per job and ran
+        ``shutil.rmtree`` inline, blocking a worker thread for minutes on
+        large library purges. Now we (1) cancel any actives, (2) snapshot
+        the artifact entries, (3) cascade-delete every DB row in a single
+        transaction, (4) queue the filesystem removal onto a background
+        cleanup pool so the API call returns immediately.
+        """
         pinned = self.db.list_pinned_job_ids()
         jobs = self.db.list_jobs(limit=10_000) if job_ids is None else [
             job for job_id in job_ids if (job := self.db.get_job(job_id)) is not None
         ]
-        deleted: list[str] = []
+        targets: list[str] = []
         canceled: list[str] = []
         skipped_pinned: list[str] = []
-        failed_paths: list[str] = []
         for job in jobs:
             if job.id in pinned and not include_pinned:
                 skipped_pinned.append(job.id)
                 continue
-            result = self.delete_job(job.id)
-            deleted.append(job.id)
-            if result.get("canceled"):
-                canceled.append(job.id)
-            failed_paths.extend(result.get("failed_paths") or [])
+            if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+                try:
+                    self.cancel(job.id)
+                    canceled.append(job.id)
+                except ValueError:
+                    pass
+            targets.append(job.id)
+
+        if not targets:
+            return {
+                "deleted_job_ids": [],
+                "canceled_job_ids": canceled,
+                "skipped_pinned_job_ids": skipped_pinned,
+                "failed_paths": [],
+            }
+
+        # Snapshot entries BEFORE the DB cascade — once the row is gone,
+        # ``collect_artifact_entries`` returns nothing.
+        snapshots: list[tuple[str, list]] = []
+        for jid in targets:
+            snapshots.append((jid, self.artifact_service.collect_artifact_entries(jid)))
+
+        # Single-txn cascade — orders of magnitude faster than the
+        # connection-per-job loop, and atomic on failure.
+        self.db.delete_jobs_bulk(targets)
+        with self._lock:
+            for jid in targets:
+                self._futures.pop(jid, None)
+
+        # Off-thread filesystem cleanup. The API call returns now; if
+        # individual paths fail, they surface via the next
+        # ``storage_summary`` (orphan-cache-dir sweep catches stragglers).
+        def _cleanup(snap=snapshots) -> None:
+            for jid, entries in snap:
+                try:
+                    self.artifact_service.delete_artifact_entries(entries, skip_pinned=False)
+                    self.artifact_service.prune_job_cache_dirs(jid)
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "background artifact cleanup failed for %s", jid
+                    )
+        self.cleanup_executor.submit(_cleanup)
+
         return {
-            "deleted_job_ids": deleted,
+            "deleted_job_ids": targets,
             "canceled_job_ids": canceled,
             "skipped_pinned_job_ids": skipped_pinned,
-            "failed_paths": failed_paths,
+            # Best-effort — the async cleanup may surface failures later
+            # via storage_summary(); we no longer block the API call for
+            # them.
+            "failed_paths": [],
         }
 
     def prune_zombie_library_entries(self) -> dict:
@@ -260,13 +330,45 @@ class JobManager:
 
     def _raise_if_canceled(self, job_id: str) -> None:
         if self._is_canceled(job_id):
-            raise RuntimeError("__CANCELLED__")
+            raise JobCanceled()
 
     def _mark_canceled(self, job_id: str, message: str = "Job canceled") -> None:
         if self.db.get_job(job_id) is None:
             return
         self.db.update_job(job_id, status=JobStatus.CANCELED)
         self.db.add_event(job_id, "warning", message)
+
+    def _set_running_unless_canceled(self, job_id: str) -> bool:
+        """Set RUNNING only when the job isn't already CANCELED/terminal.
+
+        Returns True on success; False when a cancel landed first and we
+        should bail out of the worker.
+        """
+        return self.db.update_job(
+            job_id,
+            status=JobStatus.RUNNING,
+            not_if_status_in=[
+                JobStatus.CANCELED,
+                JobStatus.FAILED,
+                JobStatus.SUCCEEDED,
+                JobStatus.PARTIAL_FAILED,
+            ],
+        )
+
+    def _set_terminal_unless_canceled(
+        self, job_id: str, *, status: JobStatus, error: str | None = None
+    ) -> bool:
+        """Write a terminal status, but never overwrite an existing CANCELED.
+
+        This closes the TOCTOU race where a cancel arrived between the
+        worker's last ``_is_canceled`` check and its terminal-status write.
+        """
+        return self.db.update_job(
+            job_id,
+            status=status,
+            error=error,
+            not_if_status_in=[JobStatus.CANCELED],
+        )
 
     def _providers(self) -> list[BaseProvider]:
         return self.provider_registry.active_providers()
@@ -279,17 +381,24 @@ class JobManager:
             if self._is_canceled(job_id):
                 self._mark_canceled(job_id, "Job canceled before execution")
                 return
-            self.db.update_job(job_id, status=JobStatus.RUNNING)
+            # Conditional write: if cancel() raced in after the check above,
+            # the WHERE clause keeps the CANCELED status and we bail out.
+            if not self._set_running_unless_canceled(job_id):
+                self._mark_canceled(job_id, "Job canceled before execution")
+                return
             self.db.add_event(job_id, "info", "Resolving inputs")
             try:
                 self._run_job_inner(job_id, job)
+            except JobCanceled:
+                self._mark_canceled(job_id)
+                return
             except Exception as exc:
-                if str(exc) == "__CANCELLED__" or self._is_canceled(job_id):
+                if self._is_canceled(job_id):
                     self._mark_canceled(job_id)
                     return
                 if self.db.get_job(job_id) is None:
                     return
-                self.db.update_job(job_id, status=JobStatus.FAILED, error=str(exc))
+                self._set_terminal_unless_canceled(job_id, status=JobStatus.FAILED, error=str(exc))
                 self.db.add_event(job_id, "error", f"Job failed: {exc}")
 
     def _run_job_inner(self, job_id: str, job: Job) -> None:
@@ -345,8 +454,12 @@ class JobManager:
                 item = future_map[future]
                 try:
                     future.result()
+                except JobCanceled:
+                    item.status = ItemStatus.CANCELED
+                    self.db.update_source_item(item)
+                    continue
                 except Exception as exc:
-                    if str(exc) == "__CANCELLED__" or self._is_canceled(job_id):
+                    if self._is_canceled(job_id):
                         item.status = ItemStatus.CANCELED
                         self.db.update_source_item(item)
                         continue
@@ -368,10 +481,10 @@ class JobManager:
         error_summary = None
         if failure_messages:
             error_summary = failure_messages[0] if len(failure_messages) == 1 else "\n".join(failure_messages[:3])
-        if self._is_canceled(job_id):
-            self._mark_canceled(job_id)
+        # Conditional terminal write — never overwrite a cancel that landed
+        # between the check above and the UPDATE.
+        if not self._set_terminal_unless_canceled(job_id, status=status, error=error_summary):
             return
-        self.db.update_job(job_id, status=status, error=error_summary)
         if status in {JobStatus.SUCCEEDED, JobStatus.PARTIAL_FAILED} and not self.settings.retain_artifacts and not self.db.is_job_pinned(job_id):
             try:
                 self.cleanup_job_artifacts(job_id, force=False)
@@ -387,7 +500,7 @@ class JobManager:
         if self._is_canceled(job.id):
             item.status = ItemStatus.CANCELED
             self.db.update_source_item(item)
-            raise RuntimeError("__CANCELLED__")
+            raise JobCanceled()
         item.status = ItemStatus.RUNNING
         self.db.update_source_item(item)
         self.db.add_event(job.id, "info", f"Preparing item {item.metadata.title or item.input_value}")
@@ -448,7 +561,14 @@ class JobManager:
         instrumental = None
         if job.options.prefer_separation and profile.use_source_separation:
             self.db.add_event(job.id, "info", f"Separating music stem for {item.id}")
-            instrumental = isolate_music(self.settings, normalized, normalized_dir / "stems")
+            instrumental = isolate_music(
+                self.settings,
+                normalized,
+                normalized_dir / "stems",
+                on_warning=lambda reason, jid=job.id, iid=item.id: self.db.add_event(
+                    jid, "warning", f"Separator fallback for {iid}: {reason}"
+                ),
+            )
             self._raise_if_canceled(job.id)
             item.instrumental_path = str(instrumental)
         self.db.update_source_item(item)
@@ -471,7 +591,7 @@ class JobManager:
             if self._is_canceled(job.id):
                 item.status = ItemStatus.CANCELED
                 self.db.update_source_item(item)
-                raise RuntimeError("__CANCELLED__")
+                raise JobCanceled()
             if remaining_budget <= 0:
                 self.db.add_event(job.id, "info", f"Request budget exhausted for {item.id}")
                 break
@@ -1350,14 +1470,16 @@ class JobManager:
             self._raise_if_canceled(job_id)
             provider_hits = provider.recognize(excerpt_path, start_ms, end_ms)
             self._raise_if_canceled(job_id)
+        except JobCanceled:
+            raise
         except ProviderError as exc:
             if self._is_canceled(job_id):
-                raise RuntimeError("__CANCELLED__") from exc
+                raise JobCanceled() from exc
             self.db.add_event(job_id, "warning", f"{provider.name} failed on {item.id}: {exc}")
             return []
         except Exception as exc:
             if self._is_canceled(job_id):
-                raise RuntimeError("__CANCELLED__") from exc
+                raise JobCanceled() from exc
             self.db.add_event(job_id, "warning", f"{provider.name} crashed on {item.id}: {exc}")
             return []
         self.db.set_provider_cache(cache_key, provider.name, json.dumps([candidate.model_dump(mode="json") for candidate in provider_hits]))
@@ -1665,7 +1787,14 @@ class JobManager:
             )
             if instrumental is None:
                 try:
-                    instrumental = isolate_music(self.settings, normalized, normalized.parent / "stems")
+                    instrumental = isolate_music(
+                        self.settings,
+                        normalized,
+                        normalized.parent / "stems",
+                        on_warning=lambda reason, jid=job.id, iid=item.id: self.db.add_event(
+                            jid, "warning", f"Separator fallback for {iid}: {reason}"
+                        ),
+                    )
                     item.instrumental_path = str(instrumental)
                 except MediaToolError:
                     instrumental = None

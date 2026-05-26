@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
+import logging
 import mimetypes
 import json
+import socket
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -10,6 +13,77 @@ import httpx
 
 from .models import ItemStatus, SourceItem, SourceKind, SourceMetadata
 from .utils import run_command, sha1_text
+
+
+logger = logging.getLogger(__name__)
+
+# Cap on a direct-HTTP download response body. Without this, a hostile or
+# misconfigured server can stream forever and fill the cache disk. Matches
+# the default upload cap (4 GiB).
+DIRECT_HTTP_MAX_BYTES = 4 * 1024 * 1024 * 1024
+# Cap on the number of redirects we follow when probing/downloading. Each
+# hop is host-validated, so this also bounds the SSRF check fan-out.
+DIRECT_HTTP_MAX_REDIRECTS = 5
+
+
+class UnsafeURLError(RuntimeError):
+    """Raised when a direct-HTTP target resolves to a non-public address.
+
+    Loopback (127.0.0.0/8, ::1), link-local (169.254.0.0/16, fe80::/10),
+    multicast, broadcast, reserved, and private RFC1918 ranges are all
+    rejected — these are the targets that turn a user-supplied URL into an
+    SSRF vector against cloud metadata services or internal admin panels.
+    """
+
+
+def _assert_safe_external_host(host: str) -> None:
+    """Resolve ``host`` and reject any address that's not globally routable.
+
+    Done synchronously with the system resolver, which mirrors what httpx
+    will do a moment later. There is still a TOCTOU window (a hostile DNS
+    server could return a public IP here and a private IP to httpx), but
+    blocking the obvious cases is materially safer than not checking.
+    """
+    cleaned = (host or "").strip().lower()
+    if not cleaned:
+        raise UnsafeURLError("URL has no host")
+    # Strip an embedded port like "127.0.0.1:8080".
+    if cleaned.startswith("["):
+        # IPv6 literal: [::1]:8080
+        end = cleaned.find("]")
+        if end == -1:
+            raise UnsafeURLError(f"Malformed IPv6 host: {host}")
+        cleaned = cleaned[1:end]
+    elif ":" in cleaned and cleaned.count(":") == 1:
+        cleaned = cleaned.split(":", 1)[0]
+
+    try:
+        infos = socket.getaddrinfo(cleaned, None)
+    except socket.gaierror as exc:
+        raise UnsafeURLError(f"Cannot resolve host: {cleaned}") from exc
+
+    for info in infos:
+        sockaddr = info[4]
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            raise UnsafeURLError(f"Host {cleaned} resolves to non-IP address {sockaddr[0]}")
+        if (
+            ip.is_loopback
+            or ip.is_link_local
+            or ip.is_private
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise UnsafeURLError(f"Host {cleaned} resolves to non-public address {ip}")
+
+
+def _assert_safe_external_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise UnsafeURLError(f"Unsupported scheme: {parsed.scheme!r}")
+    _assert_safe_external_host(parsed.netloc or parsed.hostname or "")
 
 KNOWN_EXTRACTOR_HOST_TOKENS = ("youtube.", "youtu.be", "instagram.", "tiktok.", "vimeo.", "soundcloud.")
 KNOWN_SHORTENER_HOSTS = (
@@ -349,14 +423,32 @@ def probe_direct_media_url(value: str) -> bool:
     host = (parsed.netloc or "").lower()
     if any(token in host for token in KNOWN_EXTRACTOR_HOST_TOKENS):
         return False
+    try:
+        _assert_safe_external_url(value)
+    except UnsafeURLError:
+        return False
     if is_direct_media_url(value):
         return True
     try:
-        with httpx.Client(follow_redirects=True, timeout=5.0) as client:
-            response = client.head(value)
-            content_type = (response.headers.get("content-type") or "").lower()
-            if content_type.startswith(("audio/", "video/")):
-                return True
+        # Manual redirect handling so every hop is host-validated. With
+        # ``follow_redirects=True`` a hostile server could 302 to
+        # http://169.254.169.254/ (cloud metadata) or a private IP.
+        current = value
+        with httpx.Client(follow_redirects=False, timeout=5.0) as client:
+            for _ in range(DIRECT_HTTP_MAX_REDIRECTS + 1):
+                response = client.head(current)
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        return False
+                    current = str(httpx.URL(current).join(location))
+                    try:
+                        _assert_safe_external_url(current)
+                    except UnsafeURLError:
+                        return False
+                    continue
+                content_type = (response.headers.get("content-type") or "").lower()
+                return content_type.startswith(("audio/", "video/"))
     except Exception:
         return False
     return False
@@ -511,11 +603,42 @@ def _entry_download_url(entry: dict, raw: str, playlist_id: str | None) -> str |
     return None
 
 
-def download_direct_http(url: str, dest: Path) -> Path:
+def download_direct_http(url: str, dest: Path, *, max_bytes: int = DIRECT_HTTP_MAX_BYTES) -> Path:
+    """Stream ``url`` to ``dest``, validating each redirect hop.
+
+    Redirects are followed manually so each hop is host-checked against
+    :func:`_assert_safe_external_url` — prevents an attacker from
+    redirecting a user-supplied download into a private/loopback address.
+    ``max_bytes`` caps response size; the partial file is removed on
+    overflow so we don't leave a half-downloaded artifact on disk.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with httpx.stream("GET", url, follow_redirects=True, timeout=60.0) as response:
-        response.raise_for_status()
-        with dest.open("wb") as handle:
-            for chunk in response.iter_bytes():
-                handle.write(chunk)
-    return dest
+    _assert_safe_external_url(url)
+    current = url
+    with httpx.Client(follow_redirects=False, timeout=60.0) as client:
+        for _ in range(DIRECT_HTTP_MAX_REDIRECTS + 1):
+            with client.stream("GET", current) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        response.raise_for_status()
+                        raise httpx.HTTPError("Redirect without Location header")
+                    current = str(httpx.URL(current).join(location))
+                    _assert_safe_external_url(current)
+                    continue
+                response.raise_for_status()
+                written = 0
+                try:
+                    with dest.open("wb") as handle:
+                        for chunk in response.iter_bytes():
+                            written += len(chunk)
+                            if max_bytes and written > max_bytes:
+                                raise httpx.HTTPError(
+                                    f"Download exceeds maximum size of {max_bytes} bytes"
+                                )
+                            handle.write(chunk)
+                except Exception:
+                    dest.unlink(missing_ok=True)
+                    raise
+                return dest
+        raise httpx.HTTPError(f"Too many redirects (> {DIRECT_HTTP_MAX_REDIRECTS})")

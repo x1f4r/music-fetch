@@ -196,7 +196,11 @@ def test_delete_storage_surfaces_failed_paths() -> None:
 
 def test_upload_endpoint_sanitizes_filename_and_accepts_options(tmp_path) -> None:
     manager = DummyManager()
-    settings = type("Settings", (), {"api_token": None, "cache_dir": tmp_path})()
+    settings = type(
+        "Settings",
+        (),
+        {"api_token": None, "cache_dir": tmp_path, "max_upload_bytes": 4 * 1024 * 1024 * 1024},
+    )()
     context = AppContext(settings=settings, db=DummyDb(), manager=manager)
     client = TestClient(create_api(context))
 

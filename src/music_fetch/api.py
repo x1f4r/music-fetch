@@ -2,18 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 import tempfile
 from typing import Annotated
 import uuid
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .artifact_service import ArtifactCleanupError
 from .context import AppContext
 from .models import DetectedSegment, JobCreate, JobOptions, ProviderConfig, ProviderName
+
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_http_error(exc: Exception, fallback: str) -> str:
+    """Convert an internal exception into a user-safe HTTP detail string.
+
+    ``ValueError`` carries deliberate validation messages from the manager
+    layer; those stay. Anything else gets a generic message and the full
+    trace lands in the server log, so we don't leak filesystem paths or
+    stack fragments to a client we don't trust.
+    """
+    if isinstance(exc, ValueError):
+        return str(exc)
+    logger.exception("internal error: %s", fallback)
+    return fallback
 
 
 class ProviderUpdate(BaseModel):
@@ -144,6 +162,8 @@ def create_api(context: AppContext) -> FastAPI:
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=_safe_http_error(exc, "Failed to correct segment")) from exc
         return SegmentCorrectionResponse(job_id=job_id, segment=segment)
 
     @app.post("/v1/jobs/{job_id}/segments/retry")
@@ -160,6 +180,8 @@ def create_api(context: AppContext) -> FastAPI:
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=_safe_http_error(exc, "Retry failed")) from exc
         return RetrySegmentsResponse(job_id=job_id, **result)
 
     @app.get("/v1/jobs/{job_id}/export")
@@ -168,6 +190,8 @@ def create_api(context: AppContext) -> FastAPI:
             filename, content = context.manager.export_job(job_id, export_format=format)
         except ValueError as exc:
             raise HTTPException(status_code=404 if "Unknown job" in str(exc) else 400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=_safe_http_error(exc, "Export failed")) from exc
         return ExportResponse(job_id=job_id, format=format, filename=filename, content=content)
 
     @app.get("/v1/library")
@@ -175,13 +199,22 @@ def create_api(context: AppContext) -> FastAPI:
         return {"entries": context.manager.list_library_entries(limit=limit)}
 
     @app.get("/v1/jobs/{job_id}/events")
-    async def stream_events(job_id: str, _: None = Depends(require_auth)) -> StreamingResponse:
+    async def stream_events(
+        request: Request,
+        job_id: str,
+        _: None = Depends(require_auth),
+    ) -> StreamingResponse:
         if not context.db.get_job(job_id):
             raise HTTPException(status_code=404, detail="Job not found")
 
         async def event_stream():
             last_id = 0
             while True:
+                # If the client navigated away, exit the loop instead of
+                # polling the DB forever. Without this, a stuck-RUNNING job
+                # leaks an event-loop task per disconnected client.
+                if await request.is_disconnected():
+                    break
                 events = context.db.list_events(job_id, after_id=last_id)
                 for event in events:
                     last_id = event.id
@@ -216,13 +249,29 @@ def create_api(context: AppContext) -> FastAPI:
         except OSError:
             pass
         target = upload_dir / f"{uuid.uuid4().hex}-{safe_name}"
+        # Cap accumulated upload size so a runaway client (or a forgotten
+        # tab uploading a 50 GB file) can't fill the cache disk. ``0``
+        # means "no cap" — opt-in for trusted environments only.
+        max_bytes = context.settings.max_upload_bytes
+        written = 0
+        oversize = False
         try:
             with Path(temp_path).open("wb") as handle:
                 while True:
                     chunk = await file.read(1024 * 1024)
                     if not chunk:
                         break
+                    written += len(chunk)
+                    if max_bytes and written > max_bytes:
+                        oversize = True
+                        break
                     handle.write(chunk)
+            if oversize:
+                Path(temp_path).unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Upload exceeds maximum size of {max_bytes} bytes",
+                )
             Path(temp_path).replace(target)
         finally:
             try:

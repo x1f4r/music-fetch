@@ -60,7 +60,7 @@ def test_job_manager_runs_local_file(monkeypatch, app_env, tmp_path: Path) -> No
     source = write_test_tone(tmp_path / "tone.wav")
 
     monkeypatch.setattr("music_fetch.service.normalize_media", lambda input_path, output_path: input_path)
-    monkeypatch.setattr("music_fetch.service.isolate_music", lambda settings, normalized, output_dir: normalized)
+    monkeypatch.setattr("music_fetch.service.isolate_music", lambda settings, normalized, output_dir, on_warning=None: normalized)
     monkeypatch.setattr(
         JobManager,
         "_select_windows",

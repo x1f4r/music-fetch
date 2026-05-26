@@ -39,6 +39,7 @@ def test_entry_download_url_reconstructs_youtube_music_watch_url() -> None:
 def test_probe_direct_media_url_uses_head_content_type(monkeypatch) -> None:
     class Response:
         headers = {"content-type": "audio/mpeg"}
+        is_redirect = False
 
     class Client:
         def __init__(self, *args, **kwargs):
@@ -54,6 +55,10 @@ def test_probe_direct_media_url_uses_head_content_type(monkeypatch) -> None:
             return Response()
 
     monkeypatch.setattr("music_fetch.sources.httpx.Client", Client)
+    # ``_assert_safe_external_url`` resolves DNS; bypass it so a synthetic
+    # hostname like ``cdn.example.com`` (no A record) doesn't fail the
+    # SSRF check. Coverage for that check lives in dedicated SSRF tests.
+    monkeypatch.setattr("music_fetch.sources._assert_safe_external_url", lambda _url: None)
     assert probe_direct_media_url("https://cdn.example.com/stream")
 
 
