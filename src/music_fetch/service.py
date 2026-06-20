@@ -56,6 +56,7 @@ from .models import (
     SegmentKind,
     SourceItem,
     SourceKind,
+    SourceMetadata,
     StorageSummary,
     TrackCandidate,
     TrackMatch,
@@ -64,7 +65,7 @@ from .models import (
 from .provider_registry import ProviderRegistry
 from .providers import ACRCloudProvider, AudDProvider, LocalCatalogProvider, VibraProvider
 from .providers.base import BaseProvider, ProviderError
-from .sources import SourceResolver
+from .sources import is_url, SourceResolver
 from .utils import cancel_job_processes, command_job_context, now_iso
 
 
@@ -429,6 +430,7 @@ class JobManager:
         failures = 0
         failure_messages: list[str] = []
         discovered_per_input = {raw: 0 for raw in job.inputs}
+        failed_discovery_payloads: dict[str, dict[str, object]] = {}
         for raw in job.inputs:
             self.db.upsert_discovery_state(
                 DiscoveryState(
@@ -444,23 +446,53 @@ class JobManager:
         worker_count = max(1, min(self.settings.max_workers, max(1, len(job.inputs))))
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="music-fetch-item") as item_executor:
             future_map: dict[Future[None], SourceItem] = {}
-            for item in self.source_resolver.iter_resolve_inputs(job_id, job.inputs):
-                self._raise_if_canceled(job_id)
-                items.append(item)
-                discovered_per_input[item.input_value] = discovered_per_input.get(item.input_value, 0) + 1
-                self.db.add_source_items([item])
-                self.db.upsert_discovery_state(
-                    DiscoveryState(
-                        job_id=job_id,
-                        input_value=item.input_value,
-                        cursor=discovered_per_input[item.input_value],
-                        total=None,
-                        completed=False,
-                        payload={"latest_item_id": item.id},
-                        updated_at=now_iso(),
+            for raw in job.inputs:
+                try:
+                    for item in self.source_resolver.iter_resolve_inputs(job_id, [raw]):
+                        self._raise_if_canceled(job_id)
+                        items.append(item)
+                        discovered_per_input[item.input_value] = discovered_per_input.get(item.input_value, 0) + 1
+                        self.db.add_source_items([item])
+                        self.db.upsert_discovery_state(
+                            DiscoveryState(
+                                job_id=job_id,
+                                input_value=item.input_value,
+                                cursor=discovered_per_input[item.input_value],
+                                total=None,
+                                completed=False,
+                                payload={"latest_item_id": item.id},
+                                updated_at=now_iso(),
+                            )
+                        )
+                        future_map[item_executor.submit(self._process_item, job, item)] = item
+                except JobCanceled:
+                    raise
+                except Exception as exc:
+                    if self._is_canceled(job_id):
+                        raise JobCanceled()
+                    failures += 1
+                    failed_item = self._failed_source_item(job_id, raw, exc)
+                    items.append(failed_item)
+                    discovered_per_input[raw] = discovered_per_input.get(raw, 0) + 1
+                    failure_messages.append(f"{raw}: {exc}")
+                    self.db.add_source_items([failed_item])
+                    failed_discovery_payloads[raw] = {
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                        "failed_item_id": failed_item.id,
+                    }
+                    self.db.add_event(job_id, "error", f"Failed to resolve input {raw}: {exc}")
+                    self.db.upsert_discovery_state(
+                        DiscoveryState(
+                            job_id=job_id,
+                            input_value=raw,
+                            cursor=discovered_per_input[raw],
+                            total=discovered_per_input[raw],
+                            completed=True,
+                            payload=failed_discovery_payloads[raw],
+                            updated_at=now_iso(),
+                        )
                     )
-                )
-                future_map[item_executor.submit(self._process_item, job, item)] = item
             for raw, count in discovered_per_input.items():
                 self.db.upsert_discovery_state(
                     DiscoveryState(
@@ -469,7 +501,7 @@ class JobManager:
                         cursor=count,
                         total=count,
                         completed=True,
-                        payload={},
+                        payload=failed_discovery_payloads.get(raw, {}),
                         updated_at=now_iso(),
                     )
                 )
@@ -514,6 +546,18 @@ class JobManager:
             except Exception as exc:
                 self.db.add_event(job_id, "warning", f"Artifact cleanup failed: {exc}")
         self.db.add_event(job_id, "info", f"Job finished with status {status}")
+
+    def _failed_source_item(self, job_id: str, raw: str, exc: Exception) -> SourceItem:
+        title = Path(raw).name if not is_url(raw) else raw
+        return SourceItem(
+            id=str(uuid.uuid4()),
+            job_id=job_id,
+            input_value=raw,
+            kind=SourceKind.YT_DLP if is_url(raw) else SourceKind.LOCAL_FILE,
+            status=ItemStatus.FAILED,
+            metadata=SourceMetadata(title=title or raw, extra={"resolution_failed": True}),
+            error=str(exc),
+        )
 
     def _process_item(self, job: Job, item: SourceItem) -> None:
         with command_job_context(job.id):

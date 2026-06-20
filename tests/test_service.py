@@ -177,6 +177,73 @@ def test_job_manager_runs_local_file(monkeypatch, app_env, tmp_path: Path) -> No
     assert item_summary.payload["segment_count"] == 1
 
 
+def test_job_manager_preserves_good_inputs_when_one_input_fails_to_resolve(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "good.wav")
+    missing = tmp_path / "missing.wav"
+    later_source = write_test_tone(tmp_path / "later-good.wav")
+
+    monkeypatch.setattr("music_fetch.service.normalize_media", lambda input_path, output_path: input_path)
+    monkeypatch.setattr("music_fetch.service.isolate_music", lambda settings, normalized, output_dir, on_warning=None: normalized)
+    monkeypatch.setattr(
+        JobManager,
+        "_select_windows",
+        lambda self, job, item, normalized, instrumental, profile: [
+            WindowPlan(start_ms=0, end_ms=12000, score=1.0, source_path=str(normalized), label="mix")
+        ],
+    )
+    monkeypatch.setattr("music_fetch.service.create_excerpt", _copy_excerpt)
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"partial:{clip_path}")
+    monkeypatch.setattr(JobManager, "_providers", lambda self: [FakeProvider()])
+
+    job = manager.submit(JobCreate(inputs=[str(source), str(missing), str(later_source)]))
+    final_job = manager.wait(job.id)
+
+    items = db.get_source_items(job.id)
+    segments = db.get_segments(job.id)
+    discovery = {state.input_value: state for state in db.list_discovery_states(job.id)}
+
+    assert final_job.status == JobStatus.PARTIAL_FAILED
+    assert final_job.error is not None
+    assert str(missing) in final_job.error
+    assert sum(1 for item in items if item.status == ItemStatus.SUCCEEDED) == 2
+    assert sum(1 for item in items if item.status == ItemStatus.FAILED) == 1
+    failed = next(item for item in items if item.status == ItemStatus.FAILED)
+    assert failed.input_value == str(missing)
+    assert failed.error is not None
+    assert "does not exist" in failed.error
+    assert failed.metadata.extra["resolution_failed"] is True
+    assert len(segments) == 2
+    assert all(segment.track is not None for segment in segments)
+    assert set(discovery) == {str(source), str(missing), str(later_source)}
+    assert all(state.completed for state in discovery.values())
+    assert discovery[str(missing)].payload["failed_item_id"] == failed.id
+    assert discovery[str(missing)].payload["error_type"] == "FileNotFoundError"
+    assert "does not exist" in discovery[str(missing)].payload["error"]
+
+
+def test_job_manager_marks_job_failed_when_every_input_fails_to_resolve(app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    missing = tmp_path / "missing.wav"
+
+    job = manager.submit(JobCreate(inputs=[str(missing)]))
+    final_job = manager.wait(job.id)
+
+    items = db.get_source_items(job.id)
+    discovery = db.list_discovery_states(job.id)
+
+    assert final_job.status == JobStatus.FAILED
+    assert final_job.error is not None
+    assert str(missing) in final_job.error
+    assert len(items) == 1
+    assert items[0].status == ItemStatus.FAILED
+    assert items[0].input_value == str(missing)
+    assert len(discovery) == 1
+    assert discovery[0].completed is True
+    assert discovery[0].total == 1
+    assert discovery[0].payload["failed_item_id"] == items[0].id
+
+
 def test_run_existing_job_processes_created_job(monkeypatch, app_env, tmp_path: Path) -> None:
     settings, db, manager = app_env
     source = write_test_tone(tmp_path / "tone.wav")
