@@ -237,6 +237,12 @@ def create_api(context: AppContext) -> FastAPI:
         options_json: Annotated[str | None, Form()] = None,
         _: None = Depends(require_auth),
     ) -> dict:
+        options = JobOptions()
+        if options_json:
+            try:
+                options = JobOptions.model_validate(json.loads(options_json))
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid options_json: {exc}") from exc
         upload_dir = context.settings.cache_dir / "uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
         safe_name = _safe_upload_name(file.filename)
@@ -279,12 +285,6 @@ def create_api(context: AppContext) -> FastAPI:
             except OSError:
                 pass
 
-        options = JobOptions()
-        if options_json:
-            try:
-                options = JobOptions.model_validate(json.loads(options_json))
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Invalid options_json: {exc}") from exc
         job = context.manager.submit(JobCreate(inputs=[str(target)], options=options))
         return {"job_id": job.id, "status": job.status}
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 PROVIDER_ATTEMPT_OUTCOMES = {
@@ -85,13 +85,13 @@ class ArtifactCategory(StrEnum):
 
 class JobOptions(BaseModel):
     prefer_separation: bool = True
-    window_ms: int = 12_000
-    hop_ms: int = 6_000
-    max_windows: int = 24
-    max_segments: int = 360
-    max_probes_per_segment: int = 3
-    max_provider_calls: int = 420
-    min_provider_consensus: int = 1
+    window_ms: int = Field(default=12_000, gt=0)
+    hop_ms: int = Field(default=6_000, gt=0)
+    max_windows: int = Field(default=24, gt=0)
+    max_segments: int = Field(default=360, gt=0)
+    max_probes_per_segment: int = Field(default=3, gt=0)
+    max_provider_calls: int = Field(default=420, ge=0)
+    min_provider_consensus: int = Field(default=1, gt=0)
     analysis_mode: AnalysisMode = AnalysisMode.AUTO
     recall_profile: RecallProfile = RecallProfile.MAX_RECALL
     enable_metadata_hints: bool = True
@@ -109,10 +109,10 @@ class JobOptions(BaseModel):
     # (see duration-adaptive scaling in service._can_merge_segments). Floor/ceiling
     # for the duration-adaptive rule — the actual gap scales with the longer of
     # the two segments.
-    merge_gap_same_track_ms: int = 12_000
+    merge_gap_same_track_ms: int = Field(default=12_000, ge=0)
     # Gap allowance for *bridging* a short non-MATCHED segment (speech/silence)
     # between two MATCHED segments of the same identity.
-    merge_gap_bridge_ms: int = 8_000
+    merge_gap_bridge_ms: int = Field(default=8_000, ge=0)
     # When True, providers with no configured credentials (free only: VIBRA +
     # LOCAL_CATALOG) run with an effectively uncapped call budget; paid providers
     # honor ``max_provider_calls``. See service._effective_budget.
@@ -126,12 +126,23 @@ class JobOptions(BaseModel):
     auto_retry_unresolved: bool = True
     # Parallel workers used per long-mix job when probing segments. ``0`` defers
     # to the default computed from ``settings.max_workers``.
-    segment_workers: int = 0
+    segment_workers: int = Field(default=0, ge=0, le=32)
 
 
 class JobCreate(BaseModel):
-    inputs: list[str]
+    inputs: list[str] = Field(min_length=1)
     options: JobOptions = Field(default_factory=JobOptions)
+
+    @field_validator("inputs")
+    @classmethod
+    def inputs_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            item = str(value).strip()
+            if not item:
+                raise ValueError("inputs must not be blank")
+            cleaned.append(item)
+        return cleaned
 
 
 class TrackMatch(BaseModel):
