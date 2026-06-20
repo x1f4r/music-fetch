@@ -135,7 +135,7 @@ class _BudgetCounter:
 
 
 class JobManager:
-    def __init__(self, settings: Settings, db: Database) -> None:
+    def __init__(self, settings: Settings, db: Database, *, recover_orphans: bool = False) -> None:
         self.settings = settings
         self.db = db
         self.source_resolver = SourceResolver(settings.cache_dir)
@@ -150,12 +150,13 @@ class JobManager:
         self._lock = threading.Lock()
         self._provider_call_lock = threading.Lock()
         self._provider_next_call_at: dict[ProviderName, float] = {}
-        # Mark jobs stuck in QUEUED/RUNNING from a previous process as
-        # FAILED. Without this the UI keeps showing a phantom spinner for
-        # work that's no longer happening.
-        swept = self.db.sweep_orphan_running_jobs()
-        if swept:
-            logging.getLogger(__name__).info("startup: swept %d orphan job(s)", len(swept))
+        if recover_orphans:
+            # Keep recovery opt-in for deliberately invoked maintenance.
+            # Detached workers and read-only observers construct managers while
+            # a QUEUED/RUNNING job may be legitimate.
+            swept = self.db.sweep_orphan_running_jobs()
+            if swept:
+                logging.getLogger(__name__).info("startup: swept %d orphan job(s)", len(swept))
 
     def submit(self, payload: JobCreate) -> Job:
         job = self.db.create_job(payload.inputs, payload.options)

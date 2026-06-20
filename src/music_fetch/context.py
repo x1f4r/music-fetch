@@ -14,8 +14,8 @@ class AppContext:
     manager: JobManager
 
 
-def create_context() -> AppContext:
+def create_context(*, recover_orphans: bool = False) -> AppContext:
     settings = Settings()
     db = Database(settings.db_path)
-    manager = JobManager(settings, db)
+    manager = JobManager(settings, db, recover_orphans=recover_orphans)
     return AppContext(settings=settings, db=db, manager=manager)
