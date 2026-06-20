@@ -3,7 +3,23 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+PROVIDER_ATTEMPT_OUTCOMES = {
+    "cache_hit_matched",
+    "cache_hit_empty",
+    "provider_call_matched",
+    "provider_call_empty",
+    "provider_error",
+    "provider_exception",
+    "budget_exhausted",
+}
+PROVIDER_DECISION_OUTCOMES = {
+    "provider_unavailable",
+    "prefer_free_skip",
+    "budget_exhausted",
+}
 
 
 class JobStatus(StrEnum):
@@ -304,6 +320,136 @@ class RecognitionMetric(BaseModel):
     gate_g5_hits: int = 0
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: str
+
+    @model_validator(mode="after")
+    def validate_ledger_payload(self) -> "RecognitionMetric":
+        metric_type = self.payload.get("metric_type")
+        if metric_type is None:
+            outcome = self.payload.get("outcome")
+            if outcome is None:
+                return self
+            if outcome in PROVIDER_DECISION_OUTCOMES and (
+                outcome != "budget_exhausted" or "cache_key" not in self.payload
+            ):
+                self.payload["metric_type"] = "provider_decision"
+            elif outcome in PROVIDER_ATTEMPT_OUTCOMES:
+                self.payload["metric_type"] = "provider_attempt"
+            else:
+                raise ValueError(f"Unknown recognition outcome without metric_type: {outcome}")
+            metric_type = self.payload["metric_type"]
+        if metric_type == "provider_attempt":
+            self._validate_provider_attempt_payload()
+            return self
+        if metric_type == "provider_decision":
+            self._validate_provider_decision_payload()
+            return self
+        raise ValueError(f"Unknown recognition metric_type: {metric_type}")
+
+    def _validate_provider_attempt_payload(self) -> None:
+        required = {
+            "ledger_version",
+            "outcome",
+            "start_ms",
+            "end_ms",
+            "probe_start_ms",
+            "probe_end_ms",
+            "cache_key",
+            "cache_hit",
+            "provider_call_attempted",
+            "budget_consumed",
+            "budget_exhausted",
+        }
+        self._require_payload_keys(required)
+        outcome = str(self.payload["outcome"])
+        if outcome not in PROVIDER_ATTEMPT_OUTCOMES:
+            raise ValueError(f"Unknown provider_attempt outcome: {outcome}")
+        self._require_bool("cache_hit")
+        self._require_bool("provider_call_attempted")
+        self._require_bool("budget_exhausted")
+        self._require_int("budget_consumed")
+        if outcome.startswith("cache_hit"):
+            if not self.cache_hit or self.call_count != 0 or self.payload["provider_call_attempted"]:
+                raise ValueError("cache-hit provider_attempt metrics must not count provider calls")
+            if self.payload["budget_exhausted"] or self.payload["budget_consumed"] != 0:
+                raise ValueError("cache-hit provider_attempt metrics must not consume budget")
+            if outcome == "cache_hit_matched" and not self.matched:
+                raise ValueError("cache_hit_matched metrics must be marked matched")
+            if outcome == "cache_hit_empty" and self.matched:
+                raise ValueError("cache_hit_empty metrics must not be marked matched")
+        elif outcome in {"provider_call_matched", "provider_call_empty", "provider_error", "provider_exception"}:
+            if (
+                self.cache_hit
+                or self.payload["cache_hit"]
+                or self.payload["budget_exhausted"]
+                or not self.payload["provider_call_attempted"]
+                or self.call_count < 1
+            ):
+                raise ValueError("provider-call metrics must mark an attempted provider call")
+            if "budget_remaining_before" in self.payload and self.payload["budget_consumed"] < 1:
+                raise ValueError("budgeted provider-call metrics must consume budget")
+            if outcome == "provider_call_matched" and not self.matched:
+                raise ValueError("provider_call_matched metrics must be marked matched")
+            if outcome in {"provider_call_empty", "provider_error", "provider_exception"} and self.matched:
+                raise ValueError(f"{outcome} metrics must not be marked matched")
+        elif outcome == "budget_exhausted":
+            if (
+                self.cache_hit
+                or self.payload["cache_hit"]
+                or self.payload["provider_call_attempted"]
+                or self.payload["budget_consumed"] != 0
+                or self.call_count != 0
+                or not self.payload["budget_exhausted"]
+            ):
+                raise ValueError("budget_exhausted metrics must be zero-call budget skips")
+            self._require_payload_keys({"skip_reason"})
+        if outcome in {"provider_error", "provider_exception"}:
+            self._require_payload_keys({"error_type", "error_message"})
+
+    def _validate_provider_decision_payload(self) -> None:
+        required = {
+            "ledger_version",
+            "outcome",
+            "start_ms",
+            "end_ms",
+            "probe_start_ms",
+            "probe_end_ms",
+            "cache_hit",
+            "provider_call_attempted",
+            "budget_consumed",
+            "budget_exhausted",
+            "skip_reason",
+        }
+        self._require_payload_keys(required)
+        outcome = str(self.payload["outcome"])
+        if outcome not in PROVIDER_DECISION_OUTCOMES:
+            raise ValueError(f"Unknown provider_decision outcome: {outcome}")
+        self._require_bool("cache_hit")
+        self._require_bool("provider_call_attempted")
+        self._require_bool("budget_exhausted")
+        self._require_int("budget_consumed")
+        if self.cache_hit or self.payload["cache_hit"] or self.call_count != 0 or self.payload["provider_call_attempted"]:
+            raise ValueError("provider_decision metrics must not count provider calls")
+        if self.payload["budget_consumed"] != 0:
+            raise ValueError("provider_decision metrics must not consume budget")
+        if outcome == "budget_exhausted":
+            if not self.payload["budget_exhausted"]:
+                raise ValueError("budget_exhausted provider_decision metrics must mark budget_exhausted")
+        elif self.payload["budget_exhausted"]:
+            raise ValueError(f"{outcome} provider_decision metrics must not mark budget_exhausted")
+
+    def _require_payload_keys(self, keys: set[str]) -> None:
+        missing = sorted(key for key in keys if key not in self.payload)
+        if missing:
+            raise ValueError(f"RecognitionMetric payload missing keys: {', '.join(missing)}")
+
+    def _require_bool(self, key: str) -> None:
+        if not isinstance(self.payload.get(key), bool):
+            raise ValueError(f"RecognitionMetric payload key must be bool: {key}")
+
+    def _require_int(self, key: str) -> None:
+        value = self.payload.get(key)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"RecognitionMetric payload key must be int: {key}")
 
 
 class DiscoveryState(BaseModel):

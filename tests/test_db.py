@@ -186,3 +186,191 @@ def test_recognition_metric_round_trips_extended_counters(tmp_path) -> None:
     assert extended.segments_bridged_across_speech == 1
     assert extended.repeat_group_reconfirmed == 2
     assert extended.gate_g3_hits == 4
+
+
+def test_recognition_metric_round_trips_outcome_taxonomy_payload(tmp_path) -> None:
+    db = Database(tmp_path / "music_fetch.sqlite3")
+    job_id = _seed_job(db, job_id="outcome-job")
+    attempt_base = {
+        "metric_type": "provider_attempt",
+        "ledger_version": 1,
+        "start_ms": 0,
+        "end_ms": 12_000,
+        "probe_start_ms": 0,
+        "probe_end_ms": 12_000,
+        "cache_key": "cache-key",
+        "cache_hit": False,
+        "provider_call_attempted": False,
+        "budget_consumed": 0,
+        "budget_exhausted": False,
+    }
+    decision_base = {
+        "metric_type": "provider_decision",
+        "ledger_version": 1,
+        "start_ms": 0,
+        "end_ms": 12_000,
+        "probe_start_ms": 0,
+        "probe_end_ms": 12_000,
+        "cache_hit": False,
+        "provider_call_attempted": False,
+        "budget_consumed": 0,
+        "budget_exhausted": False,
+        "skip_reason": "test skip",
+    }
+    payloads = {
+        "cache_hit_matched": {**attempt_base, "outcome": "cache_hit_matched", "cache_hit": True},
+        "cache_hit_empty": {**attempt_base, "outcome": "cache_hit_empty", "cache_hit": True},
+        "provider_call_matched": {
+            **attempt_base,
+            "outcome": "provider_call_matched",
+            "provider_call_attempted": True,
+            "budget_consumed": 1,
+        },
+        "provider_call_empty": {
+            **attempt_base,
+            "outcome": "provider_call_empty",
+            "provider_call_attempted": True,
+            "budget_consumed": 1,
+        },
+        "provider_error": {
+            **attempt_base,
+            "outcome": "provider_error",
+            "provider_call_attempted": True,
+            "budget_consumed": 1,
+            "error_type": "ProviderError",
+            "error_message": "quota",
+        },
+        "provider_exception": {
+            **attempt_base,
+            "outcome": "provider_exception",
+            "provider_call_attempted": True,
+            "budget_consumed": 1,
+            "error_type": "RuntimeError",
+            "error_message": "boom",
+        },
+        "provider_unavailable": {**decision_base, "outcome": "provider_unavailable"},
+        "prefer_free_skip": {**decision_base, "outcome": "prefer_free_skip"},
+        "budget_exhausted": {
+            **attempt_base,
+            "outcome": "budget_exhausted",
+            "budget_exhausted": True,
+            "skip_reason": "provider-call budget exhausted",
+        },
+    }
+    for outcome, payload in payloads.items():
+        db.add_recognition_metric(
+            RecognitionMetric(
+                id=f"m-{outcome}",
+                job_id=job_id,
+                source_item_id=f"{job_id}-item-1",
+                provider_name=ProviderName.VIBRA,
+                cache_hit=outcome.startswith("cache_hit"),
+                matched=outcome.endswith("matched"),
+                call_count=1 if outcome.startswith("provider_call") or outcome in {"provider_error", "provider_exception"} else 0,
+                payload=payload,
+                created_at=now_iso(),
+            )
+        )
+
+    metrics = {metric.id: metric for metric in db.list_recognition_metrics(job_id)}
+    for outcome in payloads:
+        metric = metrics[f"m-{outcome}"]
+        assert metric.payload["outcome"] == outcome
+    assert metrics["m-provider_error"].payload["error_type"] == "ProviderError"
+
+
+def test_recognition_metric_validates_provider_ledger_payload() -> None:
+    valid_payload = {
+        "metric_type": "provider_attempt",
+        "ledger_version": 1,
+        "outcome": "provider_call_empty",
+        "start_ms": 0,
+        "end_ms": 12_000,
+        "probe_start_ms": 0,
+        "probe_end_ms": 12_000,
+        "cache_key": "cache-key",
+        "cache_hit": False,
+        "provider_call_attempted": True,
+        "budget_consumed": 1,
+        "budget_exhausted": False,
+    }
+    metric = RecognitionMetric(
+        id="valid-ledger",
+        job_id="job-1",
+        source_item_id="item-1",
+        provider_name=ProviderName.VIBRA,
+        cache_hit=False,
+        matched=False,
+        call_count=1,
+        payload=valid_payload,
+        created_at=now_iso(),
+    )
+    assert metric.payload["outcome"] == "provider_call_empty"
+
+    with pytest.raises(ValueError, match="Unknown provider_attempt outcome"):
+        RecognitionMetric(
+            id="bad-ledger",
+            job_id="job-1",
+            source_item_id="item-1",
+            provider_name=ProviderName.VIBRA,
+            cache_hit=False,
+            matched=False,
+            call_count=1,
+            payload={**valid_payload, "outcome": "provider_call_typo"},
+            created_at=now_iso(),
+        )
+    inferred = RecognitionMetric(
+        id="missing-type",
+        job_id="job-1",
+        source_item_id="item-1",
+        provider_name=ProviderName.VIBRA,
+        cache_hit=False,
+        matched=False,
+        call_count=1,
+        payload={key: value for key, value in valid_payload.items() if key != "metric_type"},
+        created_at=now_iso(),
+    )
+    assert inferred.payload["metric_type"] == "provider_attempt"
+    inferred_decision = RecognitionMetric(
+        id="missing-decision-type",
+        job_id="job-1",
+        source_item_id="item-1",
+        provider_name=None,
+        cache_hit=False,
+        matched=False,
+        call_count=0,
+        payload={
+            "ledger_version": 1,
+            "outcome": "budget_exhausted",
+            "start_ms": 0,
+            "end_ms": 12_000,
+            "probe_start_ms": 0,
+            "probe_end_ms": 12_000,
+            "cache_hit": False,
+            "provider_call_attempted": False,
+            "budget_consumed": 0,
+            "budget_exhausted": True,
+            "skip_reason": "provider-call budget exhausted",
+        },
+        created_at=now_iso(),
+    )
+    assert inferred_decision.payload["metric_type"] == "provider_decision"
+    with pytest.raises(ValueError, match="Unknown recognition outcome"):
+        RecognitionMetric(
+            id="unknown-outcome",
+            job_id="job-1",
+            payload={"outcome": "provider_call_typo"},
+            created_at=now_iso(),
+        )
+    with pytest.raises(ValueError, match="must not be marked matched"):
+        RecognitionMetric(
+            id="bad-flags",
+            job_id="job-1",
+            source_item_id="item-1",
+            provider_name=ProviderName.VIBRA,
+            cache_hit=False,
+            matched=True,
+            call_count=1,
+            payload={**valid_payload, "outcome": "provider_call_empty"},
+            created_at=now_iso(),
+        )
