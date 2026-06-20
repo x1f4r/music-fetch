@@ -1,4 +1,8 @@
+import pytest
+
 from music_fetch.sources import (
+    SourceResolver,
+    UnsafeURLError,
     _entry_download_url,
     _flatten_entries,
     _single_video_extractor_url,
@@ -7,6 +11,7 @@ from music_fetch.sources import (
     normalize_source_url,
     probe_direct_media_url,
     yt_dlp_extract_args,
+    yt_dlp_extract_info,
 )
 
 
@@ -34,6 +39,13 @@ def test_entry_download_url_reconstructs_youtube_music_watch_url() -> None:
     entry = {"id": "track123", "extractor_key": "YoutubeTab"}
     url = _entry_download_url(entry, "https://music.youtube.com/playlist?list=PL123", "PL123")
     assert url == "https://music.youtube.com/watch?v=track123&list=PL123"
+
+
+def test_entry_download_url_rejects_private_extractor_media_url() -> None:
+    entry = {"url": "http://169.254.169.254/latest/meta-data/"}
+
+    with pytest.raises(UnsafeURLError):
+        _entry_download_url(entry, "https://example.com/watch", None)
 
 
 def test_probe_direct_media_url_uses_head_content_type(monkeypatch) -> None:
@@ -136,4 +148,187 @@ def test_normalize_source_url_follows_known_shorteners(monkeypatch) -> None:
             return Response("https://open.spotify.com/track/abc123?si=deadbeef")
 
     monkeypatch.setattr("music_fetch.sources.httpx.Client", Client)
+    monkeypatch.setattr("music_fetch.sources._assert_safe_external_url", lambda _url: None)
     assert normalize_source_url("https://spotify.link/demo") == "https://open.spotify.com/track/abc123"
+
+
+def test_normalize_source_url_follows_safe_shortener_redirect_location(monkeypatch) -> None:
+    class Response:
+        def __init__(self, url: str, *, location: str | None = None):
+            self.url = url
+            self.status_code = 302 if location else 200
+            self.is_redirect = location is not None
+            self.headers = {"location": location} if location else {}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def head(self, value):
+            if value == "https://spotify.link/demo":
+                return Response(value, location="https://open.spotify.com/track/abc123?si=deadbeef")
+            return Response(value)
+
+        def get(self, value):
+            return Response(value)
+
+    monkeypatch.setattr("music_fetch.sources.httpx.Client", Client)
+    monkeypatch.setattr("music_fetch.sources._assert_safe_external_url", lambda _url: None)
+
+    assert normalize_source_url("https://spotify.link/demo") == "https://open.spotify.com/track/abc123"
+
+
+def test_normalize_source_url_blocks_shortener_redirect_to_private_host(monkeypatch) -> None:
+    class Response:
+        def __init__(self, url: str, location: str | None = None):
+            self.url = url
+            self.status_code = 302 if location else 200
+            self.is_redirect = location is not None
+            self.headers = {"location": location} if location else {}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def head(self, value):
+            return Response(value, "http://169.254.169.254/latest/meta-data/")
+
+        def get(self, value):
+            return Response(value)
+
+    def assert_safe(url: str) -> None:
+        if "169.254.169.254" in url:
+            raise UnsafeURLError("blocked private redirect")
+
+    monkeypatch.setattr("music_fetch.sources.httpx.Client", Client)
+    monkeypatch.setattr("music_fetch.sources._assert_safe_external_url", assert_safe)
+
+    with pytest.raises(UnsafeURLError):
+        normalize_source_url("https://spotify.link/demo")
+
+
+def test_normalize_source_url_blocks_shortener_redirect_to_private_host_with_real_guard(monkeypatch) -> None:
+    class Response:
+        def __init__(self, url: str, location: str | None = None):
+            self.url = url
+            self.status_code = 302 if location else 200
+            self.is_redirect = location is not None
+            self.headers = {"location": location} if location else {}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def head(self, value):
+            return Response(value, "http://169.254.169.254/latest/meta-data/")
+
+        def get(self, value):
+            return Response(value)
+
+    monkeypatch.setattr("music_fetch.sources.httpx.Client", Client)
+
+    with pytest.raises(UnsafeURLError):
+        normalize_source_url("https://spotify.link/demo")
+
+
+def test_source_resolver_rejects_loopback_before_yt_dlp(monkeypatch, tmp_path) -> None:
+    called = False
+
+    def extract_info(_url):
+        nonlocal called
+        called = True
+        return {}
+
+    monkeypatch.setattr("music_fetch.sources.yt_dlp_extract_info", extract_info)
+
+    resolver = SourceResolver(tmp_path)
+    with pytest.raises(UnsafeURLError):
+        list(resolver.iter_resolve_inputs("job-1", ["http://127.0.0.1/admin"]))
+
+    assert called is False
+
+
+def test_source_resolver_rejects_private_download_url_from_extractor(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "music_fetch.sources.yt_dlp_extract_info",
+        lambda _url: {"id": "entry-1", "url": "http://169.254.169.254/latest/meta-data/"},
+    )
+    monkeypatch.setattr("music_fetch.sources.probe_direct_media_url", lambda _url: False)
+
+    def real_guard_for_entry_urls(url: str) -> None:
+        if "169.254.169.254" in url:
+            raise UnsafeURLError("blocked private extractor URL")
+
+    monkeypatch.setattr("music_fetch.sources._assert_safe_external_url", real_guard_for_entry_urls)
+
+    resolver = SourceResolver(tmp_path)
+    with pytest.raises(UnsafeURLError):
+        list(resolver.iter_resolve_inputs("job-1", ["https://example.com/watch"]))
+
+
+def test_source_resolver_rejects_probe_redirect_to_private_host_before_yt_dlp(monkeypatch, tmp_path) -> None:
+    called = False
+
+    class Response:
+        is_redirect = True
+        headers = {"location": "http://169.254.169.254/latest/meta-data/"}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def head(self, value):
+            return Response()
+
+    def assert_safe(url: str) -> None:
+        if "169.254.169.254" in url:
+            raise UnsafeURLError("blocked private redirect")
+
+    def extract_info(_url):
+        nonlocal called
+        called = True
+        return {}
+
+    monkeypatch.setattr("music_fetch.sources.httpx.Client", Client)
+    monkeypatch.setattr("music_fetch.sources._assert_safe_external_url", assert_safe)
+    monkeypatch.setattr("music_fetch.sources.yt_dlp_extract_info", extract_info)
+
+    resolver = SourceResolver(tmp_path)
+    with pytest.raises(UnsafeURLError):
+        list(resolver.iter_resolve_inputs("job-1", ["https://example.com/watch"]))
+
+    assert called is False
+
+
+def test_yt_dlp_extract_info_rejects_loopback_before_command(monkeypatch) -> None:
+    def fail_run_command(_args):
+        raise AssertionError("yt-dlp command should not run for unsafe URLs")
+
+    monkeypatch.setattr("music_fetch.sources.run_command", fail_run_command)
+
+    with pytest.raises(UnsafeURLError):
+        yt_dlp_extract_info("http://127.0.0.1/admin")

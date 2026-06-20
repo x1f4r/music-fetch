@@ -83,7 +83,7 @@ def _assert_safe_external_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         raise UnsafeURLError(f"Unsupported scheme: {parsed.scheme!r}")
-    _assert_safe_external_host(parsed.netloc or parsed.hostname or "")
+    _assert_safe_external_host(parsed.hostname or "")
 
 KNOWN_EXTRACTOR_HOST_TOKENS = ("youtube.", "youtu.be", "instagram.", "tiktok.", "vimeo.", "soundcloud.")
 KNOWN_SHORTENER_HOSTS = (
@@ -172,13 +172,45 @@ def _resolve_known_short_url(value: str) -> str:
     if host not in KNOWN_SHORTENER_HOSTS:
         return value
     try:
-        with httpx.Client(follow_redirects=True, timeout=8.0) as client:
-            response = client.head(value)
-            if response.status_code >= 400 or str(response.url) == value:
-                response = client.get(value)
-            return str(response.url)
+        current = value
+        _assert_safe_external_url(current)
+        with httpx.Client(follow_redirects=False, timeout=8.0) as client:
+            for _ in range(DIRECT_HTTP_MAX_REDIRECTS + 1):
+                response = client.head(current)
+                redirected = _redirect_location(current, response)
+                if redirected:
+                    _assert_safe_external_url(redirected)
+                    current = redirected
+                    continue
+
+                final_url = str(getattr(response, "url", current))
+                status_code = int(getattr(response, "status_code", 200))
+                if status_code >= 400 or final_url == current:
+                    response = client.get(current)
+                    redirected = _redirect_location(current, response)
+                    if redirected:
+                        _assert_safe_external_url(redirected)
+                        current = redirected
+                        continue
+                    final_url = str(getattr(response, "url", current))
+
+                _assert_safe_external_url(final_url)
+                return final_url
+        raise UnsafeURLError(f"Too many redirects (> {DIRECT_HTTP_MAX_REDIRECTS})")
+    except UnsafeURLError:
+        raise
     except Exception:
         return value
+
+
+def _redirect_location(current: str, response: object) -> str | None:
+    if not bool(getattr(response, "is_redirect", False)):
+        return None
+    headers = getattr(response, "headers", {}) or {}
+    location = headers.get("location") if hasattr(headers, "get") else None
+    if not location:
+        return None
+    return str(httpx.URL(current).join(str(location)))
 
 
 def _canonical_host(host: str) -> str:
@@ -396,6 +428,7 @@ def yt_dlp_extract_args(url: str) -> list[str]:
 
 
 def yt_dlp_extract_info(url: str) -> dict:
+    _assert_safe_external_url(url)
     args = yt_dlp_extract_args(url)
     result = run_command(args)
     if result.returncode != 0:
@@ -442,13 +475,12 @@ def probe_direct_media_url(value: str) -> bool:
                     if not location:
                         return False
                     current = str(httpx.URL(current).join(location))
-                    try:
-                        _assert_safe_external_url(current)
-                    except UnsafeURLError:
-                        return False
+                    _assert_safe_external_url(current)
                     continue
                 content_type = (response.headers.get("content-type") or "").lower()
                 return content_type.startswith(("audio/", "video/"))
+    except UnsafeURLError:
+        raise
     except Exception:
         return False
     return False
@@ -466,6 +498,7 @@ class SourceResolver:
         for raw in inputs:
             if is_url(raw):
                 normalized = normalize_source_url(raw)
+                _assert_safe_external_url(normalized)
                 if is_direct_media_url(normalized) or probe_direct_media_url(normalized):
                     yield self._direct_http_item(job_id, raw, normalized)
                 else:
@@ -587,6 +620,7 @@ def _flatten_entries(entries: list[dict | None]) -> list[dict]:
 def _entry_download_url(entry: dict, raw: str, playlist_id: str | None) -> str | None:
     for candidate in [entry.get("webpage_url"), entry.get("original_url"), entry.get("url")]:
         if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+            _assert_safe_external_url(candidate)
             return candidate
 
     entry_id = entry.get("id")
@@ -594,11 +628,17 @@ def _entry_download_url(entry: dict, raw: str, playlist_id: str | None) -> str |
     if entry_id and "youtube" in extractor:
         host = "music.youtube.com" if "music" in raw or "music" in extractor else "www.youtube.com"
         if playlist_id:
-            return f"https://{host}/watch?v={entry_id}&list={playlist_id}"
-        return f"https://{host}/watch?v={entry_id}"
+            candidate = f"https://{host}/watch?v={entry_id}&list={playlist_id}"
+            _assert_safe_external_url(candidate)
+            return candidate
+        candidate = f"https://{host}/watch?v={entry_id}"
+        _assert_safe_external_url(candidate)
+        return candidate
 
     if entry_id and "vimeo" in extractor:
-        return f"https://vimeo.com/{entry_id}"
+        candidate = f"https://vimeo.com/{entry_id}"
+        _assert_safe_external_url(candidate)
+        return candidate
 
     return None
 
