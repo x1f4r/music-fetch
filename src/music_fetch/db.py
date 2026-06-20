@@ -4,6 +4,7 @@ import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -686,21 +687,40 @@ class Database:
             rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._row_to_job(row) for row in rows]
 
-    def sweep_orphan_running_jobs(self, *, reason: str = "Backend restarted before this job finished") -> list[str]:
-        """Mark RUNNING/QUEUED jobs as FAILED on startup.
+    def sweep_orphan_running_jobs(
+        self,
+        *,
+        reason: str = "Backend restarted before this job finished",
+        older_than_seconds: float | None = 24 * 60 * 60,
+        dry_run: bool = False,
+    ) -> list[str]:
+        """Mark stale RUNNING/QUEUED jobs as FAILED.
 
         A process killed mid-job leaves rows stuck in those states forever —
-        the worker that owned them is gone but the DB doesn't know. Returns
-        the IDs that were swept so callers can log them.
+        the worker that owned them is gone but the DB doesn't know. The stale
+        age guard keeps recovery from failing a newly detached worker that has
+        not yet updated its status. Returns the matching IDs; with ``dry_run``
+        no rows are changed.
         """
+        if older_than_seconds is not None and older_than_seconds < 0:
+            raise ValueError("older_than_seconds must be >= 0")
+        cutoff = None
+        if older_than_seconds is not None:
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=older_than_seconds)).isoformat()
+
         with self.connect() as conn:
+            filters = ["status IN (?, ?)"]
+            values: list[Any] = [JobStatus.RUNNING, JobStatus.QUEUED]
+            if cutoff is not None:
+                filters.append("julianday(updated_at) <= julianday(?)")
+                values.append(cutoff)
             rows = conn.execute(
-                "SELECT id FROM jobs WHERE status IN (?, ?)",
-                (JobStatus.RUNNING, JobStatus.QUEUED),
+                f"SELECT id FROM jobs WHERE {' AND '.join(filters)}",
+                values,
             ).fetchall()
             ids = [row["id"] for row in rows]
-            if not ids:
-                return []
+            if not ids or dry_run:
+                return ids
             stamp = now_iso()
             conn.executemany(
                 "UPDATE jobs SET status = ?, error = ?, updated_at = ? WHERE id = ?",

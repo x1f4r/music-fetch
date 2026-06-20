@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import typer
 import uvicorn
@@ -16,7 +17,7 @@ from .context import create_context
 from .doctor import run_doctor
 from .eval import run_evaluation_manifest
 from .installer import install_dependencies
-from .models import AnalysisMode, JobCreate, JobOptions, ProviderName, RecallProfile
+from .models import AnalysisMode, JobCreate, JobOptions, JobStatus, ProviderName, RecallProfile
 from .tui import launch_tui
 
 app = typer.Typer(help="Music Fetch CLI")
@@ -25,6 +26,13 @@ storage_app = typer.Typer(help="Artifact and storage management")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(storage_app, name="storage")
 console = Console()
+TERMINAL_JOB_STATUSES = {
+    JobStatus.SUCCEEDED.value,
+    JobStatus.PARTIAL_FAILED.value,
+    JobStatus.FAILED.value,
+    JobStatus.CANCELED.value,
+}
+MIN_WATCH_INTERVAL_SECONDS = 0.05
 
 
 def _job_create(
@@ -54,6 +62,132 @@ def _job_create(
         provider_order=provider_order or JobOptions().provider_order,
     )
     return JobCreate(inputs=inputs, options=options)
+
+
+def _status_value(value: object) -> str:
+    return str(getattr(value, "value", value))
+
+
+def _job_snapshot(context, job_id: str) -> dict[str, object]:
+    job = context.db.get_job(job_id)
+    if not job:
+        raise typer.BadParameter(f"Unknown job: {job_id}")
+    return {
+        "job": job.model_dump(),
+        "items": [item.model_dump() for item in context.db.get_source_items(job_id)],
+        "segments": [segment.model_dump() for segment in context.db.get_segments(job_id)],
+        "events": [event.model_dump() for event in context.db.list_events(job_id)],
+    }
+
+
+def _format_time_range(start_ms: object, end_ms: object) -> str:
+    if start_ms is None or end_ms is None:
+        return "-"
+    return f"{int(start_ms) / 1000:.1f}s - {int(end_ms) / 1000:.1f}s"
+
+
+def _format_track(segment: dict[str, object]) -> str:
+    track = segment.get("track")
+    if isinstance(track, dict) and track:
+        title = track.get("title") or "Unknown title"
+        artist = track.get("artist") or "Unknown artist"
+        return f"{artist} - {title}"
+    return _status_value(segment.get("kind", "-")).replace("_", " ")
+
+
+def _format_confidence(value: object) -> str:
+    if value is None:
+        return "-"
+    return f"{float(value):.2f}"
+
+
+def _print_job_snapshot(payload: dict[str, object]) -> None:
+    job = payload["job"]
+    assert isinstance(job, dict)
+    items = payload["items"]
+    segments = payload["segments"]
+    events = payload["events"]
+    assert isinstance(items, list)
+    assert isinstance(segments, list)
+    assert isinstance(events, list)
+
+    console.print(f"[bold]Job {job.get('id', '')}[/bold]")
+    console.print(f"Status: {_status_value(job.get('status'))}")
+    console.print(f"Created: {job.get('created_at', '-')}")
+    console.print(f"Updated: {job.get('updated_at', '-')}")
+    console.print(f"Inputs: {len(job.get('inputs') or [])}")
+    console.print(f"Items: {len(items)}")
+    console.print(f"Segments: {len(segments)}")
+    console.print(f"Events: {len(events)}")
+    if job.get("error"):
+        console.print(f"[red]Error:[/red] {job['error']}")
+
+    input_values = job.get("inputs") or []
+    if input_values:
+        console.print("\n[bold]Inputs[/bold]")
+        for value in input_values:
+            console.print(f"- {value}")
+
+    if items:
+        table = Table(title="Items")
+        table.add_column("Status")
+        table.add_column("Kind")
+        table.add_column("Title / Input")
+        table.add_column("Error")
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            title = metadata.get("title") if isinstance(metadata, dict) else None
+            table.add_row(
+                _status_value(item.get("status")),
+                _status_value(item.get("kind")),
+                str(title or item.get("input_value") or "-"),
+                str(item.get("error") or ""),
+            )
+        console.print(table)
+
+    if segments:
+        table = Table(title="Segments")
+        table.add_column("Range")
+        table.add_column("Result")
+        table.add_column("Confidence")
+        table.add_column("Providers")
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            providers = segment.get("providers") or []
+            table.add_row(
+                _format_time_range(segment.get("start_ms"), segment.get("end_ms")),
+                _format_track(segment),
+                _format_confidence(segment.get("confidence")),
+                ", ".join(_status_value(provider) for provider in providers) if isinstance(providers, list) else "-",
+            )
+        console.print(table)
+
+    if events:
+        table = Table(title="Events")
+        table.add_column("ID")
+        table.add_column("Time")
+        table.add_column("Level")
+        table.add_column("Message")
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            table.add_row(
+                str(event.get("id", "")),
+                str(event.get("created_at", "")),
+                str(event.get("level", "")),
+                str(event.get("message", "")),
+            )
+        console.print(table)
+
+
+def _event_id(event: dict[str, object]) -> int:
+    try:
+        return int(event.get("id") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 @app.command()
@@ -265,21 +399,157 @@ def library_prune_zombies(json_output: bool = typer.Option(False, "--json")) -> 
 
 
 @app.command("job")
-def show_job(job_id: str, json_output: bool = typer.Option(False, "--json")) -> None:
-    context = create_context()
-    job = context.db.get_job(job_id)
-    if not job:
-        raise typer.BadParameter(f"Unknown job: {job_id}")
+def show_job(
+    job_id: str,
+    json_output: bool = typer.Option(False, "--json"),
+    human: bool = typer.Option(False, "--human"),
+) -> None:
+    if json_output and human:
+        raise typer.BadParameter("Use either --json or --human, not both")
+    context = create_context(recover_orphans=False)
+    payload = _job_snapshot(context, job_id)
+    if human:
+        _print_job_snapshot(payload)
+        return
+    console.print_json(json.dumps(payload))
+
+
+@app.command("jobs")
+def list_jobs(
+    limit: int = typer.Option(20, "--limit"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    if limit < 1:
+        raise typer.BadParameter("--limit must be at least 1")
+    context = create_context(recover_orphans=False)
+    jobs = context.db.list_jobs(limit=limit)
+    payload = [job.model_dump() for job in jobs]
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    if not payload:
+        console.print("No jobs found.")
+        return
+    table = Table(title="Recent Jobs")
+    table.add_column("Created")
+    table.add_column("Updated")
+    table.add_column("Status")
+    table.add_column("Inputs")
+    table.add_column("Job ID")
+    table.add_column("Error")
+    for job in payload:
+        table.add_row(
+            str(job.get("created_at", "")),
+            str(job.get("updated_at", "")),
+            _status_value(job.get("status")),
+            str(len(job.get("inputs") or [])),
+            str(job.get("id", "")),
+            str(job.get("error") or ""),
+        )
+    console.print(table)
+
+
+@app.command("recover-jobs")
+def recover_jobs(
+    older_than: float = typer.Option(24 * 60 * 60, "--older-than"),
+    apply_changes: bool = typer.Option(False, "--apply"),
+    reason: str = typer.Option("Marked stale by music-fetch recover-jobs"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    if older_than < 0:
+        raise typer.BadParameter("--older-than must be >= 0")
+    context = create_context(recover_orphans=False)
+    job_ids = context.db.sweep_orphan_running_jobs(
+        reason=reason,
+        older_than_seconds=older_than,
+        dry_run=not apply_changes,
+    )
     payload = {
-        "job": job.model_dump(),
-        "items": [item.model_dump() for item in context.db.get_source_items(job_id)],
-        "segments": [segment.model_dump() for segment in context.db.get_segments(job_id)],
-        "events": [event.model_dump() for event in context.db.list_events(job_id)],
+        "job_ids": job_ids,
+        "count": len(job_ids),
+        "dry_run": not apply_changes,
+        "older_than_seconds": older_than,
     }
     if json_output:
         console.print_json(json.dumps(payload))
         return
-    console.print_json(json.dumps(payload))
+    action = "Recovered" if apply_changes else "Would recover"
+    console.print(f"{action} {len(job_ids)} stale active job(s).")
+    for job_id in job_ids:
+        console.print(f"- {job_id}")
+    if job_ids and not apply_changes:
+        console.print("Run again with --apply to mark these jobs failed.")
+
+
+@app.command("watch")
+def watch_job(
+    job_id: str,
+    json_output: bool = typer.Option(False, "--json"),
+    interval: float = typer.Option(2.0, "--interval"),
+    timeout: float | None = typer.Option(None, "--timeout"),
+) -> None:
+    if interval < MIN_WATCH_INTERVAL_SECONDS:
+        raise typer.BadParameter(f"--interval must be >= {MIN_WATCH_INTERVAL_SECONDS:g}")
+    if timeout is not None and timeout < 0:
+        raise typer.BadParameter("--timeout must be >= 0")
+
+    context = create_context(recover_orphans=False)
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    last_status: str | None = None
+    last_event_id = 0
+    payload: dict[str, object] | None = None
+    status = ""
+    timed_out = False
+
+    while True:
+        job_model = context.db.get_job(job_id)
+        if not job_model:
+            raise typer.BadParameter(f"Unknown job: {job_id}")
+        job = job_model.model_dump()
+        events = [event.model_dump() for event in context.db.list_events(job_id, after_id=last_event_id)]
+        status = _status_value(job.get("status"))
+
+        if not json_output:
+            if status != last_status:
+                console.print(f"{job_id}: {status}")
+            for event in events:
+                if not isinstance(event, dict) or _event_id(event) <= last_event_id:
+                    continue
+                console.print(
+                    f"{event.get('created_at', '')} [{event.get('level', '')}] {event.get('message', '')}"
+                )
+
+        last_status = status
+        for event in events:
+            if isinstance(event, dict):
+                last_event_id = max(last_event_id, _event_id(event))
+
+        if status in TERMINAL_JOB_STATUSES:
+            payload = _job_snapshot(context, job_id)
+            break
+
+        now = time.monotonic()
+        if deadline is not None and now >= deadline:
+            timed_out = True
+            payload = _job_snapshot(context, job_id)
+            break
+
+        sleep_for = interval
+        if deadline is not None:
+            sleep_for = min(sleep_for, max(0.0, deadline - now))
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+
+    if payload is not None and json_output:
+        if timed_out:
+            payload = {**payload, "timed_out": True}
+        console.print_json(json.dumps(payload))
+    elif timed_out:
+        console.print(f"[yellow]Timed out waiting for {job_id} after {timeout:.1f}s.[/yellow]")
+
+    if timed_out:
+        raise typer.Exit(code=2)
+    raise typer.Exit(code=1 if status in {JobStatus.FAILED.value, JobStatus.CANCELED.value} else 0)
 
 
 @app.command("retry")

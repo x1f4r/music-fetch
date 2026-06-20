@@ -52,6 +52,21 @@ music-fetch analyze "https://youtube.com/shorts/-OvmHgojXLw"
 music-fetch analyze ~/Downloads/example.mp4 --json
 ```
 
+Run a detached job, then inspect or follow it:
+
+```bash
+music-fetch submit "https://youtube.com/shorts/-OvmHgojXLw"
+music-fetch jobs
+music-fetch job <job-id> --human
+music-fetch watch <job-id>
+```
+
+`music-fetch job <job-id>` remains JSON by default for scripts. `watch` exits `0`
+for `succeeded` and `partial_failed`, `1` for `failed` or `canceled`, and `2`
+on timeout. If a detached worker dies and leaves an old job stuck in
+`queued`/`running`, preview recovery with `music-fetch recover-jobs`, then mark
+matching stale jobs failed with `music-fetch recover-jobs --apply`.
+
 Run the local API:
 
 ```bash

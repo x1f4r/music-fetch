@@ -6,7 +6,7 @@ Each test targets a footgun fixed in that pass:
 * Subprocess timeout + SIGKILL escalation
 * SSRF blocking in the direct-HTTP downloader
 * Upload size cap
-* Orphan RUNNING/QUEUED job sweep on startup
+* Opt-in orphan RUNNING/QUEUED job recovery
 * Bulk delete batching with async artifact cleanup
 * Defensive provider response parsing
 * Cancellation status-write race
@@ -243,7 +243,7 @@ def test_upload_endpoint_rejects_oversized_body(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Orphan job sweep on startup
+# Orphan job recovery
 # ---------------------------------------------------------------------------
 
 
@@ -256,17 +256,23 @@ def test_sweep_orphan_running_jobs_marks_stuck_rows(tmp_path: Path) -> None:
     """
     settings = Settings(base_dir=str(tmp_path), max_workers=1)
     db = Database(settings.db_path)
+    stale_timestamp = "2000-01-01T00:00:00+00:00"
     # Seed a RUNNING and a QUEUED row directly — simulates a crash mid-flight.
     with db.connect() as conn:
         conn.execute(
             "INSERT INTO jobs (id, status, created_at, updated_at, inputs_json, options_json, error, cancel_requested) "
-            "VALUES (?, ?, datetime('now'), datetime('now'), '[]', '{}', NULL, 0)",
-            ("run-1", JobStatus.RUNNING),
+            "VALUES (?, ?, ?, ?, '[]', '{}', NULL, 0)",
+            ("run-1", JobStatus.RUNNING, stale_timestamp, stale_timestamp),
+        )
+        conn.execute(
+            "INSERT INTO jobs (id, status, created_at, updated_at, inputs_json, options_json, error, cancel_requested) "
+            "VALUES (?, ?, ?, ?, '[]', '{}', NULL, 0)",
+            ("queue-1", JobStatus.QUEUED, stale_timestamp, stale_timestamp),
         )
         conn.execute(
             "INSERT INTO jobs (id, status, created_at, updated_at, inputs_json, options_json, error, cancel_requested) "
             "VALUES (?, ?, datetime('now'), datetime('now'), '[]', '{}', NULL, 0)",
-            ("queue-1", JobStatus.QUEUED),
+            ("fresh-1", JobStatus.RUNNING),
         )
         conn.execute(
             "INSERT INTO jobs (id, status, created_at, updated_at, inputs_json, options_json, error, cancel_requested) "
@@ -275,15 +281,17 @@ def test_sweep_orphan_running_jobs_marks_stuck_rows(tmp_path: Path) -> None:
         )
         conn.commit()
 
-    swept = db.sweep_orphan_running_jobs(reason="restarted")
+    swept = db.sweep_orphan_running_jobs(reason="restarted", older_than_seconds=60)
     assert set(swept) == {"run-1", "queue-1"}
     # Already-terminal jobs are left alone.
     assert db.get_job("done-1").status == JobStatus.SUCCEEDED
+    # Fresh active jobs are not assumed orphaned.
+    assert db.get_job("fresh-1").status == JobStatus.RUNNING
     assert db.get_job("run-1").status == JobStatus.FAILED
     assert db.get_job("run-1").error == "restarted"
 
 
-def test_jobmanager_sweeps_on_construction(tmp_path: Path) -> None:
+def test_jobmanager_does_not_sweep_on_default_construction(tmp_path: Path) -> None:
     settings = Settings(base_dir=str(tmp_path), max_workers=1)
     db = Database(settings.db_path)
     with db.connect() as conn:
@@ -294,6 +302,37 @@ def test_jobmanager_sweeps_on_construction(tmp_path: Path) -> None:
         )
         conn.commit()
     JobManager(settings, db)
+    assert db.get_job("stuck-1").status == JobStatus.RUNNING
+
+
+def test_sweep_orphan_running_jobs_dry_run_preserves_rows(tmp_path: Path) -> None:
+    settings = Settings(base_dir=str(tmp_path), max_workers=1)
+    db = Database(settings.db_path)
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, status, created_at, updated_at, inputs_json, options_json, error, cancel_requested) "
+            "VALUES (?, ?, ?, ?, '[]', '{}', NULL, 0)",
+            ("stuck-1", JobStatus.RUNNING, "2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    swept = db.sweep_orphan_running_jobs(older_than_seconds=60, dry_run=True)
+
+    assert swept == ["stuck-1"]
+    assert db.get_job("stuck-1").status == JobStatus.RUNNING
+
+
+def test_jobmanager_sweeps_when_recovery_requested(tmp_path: Path) -> None:
+    settings = Settings(base_dir=str(tmp_path), max_workers=1)
+    db = Database(settings.db_path)
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, status, created_at, updated_at, inputs_json, options_json, error, cancel_requested) "
+            "VALUES (?, ?, ?, ?, '[]', '{}', NULL, 0)",
+            ("stuck-1", JobStatus.RUNNING, "2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00"),
+        )
+        conn.commit()
+    JobManager(settings, db, recover_orphans=True)
     assert db.get_job("stuck-1").status == JobStatus.FAILED
 
 
