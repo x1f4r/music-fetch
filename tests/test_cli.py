@@ -56,6 +56,11 @@ class DummyDb:
                 "created_at": "2026-06-20T10:00:00+00:00",
                 "updated_at": "2026-06-20T10:01:00+00:00",
                 "inputs": ["https://example.com/test"],
+                "options": {
+                    "max_provider_calls": 420,
+                    "budget_autoscale": True,
+                    "provider_order": ["local_catalog", "vibra", "audd", "acrcloud"],
+                },
                 "error": None,
             }
         )
@@ -133,6 +138,113 @@ class DummyDb:
         self.sweep_payload = payload
         return ["job-stale"]
 
+    def list_recognition_metrics(self, job_id):
+        return [
+            DumpModel(
+                {
+                    "id": "metric-1",
+                    "job_id": job_id,
+                    "source_item_id": "item-1",
+                    "provider_name": "vibra",
+                    "cache_hit": False,
+                    "matched": True,
+                    "call_count": 1,
+                    "matched_segments": 1,
+                    "unresolved_segments": 0,
+                    "elapsed_ms": 120,
+                    "gate_g1_hits": 1,
+                    "gate_g2_hits": 0,
+                    "gate_g3_hits": 0,
+                    "gate_g4_hits": 0,
+                    "gate_g5_hits": 0,
+                    "payload": {
+                        "metric_type": "provider_attempt",
+                        "outcome": "provider_call_matched",
+                        "provider_call_attempted": True,
+                        "budget_consumed": 1,
+                        "budget_exhausted": False,
+                    },
+                    "created_at": "2026-06-20T10:02:00+00:00",
+                }
+            ),
+            DumpModel(
+                {
+                    "id": "metric-2",
+                    "job_id": job_id,
+                    "source_item_id": "item-1",
+                    "provider_name": "audd",
+                    "cache_hit": True,
+                    "matched": False,
+                    "call_count": 0,
+                    "matched_segments": 0,
+                    "unresolved_segments": 0,
+                    "elapsed_ms": 20,
+                    "payload": {
+                        "metric_type": "provider_attempt",
+                        "outcome": "cache_hit_empty",
+                        "provider_call_attempted": False,
+                        "budget_consumed": 0,
+                        "budget_exhausted": False,
+                    },
+                    "created_at": "2026-06-20T10:02:01+00:00",
+                }
+            ),
+            DumpModel(
+                {
+                    "id": "metric-3",
+                    "job_id": job_id,
+                    "source_item_id": "item-1",
+                    "provider_name": "acrcloud",
+                    "cache_hit": False,
+                    "matched": False,
+                    "call_count": 0,
+                    "matched_segments": 0,
+                    "unresolved_segments": 0,
+                    "elapsed_ms": 0,
+                    "payload": {
+                        "metric_type": "provider_attempt",
+                        "outcome": "budget_exhausted",
+                        "provider_call_attempted": False,
+                        "budget_consumed": 0,
+                        "budget_exhausted": True,
+                    },
+                    "created_at": "2026-06-20T10:02:02+00:00",
+                }
+            ),
+            DumpModel(
+                {
+                    "id": "metric-4",
+                    "job_id": job_id,
+                    "source_item_id": "item-1",
+                    "provider_name": None,
+                    "cache_hit": False,
+                    "matched": False,
+                    "call_count": 0,
+                    "matched_segments": 0,
+                    "unresolved_segments": 0,
+                    "elapsed_ms": 0,
+                    "payload": {"metric_type": "provider_decision", "outcome": "prefer_free_skip"},
+                    "created_at": "2026-06-20T10:02:03+00:00",
+                }
+            ),
+            DumpModel(
+                {
+                    "id": "metric-5",
+                    "job_id": job_id,
+                    "source_item_id": None,
+                    "provider_name": None,
+                    "cache_hit": False,
+                    "matched": False,
+                    "call_count": 0,
+                    "matched_segments": 0,
+                    "unresolved_segments": 0,
+                    "elapsed_ms": 0,
+                    "payload": {},
+                    "created_at": "2026-06-20T10:02:04+00:00",
+                }
+            ),
+        ]
+
 
 class WatchDb(DummyDb):
     def __init__(self) -> None:
@@ -194,6 +306,11 @@ class TimeoutWatchDb(WatchDb):
     def __init__(self) -> None:
         super().__init__()
         self.statuses = ["running"]
+
+
+class EmptyMetricsDb(DummyDb):
+    def list_recognition_metrics(self, job_id):
+        return []
 
 
 class DummyContext:
@@ -269,6 +386,78 @@ def test_jobs_lists_recent_jobs(monkeypatch) -> None:
     assert "job-1" in result.stdout
     assert "job-2" in result.stdout
     assert "succeeded" in result.stdout
+
+
+def test_metrics_json_summarizes_provider_ledger(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1", "--json"])
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == 1
+    assert payload["job_id"] == "job-1"
+    assert payload["job"]["status"] == "queued"
+    assert payload["job"]["max_provider_calls"] == 420
+    assert payload["job"]["provider_order"] == ["local_catalog", "vibra", "audd", "acrcloud"]
+    assert len(payload["metrics"]) == 5
+    totals = payload["summary"]["totals"]
+    assert totals["metrics"] == 5
+    assert totals["provider_calls"] == 1
+    assert totals["provider_call_attempts"] == 1
+    assert totals["cache_hits"] == 1
+    assert totals["matched_metrics"] == 1
+    assert totals["budget_consumed"] == 1
+    assert totals["budget_exhausted"] == 1
+    assert payload["summary"]["outcomes"]["provider_call_matched"] == 1
+    assert payload["summary"]["outcomes"]["cache_hit_empty"] == 1
+    assert payload["summary"]["outcomes"]["budget_exhausted"] == 1
+    assert payload["summary"]["outcomes"]["prefer_free_skip"] == 1
+    assert payload["summary"]["outcomes"]["unknown"] == 1
+    assert payload["summary"]["metric_types"]["unknown"] == 1
+    providers = {provider["provider"]: provider for provider in payload["summary"]["providers"]}
+    assert providers["job"]["metrics"] == 2
+    assert providers["vibra"]["provider_calls"] == 1
+
+
+def test_metrics_human_output_highlights_providers(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1"])
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    assert "Recognition metrics for job-1" in result.stdout
+    assert "provider_call_matched" in result.stdout
+    assert "budget_exhausted" in result.stdout
+    assert "Max provider calls: 420" in result.stdout
+    assert "vibra" in result.stdout
+    assert "job" in result.stdout
+
+
+def test_metrics_handles_jobs_without_metrics(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext(db=EmptyMetricsDb()))
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1"])
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    assert "No recognition metrics found." in result.stdout
+
+
+def test_metrics_unknown_job_exits_with_error(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "missing", "--json"])
+
+    assert result.exit_code != 0
+    assert calls == [{"recover_orphans": False}]
+    assert "Unknown job: missing" in result.output
 
 
 def test_recover_jobs_dry_run_is_guarded(monkeypatch) -> None:

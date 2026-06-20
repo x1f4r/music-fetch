@@ -59,13 +59,17 @@ music-fetch submit "https://youtube.com/shorts/-OvmHgojXLw"
 music-fetch jobs
 music-fetch job <job-id> --human
 music-fetch watch <job-id>
+music-fetch metrics <job-id>
+music-fetch metrics <job-id> --json
 ```
 
 `music-fetch job <job-id>` remains JSON by default for scripts. `watch` exits `0`
 for `succeeded` and `partial_failed`, `1` for `failed` or `canceled`, and `2`
-on timeout. If a detached worker dies and leaves an old job stuck in
-`queued`/`running`, preview recovery with `music-fetch recover-jobs`, then mark
-matching stale jobs failed with `music-fetch recover-jobs --apply`.
+on timeout. `music-fetch metrics <job-id>` summarizes provider calls, cache hits,
+budget exhaustion, and recognition outcomes. If a detached worker dies and leaves
+an old job stuck in `queued`/`running`, preview recovery with
+`music-fetch recover-jobs`, then mark matching stale jobs failed with
+`music-fetch recover-jobs --apply`.
 
 Run the local API:
 

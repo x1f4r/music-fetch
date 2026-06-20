@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,14 @@ TERMINAL_JOB_STATUSES = {
     JobStatus.CANCELED.value,
 }
 MIN_WATCH_INTERVAL_SECONDS = 0.05
+METRICS_SCHEMA_VERSION = 1
+METRIC_GATE_FIELDS = (
+    "gate_g1_hits",
+    "gate_g2_hits",
+    "gate_g3_hits",
+    "gate_g4_hits",
+    "gate_g5_hits",
+)
 
 
 def _job_create(
@@ -188,6 +197,200 @@ def _event_id(event: dict[str, object]) -> int:
         return int(event.get("id") or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _model_dump(model: object) -> dict[str, object]:
+    dump = getattr(model, "model_dump")
+    try:
+        return dump(mode="json")
+    except TypeError:
+        return dump()
+
+
+def _int_value(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bool_value(value: object) -> bool:
+    return bool(value)
+
+
+def _metrics_payload(context, job_id: str) -> dict[str, object]:
+    job = context.db.get_job(job_id)
+    if not job:
+        raise typer.BadParameter(f"Unknown job: {job_id}")
+    job_payload = _model_dump(job)
+    rows = [_model_dump(metric) for metric in context.db.list_recognition_metrics(job_id)]
+    return {
+        "schema_version": METRICS_SCHEMA_VERSION,
+        "job_id": job_id,
+        "job": _metrics_job_context(job_payload),
+        "summary": _summarize_metrics(rows),
+        "metrics": rows,
+    }
+
+
+def _metrics_job_context(job: dict[str, object]) -> dict[str, object]:
+    options = job.get("options") if isinstance(job.get("options"), dict) else {}
+    assert isinstance(options, dict)
+    return {
+        "id": job.get("id"),
+        "status": _status_value(job.get("status")),
+        "created_at": job.get("created_at"),
+        "updated_at": job.get("updated_at"),
+        "max_provider_calls": options.get("max_provider_calls"),
+        "budget_autoscale": options.get("budget_autoscale"),
+        "provider_order": options.get("provider_order") or [],
+    }
+
+
+def _summarize_metrics(rows: list[dict[str, object]]) -> dict[str, object]:
+    outcomes: Counter[str] = Counter()
+    metric_types: Counter[str] = Counter()
+    providers: dict[str, dict[str, object]] = {}
+    gate_hits = {field: 0 for field in METRIC_GATE_FIELDS}
+    totals = {
+        "metrics": 0,
+        "provider_calls": 0,
+        "provider_call_attempts": 0,
+        "cache_hits": 0,
+        "matched_metrics": 0,
+        "budget_consumed": 0,
+        "budget_exhausted": 0,
+        "elapsed_ms": 0,
+        "matched_segments": 0,
+        "unresolved_segments": 0,
+    }
+    for row in rows:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        assert isinstance(payload, dict)
+        provider = _status_value(row.get("provider_name") or "job")
+        provider_summary = providers.setdefault(
+            provider,
+            {
+                "provider": provider,
+                "metrics": 0,
+                "provider_calls": 0,
+                "provider_call_attempts": 0,
+                "cache_hits": 0,
+                "matched_metrics": 0,
+                "budget_consumed": 0,
+                "budget_exhausted": 0,
+                "elapsed_ms": 0,
+                "outcomes": {},
+            },
+        )
+
+        outcome = str(payload.get("outcome") or "unknown")
+        metric_type = str(payload.get("metric_type") or "unknown")
+        outcomes[outcome] += 1
+        metric_types[metric_type] += 1
+
+        call_count = _int_value(row.get("call_count"))
+        budget_consumed = _int_value(payload.get("budget_consumed"))
+        budget_exhausted = _bool_value(payload.get("budget_exhausted")) or outcome == "budget_exhausted"
+        provider_call_attempted = _bool_value(payload.get("provider_call_attempted"))
+        cache_hit = _bool_value(row.get("cache_hit"))
+        matched = _bool_value(row.get("matched"))
+        elapsed_ms = _int_value(row.get("elapsed_ms"))
+
+        for target in (totals, provider_summary):
+            target["metrics"] = _int_value(target.get("metrics")) + 1
+            target["provider_calls"] = _int_value(target.get("provider_calls")) + call_count
+            target["provider_call_attempts"] = _int_value(target.get("provider_call_attempts")) + int(provider_call_attempted)
+            target["cache_hits"] = _int_value(target.get("cache_hits")) + int(cache_hit)
+            target["matched_metrics"] = _int_value(target.get("matched_metrics")) + int(matched)
+            target["budget_consumed"] = _int_value(target.get("budget_consumed")) + budget_consumed
+            target["budget_exhausted"] = _int_value(target.get("budget_exhausted")) + int(budget_exhausted)
+            target["elapsed_ms"] = _int_value(target.get("elapsed_ms")) + elapsed_ms
+
+        totals["matched_segments"] += _int_value(row.get("matched_segments"))
+        totals["unresolved_segments"] += _int_value(row.get("unresolved_segments"))
+        provider_outcomes = provider_summary["outcomes"]
+        assert isinstance(provider_outcomes, dict)
+        provider_outcomes[outcome] = _int_value(provider_outcomes.get(outcome)) + 1
+        for field in METRIC_GATE_FIELDS:
+            gate_hits[field] += _int_value(row.get(field))
+
+    return {
+        "totals": totals,
+        "outcomes": dict(sorted(outcomes.items())),
+        "metric_types": dict(sorted(metric_types.items())),
+        "gates": gate_hits,
+        "providers": sorted(providers.values(), key=lambda item: str(item["provider"])),
+    }
+
+
+def _print_metrics(payload: dict[str, object]) -> None:
+    summary = payload["summary"]
+    assert isinstance(summary, dict)
+    totals = summary["totals"]
+    assert isinstance(totals, dict)
+    job = payload["job"]
+    assert isinstance(job, dict)
+    console.print(f"[bold]Recognition metrics for {payload['job_id']}[/bold]")
+    console.print(
+        f"Status: {job.get('status')} | "
+        f"Max provider calls: {job.get('max_provider_calls')} | "
+        f"Budget autoscale: {job.get('budget_autoscale')}"
+    )
+    table = Table(title="Totals")
+    table.add_column("Metric")
+    table.add_column("Value")
+    for key in (
+        "metrics",
+        "provider_calls",
+        "provider_call_attempts",
+        "cache_hits",
+        "matched_metrics",
+        "budget_consumed",
+        "budget_exhausted",
+        "elapsed_ms",
+        "matched_segments",
+        "unresolved_segments",
+    ):
+        table.add_row(key.replace("_", " "), str(totals.get(key, 0)))
+    console.print(table)
+
+    providers = summary["providers"]
+    assert isinstance(providers, list)
+    if providers:
+        provider_table = Table(title="Providers")
+        provider_table.add_column("Provider")
+        provider_table.add_column("Metrics")
+        provider_table.add_column("Calls")
+        provider_table.add_column("Cache hits")
+        provider_table.add_column("Matched")
+        provider_table.add_column("Budget")
+        provider_table.add_column("Outcomes")
+        for provider in providers:
+            if not isinstance(provider, dict):
+                continue
+            provider_table.add_row(
+                str(provider.get("provider", "")),
+                str(provider.get("metrics", 0)),
+                str(provider.get("provider_calls", 0)),
+                str(provider.get("cache_hits", 0)),
+                str(provider.get("matched_metrics", 0)),
+                f"{provider.get('budget_consumed', 0)} / exhausted {provider.get('budget_exhausted', 0)}",
+                ", ".join(f"{key}:{value}" for key, value in sorted((provider.get("outcomes") or {}).items())),
+            )
+        console.print(provider_table)
+
+    outcomes = summary["outcomes"]
+    assert isinstance(outcomes, dict)
+    if outcomes:
+        outcome_table = Table(title="Outcomes")
+        outcome_table.add_column("Outcome")
+        outcome_table.add_column("Count")
+        for outcome, count in outcomes.items():
+            outcome_table.add_row(str(outcome), str(count))
+        console.print(outcome_table)
+    if not totals.get("metrics"):
+        console.print("No recognition metrics found.")
 
 
 @app.command()
@@ -447,6 +650,19 @@ def list_jobs(
             str(job.get("error") or ""),
         )
     console.print(table)
+
+
+@app.command("metrics")
+def recognition_metrics(
+    job_id: str,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    context = create_context(recover_orphans=False)
+    payload = _metrics_payload(context, job_id)
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    _print_metrics(payload)
 
 
 @app.command("recover-jobs")
