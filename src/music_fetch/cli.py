@@ -34,7 +34,7 @@ TERMINAL_JOB_STATUSES = {
     JobStatus.CANCELED.value,
 }
 MIN_WATCH_INTERVAL_SECONDS = 0.05
-METRICS_SCHEMA_VERSION = 1
+METRICS_SCHEMA_VERSION = 2
 METRIC_GATE_FIELDS = (
     "gate_g1_hits",
     "gate_g2_hits",
@@ -284,8 +284,7 @@ def _summarize_metrics(rows: list[dict[str, object]]) -> dict[str, object]:
             },
         )
 
-        outcome = str(payload.get("outcome") or "unknown")
-        metric_type = str(payload.get("metric_type") or "unknown")
+        metric_type, outcome = _metric_type_and_outcome(row, payload)
         outcomes[outcome] += 1
         metric_types[metric_type] += 1
 
@@ -322,6 +321,35 @@ def _summarize_metrics(rows: list[dict[str, object]]) -> dict[str, object]:
         "gates": gate_hits,
         "providers": sorted(providers.values(), key=lambda item: str(item["provider"])),
     }
+
+
+def _metric_type_and_outcome(row: dict[str, object], payload: dict[str, object]) -> tuple[str, str]:
+    metric_type = str(payload.get("metric_type") or "")
+    outcome = str(payload.get("outcome") or "")
+    if metric_type or outcome:
+        return metric_type or "unknown", outcome or "unknown"
+    if _looks_like_item_summary_metric(row, payload):
+        return "item_summary", "item_summary"
+    return "unknown", "unknown"
+
+
+def _looks_like_item_summary_metric(row: dict[str, object], payload: dict[str, object]) -> bool:
+    if row.get("provider_name") is not None or _int_value(row.get("call_count")) != 0:
+        return False
+    if row.get("source_item_id") is None:
+        return False
+    if "segment_count" in payload:
+        return True
+    summary_counters = (
+        "matched_segments",
+        "unresolved_segments",
+        "segments_merged",
+        "segments_bridged_across_speech",
+        "repeat_group_reconfirmed",
+        "repeat_group_rejected",
+        *METRIC_GATE_FIELDS,
+    )
+    return any(_int_value(payload.get(field) if field == "segment_count" else row.get(field)) for field in summary_counters)
 
 
 def _print_metrics(payload: dict[str, object]) -> None:

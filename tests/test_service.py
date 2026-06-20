@@ -167,6 +167,14 @@ def test_job_manager_runs_local_file(monkeypatch, app_env, tmp_path: Path) -> No
     assert len(segments) == 1
     assert segments[0].track.title == "ACIDO III (Super Slowed)"
     assert segments[0].provider_attempts == 1
+    item_summary = next(
+        metric
+        for metric in db.list_recognition_metrics(job.id)
+        if metric.provider_name is None and metric.source_item_id is not None
+    )
+    assert item_summary.payload["metric_type"] == "item_summary"
+    assert item_summary.payload["outcome"] == "item_summary"
+    assert item_summary.payload["segment_count"] == 1
 
 
 def test_run_existing_job_processes_created_job(monkeypatch, app_env, tmp_path: Path) -> None:
