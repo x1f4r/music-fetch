@@ -14,7 +14,7 @@ import numpy as np
 
 from .config import Settings
 from .models import SourceItem, SourceKind, SourceMetadata, WindowPlan
-from .sources import download_direct_http, yt_dlp_base_args
+from .sources import _assert_safe_external_url, download_direct_http, yt_dlp_base_args
 from .utils import run_command, sha1_text
 
 
@@ -80,9 +80,11 @@ def yt_dlp_download_args(item: SourceItem, outtmpl: str) -> list[list[str]]:
 
     playlist_source_url = str(item.metadata.extra.get("playlist_source_url") or "").strip()
     if playlist_source_url and item.metadata.entry_index:
+        _assert_safe_external_url(playlist_source_url)
         commands.append(base + ["--playlist-items", str(item.metadata.entry_index), playlist_source_url])
 
     if item.download_url:
+        _assert_safe_external_url(item.download_url)
         commands.append(base + ["--no-playlist", item.download_url])
 
     deduped: list[list[str]] = []

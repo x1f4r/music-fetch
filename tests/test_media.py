@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from music_fetch.media import (
     FingerprintChunk,
     SourceProfile,
@@ -11,6 +13,7 @@ from music_fetch.media import (
     yt_dlp_download_args,
 )
 from music_fetch.models import ItemStatus, SourceItem, SourceKind, SourceMetadata
+from music_fetch.sources import UnsafeURLError
 
 
 def test_classify_source_prefers_long_mix_for_long_files() -> None:
@@ -110,3 +113,37 @@ def test_yt_dlp_download_args_prefer_playlist_context_before_direct_item() -> No
     commands = yt_dlp_download_args(item, "/tmp/%(id)s.%(ext)s")
     assert commands[0][-3:] == ["--playlist-items", "7", "https://music.youtube.com/playlist?list=PL123"]
     assert commands[1][-2:] == ["--no-playlist", "https://music.youtube.com/watch?v=abc123&list=PL123"]
+
+
+def test_yt_dlp_download_args_reject_private_direct_download_url() -> None:
+    item = SourceItem(
+        id="item-1",
+        job_id="job-1",
+        input_value="https://example.com/watch",
+        kind=SourceKind.YT_DLP,
+        status=ItemStatus.QUEUED,
+        metadata=SourceMetadata(),
+        download_url="http://169.254.169.254/latest/meta-data/",
+    )
+
+    with pytest.raises(UnsafeURLError):
+        yt_dlp_download_args(item, "/tmp/%(id)s.%(ext)s")
+
+
+def test_yt_dlp_download_args_reject_private_playlist_source_url() -> None:
+    item = SourceItem(
+        id="item-1",
+        job_id="job-1",
+        input_value="https://example.com/playlist",
+        kind=SourceKind.YT_DLP,
+        status=ItemStatus.QUEUED,
+        metadata=SourceMetadata(
+            playlist_id="PL123",
+            entry_index=7,
+            extra={"playlist_source_url": "http://169.254.169.254/latest/meta-data/"},
+        ),
+        download_url="https://music.youtube.com/watch?v=abc123&list=PL123",
+    )
+
+    with pytest.raises(UnsafeURLError):
+        yt_dlp_download_args(item, "/tmp/%(id)s.%(ext)s")
