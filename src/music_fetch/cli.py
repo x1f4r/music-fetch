@@ -218,19 +218,42 @@ def _bool_value(value: object) -> bool:
     return bool(value)
 
 
-def _metrics_payload(context, job_id: str) -> dict[str, object]:
+def _metrics_payload(
+    context,
+    job_id: str,
+    *,
+    provider_filters: list[str] | None = None,
+    outcome_filters: list[str] | None = None,
+    metric_type_filters: list[str] | None = None,
+    source_item_id: str | None = None,
+    matched: bool | None = None,
+    cache_hit: bool | None = None,
+    summary_only: bool = False,
+) -> dict[str, object]:
     job = context.db.get_job(job_id)
     if not job:
         raise typer.BadParameter(f"Unknown job: {job_id}")
     job_payload = _model_dump(job)
-    rows = [_model_dump(metric) for metric in context.db.list_recognition_metrics(job_id)]
-    return {
+    filters = _metric_filters(
+        providers=provider_filters,
+        outcomes=outcome_filters,
+        metric_types=metric_type_filters,
+        source_item_id=source_item_id,
+        matched=matched,
+        cache_hit=cache_hit,
+    )
+    rows = _filter_metrics([_model_dump(metric) for metric in context.db.list_recognition_metrics(job_id)], filters)
+    payload = {
         "schema_version": METRICS_SCHEMA_VERSION,
         "job_id": job_id,
         "job": _metrics_job_context(job_payload),
         "summary": _summarize_metrics(rows),
-        "metrics": rows,
     }
+    if filters:
+        payload["filters"] = filters
+    if not summary_only:
+        payload["metrics"] = rows
+    return payload
 
 
 def _metrics_job_context(job: dict[str, object]) -> dict[str, object]:
@@ -323,6 +346,68 @@ def _summarize_metrics(rows: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def _metric_filters(
+    *,
+    providers: list[str] | None,
+    outcomes: list[str] | None,
+    metric_types: list[str] | None,
+    source_item_id: str | None,
+    matched: bool | None,
+    cache_hit: bool | None,
+) -> dict[str, object]:
+    filters: dict[str, object] = {}
+    provider_values = _normalize_filter_values(providers)
+    outcome_values = _normalize_filter_values(outcomes)
+    metric_type_values = _normalize_filter_values(metric_types)
+    if provider_values:
+        filters["providers"] = provider_values
+    if outcome_values:
+        filters["outcomes"] = outcome_values
+    if metric_type_values:
+        filters["metric_types"] = metric_type_values
+    if source_item_id:
+        filters["source_item_id"] = source_item_id
+    if matched is not None:
+        filters["matched"] = matched
+    if cache_hit is not None:
+        filters["cache_hit"] = cache_hit
+    return filters
+
+
+def _normalize_filter_values(values: list[str] | None) -> list[str]:
+    normalized = sorted({value.strip().lower() for value in values or [] if value.strip()})
+    return normalized
+
+
+def _filter_metrics(rows: list[dict[str, object]], filters: dict[str, object]) -> list[dict[str, object]]:
+    providers = set(filters["providers"]) if isinstance(filters.get("providers"), list) else set()
+    outcomes = set(filters["outcomes"]) if isinstance(filters.get("outcomes"), list) else set()
+    metric_types = set(filters["metric_types"]) if isinstance(filters.get("metric_types"), list) else set()
+    source_item_id = filters.get("source_item_id")
+    matched_filter = filters.get("matched")
+    cache_hit_filter = filters.get("cache_hit")
+    filtered: list[dict[str, object]] = []
+    for row in rows:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        assert isinstance(payload, dict)
+        metric_type, outcome = _metric_type_and_outcome(row, payload)
+        provider = _status_value(row.get("provider_name") or "job").lower()
+        if providers and provider not in providers:
+            continue
+        if outcomes and outcome.lower() not in outcomes:
+            continue
+        if metric_types and metric_type.lower() not in metric_types:
+            continue
+        if source_item_id and row.get("source_item_id") != source_item_id:
+            continue
+        if matched_filter is not None and _bool_value(row.get("matched")) != matched_filter:
+            continue
+        if cache_hit_filter is not None and _bool_value(row.get("cache_hit")) != cache_hit_filter:
+            continue
+        filtered.append(row)
+    return filtered
+
+
 def _metric_type_and_outcome(row: dict[str, object], payload: dict[str, object]) -> tuple[str, str]:
     metric_type = str(payload.get("metric_type") or "")
     outcome = str(payload.get("outcome") or "")
@@ -365,6 +450,19 @@ def _print_metrics(payload: dict[str, object]) -> None:
         f"Max provider calls: {job.get('max_provider_calls')} | "
         f"Budget autoscale: {job.get('budget_autoscale')}"
     )
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    if filters:
+        rendered_filters = []
+        for key in ("providers", "outcomes", "metric_types"):
+            value = filters.get(key)
+            if isinstance(value, list) and value:
+                rendered_filters.append(f"{key}: {', '.join(str(item) for item in value)}")
+        if filters.get("source_item_id"):
+            rendered_filters.append(f"source_item_id: {filters['source_item_id']}")
+        for key in ("matched", "cache_hit"):
+            if key in filters:
+                rendered_filters.append(f"{key}: {str(filters[key]).lower()}")
+        console.print(f"Filters: {' | '.join(rendered_filters)}")
     table = Table(title="Totals")
     table.add_column("Metric")
     table.add_column("Value")
@@ -418,7 +516,10 @@ def _print_metrics(payload: dict[str, object]) -> None:
             outcome_table.add_row(str(outcome), str(count))
         console.print(outcome_table)
     if not totals.get("metrics"):
-        console.print("No recognition metrics found.")
+        if filters:
+            console.print("No recognition metrics match the active filters.")
+        else:
+            console.print("No recognition metrics found.")
 
 
 @app.command()
@@ -684,9 +785,28 @@ def list_jobs(
 def recognition_metrics(
     job_id: str,
     json_output: bool = typer.Option(False, "--json"),
+    provider: list[str] | None = typer.Option(None, "--provider"),
+    outcome: list[str] | None = typer.Option(None, "--outcome"),
+    metric_type: list[str] | None = typer.Option(None, "--metric-type"),
+    source_item_id: str | None = typer.Option(None, "--source-item-id"),
+    matched: bool | None = typer.Option(None, "--matched/--unmatched"),
+    cache_hit: bool | None = typer.Option(None, "--cache-hit/--cache-miss"),
+    summary_only: bool = typer.Option(False, "--summary-only"),
 ) -> None:
+    if summary_only and not json_output:
+        raise typer.BadParameter("--summary-only requires --json")
     context = create_context(recover_orphans=False)
-    payload = _metrics_payload(context, job_id)
+    payload = _metrics_payload(
+        context,
+        job_id,
+        provider_filters=provider,
+        outcome_filters=outcome,
+        metric_type_filters=metric_type,
+        source_item_id=source_item_id,
+        matched=matched,
+        cache_hit=cache_hit,
+        summary_only=summary_only,
+    )
     if json_output:
         console.print_json(json.dumps(payload))
         return
