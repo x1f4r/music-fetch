@@ -343,6 +343,9 @@ class RecognitionMetric(BaseModel):
         if metric_type == "provider_decision":
             self._validate_provider_decision_payload()
             return self
+        if metric_type == "item_summary":
+            self._validate_item_summary_payload()
+            return self
         raise ValueError(f"Unknown recognition metric_type: {metric_type}")
 
     def _validate_provider_attempt_payload(self) -> None:
@@ -436,6 +439,18 @@ class RecognitionMetric(BaseModel):
                 raise ValueError("budget_exhausted provider_decision metrics must mark budget_exhausted")
         elif self.payload["budget_exhausted"]:
             raise ValueError(f"{outcome} provider_decision metrics must not mark budget_exhausted")
+
+    def _validate_item_summary_payload(self) -> None:
+        self._require_payload_keys({"metric_type", "outcome", "segment_count"})
+        if self.payload["outcome"] != "item_summary":
+            raise ValueError("item_summary metrics must use outcome=item_summary")
+        self._require_int("segment_count")
+        if self.payload["segment_count"] < 0:
+            raise ValueError("item_summary segment_count must be >= 0")
+        if self.source_item_id is None:
+            raise ValueError("item_summary metrics must be tied to a source item")
+        if self.provider_name is not None or self.cache_hit or self.matched or self.call_count != 0:
+            raise ValueError("item_summary metrics must not be provider-specific or count provider calls")
 
     def _require_payload_keys(self, keys: set[str]) -> None:
         missing = sorted(key for key in keys if key not in self.payload)

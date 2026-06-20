@@ -2008,7 +2008,11 @@ class JobManager:
                 gate_g3_hits=int(gate_tallies.get("G3", 0)),
                 gate_g4_hits=int(gate_tallies.get("G4", 0)),
                 gate_g5_hits=int(gate_tallies.get("G5", 0)),
-                payload={"segment_count": len(segments)},
+                payload={
+                    "metric_type": "item_summary",
+                    "outcome": "item_summary",
+                    "segment_count": len(segments),
+                },
                 created_at=now_iso(),
             )
         )

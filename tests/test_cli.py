@@ -243,6 +243,55 @@ class DummyDb:
                     "created_at": "2026-06-20T10:02:04+00:00",
                 }
             ),
+            DumpModel(
+                {
+                    "id": "metric-5b",
+                    "job_id": job_id,
+                    "source_item_id": None,
+                    "provider_name": None,
+                    "cache_hit": False,
+                    "matched": False,
+                    "call_count": 0,
+                    "matched_segments": 2,
+                    "unresolved_segments": 0,
+                    "elapsed_ms": 0,
+                    "payload": {},
+                    "created_at": "2026-06-20T10:02:04.500000+00:00",
+                }
+            ),
+            DumpModel(
+                {
+                    "id": "metric-6",
+                    "job_id": job_id,
+                    "source_item_id": "item-1",
+                    "provider_name": None,
+                    "cache_hit": False,
+                    "matched": False,
+                    "call_count": 0,
+                    "matched_segments": 2,
+                    "unresolved_segments": 1,
+                    "elapsed_ms": 0,
+                    "segments_merged": 1,
+                    "payload": {"segment_count": 3},
+                    "created_at": "2026-06-20T10:02:05+00:00",
+                }
+            ),
+            DumpModel(
+                {
+                    "id": "metric-7",
+                    "job_id": job_id,
+                    "source_item_id": "item-2",
+                    "provider_name": None,
+                    "cache_hit": False,
+                    "matched": False,
+                    "call_count": 0,
+                    "matched_segments": 0,
+                    "unresolved_segments": 0,
+                    "elapsed_ms": 0,
+                    "payload": {"segment_count": 0},
+                    "created_at": "2026-06-20T10:02:06+00:00",
+                }
+            ),
         ]
 
 
@@ -397,14 +446,14 @@ def test_metrics_json_summarizes_provider_ledger(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == [{"recover_orphans": False}]
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["job_id"] == "job-1"
     assert payload["job"]["status"] == "queued"
     assert payload["job"]["max_provider_calls"] == 420
     assert payload["job"]["provider_order"] == ["local_catalog", "vibra", "audd", "acrcloud"]
-    assert len(payload["metrics"]) == 5
+    assert len(payload["metrics"]) == 8
     totals = payload["summary"]["totals"]
-    assert totals["metrics"] == 5
+    assert totals["metrics"] == 8
     assert totals["provider_calls"] == 1
     assert totals["provider_call_attempts"] == 1
     assert totals["cache_hits"] == 1
@@ -415,10 +464,12 @@ def test_metrics_json_summarizes_provider_ledger(monkeypatch) -> None:
     assert payload["summary"]["outcomes"]["cache_hit_empty"] == 1
     assert payload["summary"]["outcomes"]["budget_exhausted"] == 1
     assert payload["summary"]["outcomes"]["prefer_free_skip"] == 1
-    assert payload["summary"]["outcomes"]["unknown"] == 1
-    assert payload["summary"]["metric_types"]["unknown"] == 1
+    assert payload["summary"]["outcomes"]["item_summary"] == 2
+    assert payload["summary"]["outcomes"]["unknown"] == 2
+    assert payload["summary"]["metric_types"]["item_summary"] == 2
+    assert payload["summary"]["metric_types"]["unknown"] == 2
     providers = {provider["provider"]: provider for provider in payload["summary"]["providers"]}
-    assert providers["job"]["metrics"] == 2
+    assert providers["job"]["metrics"] == 5
     assert providers["vibra"]["provider_calls"] == 1
 
 
@@ -433,6 +484,7 @@ def test_metrics_human_output_highlights_providers(monkeypatch) -> None:
     assert "Recognition metrics for job-1" in result.stdout
     assert "provider_call_matched" in result.stdout
     assert "budget_exhausted" in result.stdout
+    assert "item_summary" in result.stdout
     assert "Max provider calls: 420" in result.stdout
     assert "vibra" in result.stdout
     assert "job" in result.stdout

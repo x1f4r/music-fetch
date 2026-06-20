@@ -188,6 +188,36 @@ def test_recognition_metric_round_trips_extended_counters(tmp_path) -> None:
     assert extended.gate_g3_hits == 4
 
 
+def test_recognition_metric_round_trips_item_summary_payload(tmp_path) -> None:
+    db = Database(tmp_path / "music_fetch.sqlite3")
+    job_id = _seed_job(db, job_id="summary-job")
+    db.add_recognition_metric(
+        RecognitionMetric(
+            id="m-item-summary",
+            job_id=job_id,
+            source_item_id=f"{job_id}-item-1",
+            provider_name=None,
+            matched_segments=2,
+            unresolved_segments=1,
+            segments_merged=1,
+            payload={
+                "metric_type": "item_summary",
+                "outcome": "item_summary",
+                "segment_count": 3,
+            },
+            created_at=now_iso(),
+        )
+    )
+
+    metric = next(metric for metric in db.list_recognition_metrics(job_id) if metric.id == "m-item-summary")
+    assert metric.payload["metric_type"] == "item_summary"
+    assert metric.payload["outcome"] == "item_summary"
+    assert metric.payload["segment_count"] == 3
+    assert metric.matched_segments == 2
+    assert metric.unresolved_segments == 1
+    assert metric.segments_merged == 1
+
+
 def test_recognition_metric_round_trips_outcome_taxonomy_payload(tmp_path) -> None:
     db = Database(tmp_path / "music_fetch.sqlite3")
     job_id = _seed_job(db, job_id="outcome-job")
@@ -355,6 +385,57 @@ def test_recognition_metric_validates_provider_ledger_payload() -> None:
         created_at=now_iso(),
     )
     assert inferred_decision.payload["metric_type"] == "provider_decision"
+    item_summary = RecognitionMetric(
+        id="item-summary",
+        job_id="job-1",
+        source_item_id="item-1",
+        provider_name=None,
+        matched_segments=1,
+        payload={"metric_type": "item_summary", "outcome": "item_summary", "segment_count": 1},
+        created_at=now_iso(),
+    )
+    assert item_summary.payload["metric_type"] == "item_summary"
+    with pytest.raises(ValueError, match="item_summary metrics must use outcome=item_summary"):
+        RecognitionMetric(
+            id="bad-item-summary-outcome",
+            job_id="job-1",
+            source_item_id="item-1",
+            payload={"metric_type": "item_summary", "outcome": "other", "segment_count": 1},
+            created_at=now_iso(),
+        )
+    with pytest.raises(ValueError, match="segment_count must be >= 0"):
+        RecognitionMetric(
+            id="bad-item-summary-count",
+            job_id="job-1",
+            source_item_id="item-1",
+            payload={"metric_type": "item_summary", "outcome": "item_summary", "segment_count": -1},
+            created_at=now_iso(),
+        )
+    with pytest.raises(ValueError, match="tied to a source item"):
+        RecognitionMetric(
+            id="bad-item-summary-source",
+            job_id="job-1",
+            payload={"metric_type": "item_summary", "outcome": "item_summary", "segment_count": 1},
+            created_at=now_iso(),
+        )
+    with pytest.raises(ValueError, match="must not be provider-specific"):
+        RecognitionMetric(
+            id="bad-item-summary-matched",
+            job_id="job-1",
+            source_item_id="item-1",
+            matched=True,
+            payload={"metric_type": "item_summary", "outcome": "item_summary", "segment_count": 1},
+            created_at=now_iso(),
+        )
+    with pytest.raises(ValueError, match="must not be provider-specific"):
+        RecognitionMetric(
+            id="bad-item-summary-provider",
+            job_id="job-1",
+            source_item_id="item-1",
+            provider_name=ProviderName.VIBRA,
+            payload={"metric_type": "item_summary", "outcome": "item_summary", "segment_count": 1},
+            created_at=now_iso(),
+        )
     with pytest.raises(ValueError, match="Unknown recognition outcome"):
         RecognitionMetric(
             id="unknown-outcome",
