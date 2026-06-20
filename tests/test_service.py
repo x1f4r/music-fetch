@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import time
 
 from music_fetch.media import MediaToolError, SourceProfile
 from music_fetch.long_mix import ProbeWindow, SegmentDraft
 from music_fetch.models import (
+    AnalysisMode,
     ItemStatus,
     DetectedSegment,
     Job,
@@ -21,7 +24,8 @@ from music_fetch.models import (
     TrackMatch,
     WindowPlan,
 )
-from music_fetch.service import JobManager
+from music_fetch.providers.base import ProviderError
+from music_fetch.service import JobManager, _BudgetCounter
 
 from conftest import write_test_tone
 
@@ -55,6 +59,83 @@ class CrashProvider:
         raise IndexError("list index out of range")
 
 
+class CountingProvider:
+    def __init__(
+        self,
+        name: ProviderName,
+        *,
+        matched: bool = False,
+        error: Exception | None = None,
+        available: bool = True,
+    ) -> None:
+        self.name = name
+        self.matched = matched
+        self.error = error
+        self.available = available
+        self.calls = 0
+
+    def state(self) -> ProviderState:
+        return ProviderState(
+            name=self.name,
+            enabled=self.available,
+            available=self.available,
+            reason=None if self.available else "not configured",
+        )
+
+    def recognize(self, clip_path: Path, start_ms: int, end_ms: int):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        if not self.matched:
+            return []
+        return [
+            TrackCandidate(
+                track=TrackMatch(title=f"{self.name.value} Song", artist="Provider Artist"),
+                provider=self.name,
+                confidence=0.94,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                evidence=[clip_path.name],
+            )
+        ]
+
+
+def _probeable_draft(index: int) -> SegmentDraft:
+    np = __import__("numpy")
+    start_ms = index * 30_000
+    return SegmentDraft(
+        start_ms=start_ms,
+        end_ms=start_ms + 30_000,
+        kind=SegmentKind.MUSIC_UNRESOLVED,
+        feature_vector=np.ones(4),
+        chroma_vector=np.ones(4),
+        music_ratio=1.0,
+        speech_ratio=0.0,
+        probe_windows=[ProbeWindow(start_ms=start_ms, end_ms=start_ms + 12_000, reason=f"probe-{index}")],
+    )
+
+
+def _copy_excerpt(source_path: Path, start_ms: int, end_ms: int, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(source_path.read_bytes())
+    return output_path
+
+
+def test_budget_counter_reports_atomic_spend_results_under_concurrency() -> None:
+    counter = _BudgetCounter(1)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: counter.spend(1), range(8)))
+
+    consumed = [result for result in results if result.allowed]
+    rejected = [result for result in results if not result.allowed]
+    assert len(consumed) == 1
+    assert consumed[0].before == 1
+    assert consumed[0].after == 0
+    assert consumed[0].consumed == 1
+    assert rejected
+    assert all(result.before == 0 and result.after == 0 and result.consumed == 0 for result in rejected)
+
+
 def test_job_manager_runs_local_file(monkeypatch, app_env, tmp_path: Path) -> None:
     settings, db, manager = app_env
     source = write_test_tone(tmp_path / "tone.wav")
@@ -85,6 +166,7 @@ def test_job_manager_runs_local_file(monkeypatch, app_env, tmp_path: Path) -> No
     assert final_job.status.value == "succeeded"
     assert len(segments) == 1
     assert segments[0].track.title == "ACIDO III (Super Slowed)"
+    assert segments[0].provider_attempts == 1
 
 
 def test_run_existing_job_processes_created_job(monkeypatch, app_env, tmp_path: Path) -> None:
@@ -119,6 +201,81 @@ def test_run_existing_job_processes_created_job(monkeypatch, app_env, tmp_path: 
     assert stored.status.value == "succeeded"
     assert len(segments) == 1
     assert segments[0].track.title == "ACIDO III (Super Slowed)"
+
+
+def test_single_track_provider_attempts_include_empty_provider_calls(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "single-attempts.wav")
+    job = db.create_job([str(source)], JobOptions(prefer_separation=False))
+    item = SourceItem(
+        id="item-single-attempts",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.QUEUED,
+        metadata=SourceMetadata(title="Single Attempts", duration_ms=30_000),
+        local_path=str(source),
+    )
+    empty = CountingProvider(ProviderName.AUDD)
+    match = CountingProvider(ProviderName.VIBRA, matched=True)
+
+    monkeypatch.setattr("music_fetch.service.normalize_media", lambda input_path, output_path: input_path)
+    monkeypatch.setattr(
+        JobManager,
+        "_select_windows",
+        lambda self, job, item, normalized, instrumental, profile: [
+            WindowPlan(start_ms=0, end_ms=12_000, score=1.0, source_path=str(normalized), label="mix")
+        ],
+    )
+    monkeypatch.setattr("music_fetch.service.create_excerpt", _copy_excerpt)
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"single-attempts:{clip_path}")
+    monkeypatch.setattr(JobManager, "_providers", lambda self: [empty, match])
+
+    manager._process_item(job, item)
+
+    stored = db.get_segments(job.id)[0]
+    assert empty.calls == 1
+    assert match.calls == 1
+    assert stored.track is not None
+    assert stored.provider_attempts == 2
+
+
+def test_single_track_honors_max_provider_calls(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "single-budget.wav")
+    options = JobOptions(max_provider_calls=1, prefer_separation=False, analysis_mode=AnalysisMode.SINGLE_TRACK)
+    job = db.create_job([str(source)], options)
+    item = SourceItem(
+        id="item-single-budget",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.QUEUED,
+        metadata=SourceMetadata(title="Single Budget", duration_ms=30_000),
+        local_path=str(source),
+    )
+    first = CountingProvider(ProviderName.AUDD)
+    second = CountingProvider(ProviderName.VIBRA, matched=True)
+
+    monkeypatch.setattr("music_fetch.service.normalize_media", lambda input_path, output_path: input_path)
+    monkeypatch.setattr(
+        JobManager,
+        "_select_windows",
+        lambda self, job, item, normalized, instrumental, profile: [
+            WindowPlan(start_ms=0, end_ms=12_000, score=1.0, source_path=str(normalized), label="mix")
+        ],
+    )
+    monkeypatch.setattr("music_fetch.service.create_excerpt", _copy_excerpt)
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"single-budget:{clip_path}")
+    monkeypatch.setattr(JobManager, "_providers", lambda self: [first, second])
+
+    manager._process_item(job, item)
+
+    assert first.calls == 1
+    assert second.calls == 0
+    assert db.get_segments(job.id) == []
+    outcomes = [metric.payload.get("outcome") for metric in db.list_recognition_metrics(job.id)]
+    assert outcomes.count("budget_exhausted") == 1
 
 
 def test_select_windows_keeps_long_mix_budget(monkeypatch, app_env) -> None:
@@ -160,6 +317,93 @@ def test_select_windows_keeps_long_mix_budget(monkeypatch, app_env) -> None:
         ),
     )
     assert len(selected) == 48
+
+
+def test_long_mix_provider_budget_caps_actual_attempts_across_providers(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "long-budget.wav")
+    options = JobOptions(
+        max_provider_calls=3,
+        max_probes_per_segment=1,
+        budget_autoscale=False,
+        auto_retry_unresolved=False,
+        segment_workers=1,
+        prefer_separation=False,
+    )
+    job = db.create_job([str(source)], options)
+    item = SourceItem(
+        id="item-budget",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.RUNNING,
+        metadata=SourceMetadata(title="Budgeted Long Mix", duration_ms=30 * 60_000),
+        local_path=str(source),
+        normalized_path=str(source),
+    )
+    providers = [CountingProvider(ProviderName.VIBRA), CountingProvider(ProviderName.AUDD)]
+
+    monkeypatch.setattr(
+        "music_fetch.service.analyze_long_mix",
+        lambda normalized, metadata, options: type("Analysis", (), {"segments": [_probeable_draft(index) for index in range(5)]})(),
+    )
+    monkeypatch.setattr("music_fetch.service.create_excerpt", _copy_excerpt)
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"budget:{clip_path}")
+    monkeypatch.setattr(JobManager, "_providers", lambda self: providers)
+
+    segments = manager._process_long_mix_item(job, item, source, None)
+
+    actual_provider_calls = sum(provider.calls for provider in providers)
+    assert actual_provider_calls <= options.max_provider_calls
+    assert sum(segment.provider_attempts for segment in segments) <= options.max_provider_calls
+
+
+def test_long_mix_low_budget_parallel_workers_do_not_create_extra_excerpts(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "parallel-budget.wav")
+    options = JobOptions(
+        max_provider_calls=1,
+        max_probes_per_segment=1,
+        budget_autoscale=False,
+        auto_retry_unresolved=False,
+        segment_workers=6,
+        prefer_separation=False,
+        provider_order=[ProviderName.AUDD],
+    )
+    job = db.create_job([str(source)], options)
+    item = SourceItem(
+        id="item-parallel-budget",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.RUNNING,
+        metadata=SourceMetadata(title="Parallel Budget", duration_ms=30 * 60_000),
+        local_path=str(source),
+        normalized_path=str(source),
+    )
+    provider = CountingProvider(ProviderName.AUDD)
+    excerpt_count = 0
+
+    def counted_excerpt(source_path: Path, start_ms: int, end_ms: int, output_path: Path) -> Path:
+        nonlocal excerpt_count
+        time.sleep(0.01)
+        excerpt_count += 1
+        return _copy_excerpt(source_path, start_ms, end_ms, output_path)
+
+    monkeypatch.setattr(
+        "music_fetch.service.analyze_long_mix",
+        lambda normalized, metadata, options: type("Analysis", (), {"segments": [_probeable_draft(index) for index in range(6)]})(),
+    )
+    monkeypatch.setattr("music_fetch.service.create_excerpt", counted_excerpt)
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"parallel-budget:{clip_path}")
+    monkeypatch.setattr(JobManager, "_providers", lambda self: [provider])
+
+    manager._process_long_mix_item(job, item, source, None)
+
+    assert provider.calls == 1
+    assert excerpt_count == 1
+    outcomes = [metric.payload.get("outcome") for metric in db.list_recognition_metrics(job.id)]
+    assert outcomes.count("budget_exhausted") == 1
 
 
 def test_long_mix_reuses_repeat_group_matches(monkeypatch, app_env, tmp_path: Path) -> None:
@@ -263,6 +507,104 @@ def test_recognize_with_cache_converts_unexpected_provider_crash_to_warning(app_
     assert hits == []
     events = db.list_events(job.id)
     assert any("crashed on" in event.message for event in events)
+
+
+def test_recognition_metrics_classify_cache_match_no_match_and_provider_errors(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    clip = tmp_path / "taxonomy.wav"
+    empty_clip = tmp_path / "taxonomy-empty.wav"
+    error_clip = tmp_path / "taxonomy-error.wav"
+    exception_clip = tmp_path / "taxonomy-exception.wav"
+    for path in (clip, empty_clip, error_clip, exception_clip):
+        path.write_bytes(b"fake")
+    job = db.create_job([str(clip)], JobOptions())
+    item = SourceItem(
+        id="item-taxonomy",
+        job_id=job.id,
+        input_value=str(clip),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.RUNNING,
+        metadata=SourceMetadata(duration_ms=12_000),
+        local_path=str(clip),
+    )
+    db.add_source_items([item])
+    match_provider = CountingProvider(ProviderName.VIBRA, matched=True)
+    no_match_provider = CountingProvider(ProviderName.AUDD)
+    error_provider = CountingProvider(ProviderName.ACRCLOUD, error=ProviderError("quota exceeded"))
+    exception_provider = CountingProvider(ProviderName.LOCAL_CATALOG, error=RuntimeError("parser blew up"))
+
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"taxonomy:{clip_path}")
+
+    assert manager._recognize_with_cache(job.id, item, match_provider, clip, 0, 12_000)
+    assert manager._recognize_with_cache(job.id, item, match_provider, clip, 0, 12_000)
+    assert manager._recognize_with_cache(job.id, item, no_match_provider, empty_clip, 12_000, 24_000) == []
+    assert manager._recognize_with_cache(job.id, item, no_match_provider, empty_clip, 12_000, 24_000) == []
+    assert manager._recognize_with_cache(job.id, item, error_provider, error_clip, 24_000, 36_000) == []
+    assert manager._recognize_with_cache(job.id, item, exception_provider, exception_clip, 36_000, 48_000) == []
+
+    metrics = [metric for metric in db.list_recognition_metrics(job.id) if metric.source_item_id == item.id]
+    match_metric = next(metric for metric in metrics if metric.provider_name == ProviderName.VIBRA and not metric.cache_hit)
+    cache_metric = next(metric for metric in metrics if metric.provider_name == ProviderName.VIBRA and metric.cache_hit)
+    no_match_metric = next(metric for metric in metrics if metric.provider_name == ProviderName.AUDD and not metric.cache_hit)
+    cache_empty_metric = next(metric for metric in metrics if metric.provider_name == ProviderName.AUDD and metric.cache_hit)
+    provider_error_metric = next(metric for metric in metrics if metric.provider_name == ProviderName.ACRCLOUD)
+    provider_exception_metric = next(metric for metric in metrics if metric.provider_name == ProviderName.LOCAL_CATALOG)
+
+    assert match_metric.payload["outcome"] == "provider_call_matched"
+    assert cache_metric.payload["outcome"] == "cache_hit_matched"
+    assert no_match_metric.payload["outcome"] == "provider_call_empty"
+    assert cache_empty_metric.payload["outcome"] == "cache_hit_empty"
+    assert provider_error_metric.payload["outcome"] == "provider_error"
+    assert provider_exception_metric.payload["outcome"] == "provider_exception"
+    assert provider_error_metric.call_count == 1
+    assert provider_error_metric.matched is False
+
+
+def test_provider_ledger_records_unavailable_and_prefer_free_skips(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "skip-ledger.wav")
+    options = JobOptions(
+        max_provider_calls=5,
+        max_probes_per_segment=1,
+        auto_retry_unresolved=False,
+        segment_workers=1,
+        prefer_free_providers=True,
+        prefer_separation=False,
+    )
+    job = db.create_job([str(source)], options)
+    item = SourceItem(
+        id="item-skip-ledger",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.RUNNING,
+        metadata=SourceMetadata(title="Skip Ledger", duration_ms=30 * 60_000),
+        local_path=str(source),
+        normalized_path=str(source),
+    )
+    providers = [
+        CountingProvider(ProviderName.VIBRA, matched=True),
+        CountingProvider(ProviderName.AUDD, matched=True),
+        CountingProvider(ProviderName.ACRCLOUD, matched=True, available=False),
+    ]
+
+    monkeypatch.setattr(
+        "music_fetch.service.analyze_long_mix",
+        lambda normalized, metadata, options: type("Analysis", (), {"segments": [_probeable_draft(0)]})(),
+    )
+    monkeypatch.setattr("music_fetch.service.create_excerpt", _copy_excerpt)
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"skip-ledger:{clip_path}")
+    monkeypatch.setattr(JobManager, "_providers", lambda self: providers)
+
+    manager._process_long_mix_item(job, item, source, None)
+
+    assert providers[0].calls == 1
+    assert providers[1].calls == 0
+    assert providers[2].calls == 0
+    outcomes = [metric.payload["outcome"] for metric in db.list_recognition_metrics(job.id)]
+    assert "provider_call_matched" in outcomes
+    assert "prefer_free_skip" in outcomes
+    assert "provider_unavailable" in outcomes
 
 
 def test_segmented_path_prefers_instrumental_excerpt_source(monkeypatch, app_env, tmp_path: Path) -> None:
@@ -653,6 +995,8 @@ def test_retry_unresolved_segment_can_promote_match(monkeypatch, app_env, tmp_pa
                 confidence=0.0,
                 providers=[],
                 evidence_count=0,
+                probe_count=2,
+                provider_attempts=3,
                 explanation=["Music detected, but no candidate cleared the evidence threshold."],
             )
         ],
@@ -669,6 +1013,8 @@ def test_retry_unresolved_segment_can_promote_match(monkeypatch, app_env, tmp_pa
     assert stored.kind == SegmentKind.MATCHED_TRACK
     assert stored.track is not None
     assert stored.track.title == "ACIDO III (Super Slowed)"
+    assert stored.probe_count == 3
+    assert stored.provider_attempts == 4
     assert stored.explanation[0] == "Recovered by retrying an unresolved region."
 
 
@@ -727,6 +1073,107 @@ def test_retry_uses_input_path_for_local_files_without_local_path(monkeypatch, a
     stored = db.get_segments(job.id)[0]
     assert stored.kind == SegmentKind.MATCHED_TRACK
     assert stored.track is not None
+
+
+def test_retry_unresolved_segments_honors_max_provider_calls(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "retry-budget.wav", seconds=40)
+    options = JobOptions(
+        max_provider_calls=2,
+        max_probes_per_segment=1,
+        budget_autoscale=False,
+        prefer_separation=False,
+    )
+    job = db.create_job([str(source)], options)
+    item = SourceItem(
+        id="item-retry-budget",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.SUCCEEDED,
+        metadata=SourceMetadata(title="Retry Budget", duration_ms=40_000),
+        local_path=str(source),
+        normalized_path=str(source),
+    )
+    db.add_source_items([item])
+    db.replace_segments(
+        job.id,
+        item.id,
+        [
+            DetectedSegment(
+                source_item_id=item.id,
+                start_ms=index * 12_000,
+                end_ms=(index + 1) * 12_000,
+                kind=SegmentKind.MUSIC_UNRESOLVED,
+                confidence=0.0,
+                providers=[],
+                evidence_count=0,
+            )
+            for index in range(3)
+        ],
+    )
+    providers = [CountingProvider(ProviderName.VIBRA), CountingProvider(ProviderName.AUDD)]
+
+    monkeypatch.setattr("music_fetch.service.create_excerpt", _copy_excerpt)
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"retry-budget:{clip_path}")
+    monkeypatch.setattr(manager.provider_registry, "active_providers_for_order", lambda order=None: providers)
+
+    result = manager.retry_unresolved_segments(job.id, options_override=options)
+
+    actual_provider_calls = sum(provider.calls for provider in providers)
+    assert result["matched_segments"] == 0
+    assert actual_provider_calls <= options.max_provider_calls
+
+
+def test_retry_unresolved_segments_with_zero_budget_reports_no_retry(monkeypatch, app_env, tmp_path: Path) -> None:
+    settings, db, manager = app_env
+    source = write_test_tone(tmp_path / "retry-zero-budget.wav", seconds=20)
+    options = JobOptions(
+        max_provider_calls=0,
+        max_probes_per_segment=1,
+        budget_autoscale=False,
+        prefer_separation=False,
+    )
+    job = db.create_job([str(source)], options)
+    item = SourceItem(
+        id="item-retry-zero",
+        job_id=job.id,
+        input_value=str(source),
+        kind=SourceKind.LOCAL_FILE,
+        status=ItemStatus.SUCCEEDED,
+        metadata=SourceMetadata(title="Retry Zero", duration_ms=20_000),
+        local_path=str(source),
+        normalized_path=str(source),
+    )
+    db.add_source_items([item])
+    original = DetectedSegment(
+        source_item_id=item.id,
+        start_ms=0,
+        end_ms=12_000,
+        kind=SegmentKind.MUSIC_UNRESOLVED,
+        confidence=0.0,
+        providers=[],
+        evidence_count=0,
+    )
+    db.replace_segments(job.id, item.id, [original])
+    provider = CountingProvider(ProviderName.VIBRA, matched=True)
+
+    monkeypatch.setattr("music_fetch.service.create_excerpt", _copy_excerpt)
+    monkeypatch.setattr("music_fetch.service.fingerprint_cache_key", lambda clip_path: f"retry-zero:{clip_path}")
+    monkeypatch.setattr(manager.provider_registry, "active_providers_for_order", lambda order=None: [provider])
+
+    result = manager.retry_unresolved_segments(job.id, options_override=options)
+
+    stored = db.get_segments(job.id)[0]
+    assert result == {
+        "retried_segments": 0,
+        "matched_segments": 0,
+        "remaining_unresolved_segments": 1,
+    }
+    assert provider.calls == 0
+    assert stored == original
+    outcomes = [metric.payload.get("outcome") for metric in db.list_recognition_metrics(job.id)]
+    assert outcomes.count("budget_exhausted") == 1
 
 
 def test_stitch_bridges_short_speech_between_same_identity_matches(app_env) -> None:

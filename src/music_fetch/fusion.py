@@ -69,7 +69,7 @@ def _build_segment(source_item_id: str, cluster: list[TrackCandidate]) -> Detect
         track=primary.track,
         alternates=alternates,
         probe_count=len(cluster),
-        provider_attempts=len(cluster),
+        provider_attempts=0,
         uncertainty=max(0.0, 1.0 - confidence),
         explanation=explanation,
         identity_key=primary.track.normalized_key(),

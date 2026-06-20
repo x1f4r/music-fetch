@@ -11,6 +11,7 @@ import time
 import uuid
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 from .artifact_service import ArtifactCleanupError, ArtifactService
@@ -86,6 +87,14 @@ class JobCanceled(BaseException):
     """
 
 
+@dataclass(frozen=True)
+class _BudgetSpend:
+    allowed: bool
+    before: int
+    after: int
+    consumed: int = 0
+
+
 class _BudgetCounter:
     """Thread-safe integer budget shared across parallel segment workers.
 
@@ -97,6 +106,7 @@ class _BudgetCounter:
 
     def __init__(self, initial: int) -> None:
         self._lock = threading.Lock()
+        self._initial = max(0, initial)
         self._remaining = max(0, initial)
 
     @property
@@ -105,11 +115,23 @@ class _BudgetCounter:
             return self._remaining
 
     def try_spend(self, cost: int) -> bool:
+        return self.spend(cost).allowed
+
+    def spend(self, cost: int) -> _BudgetSpend:
         with self._lock:
+            before = self._remaining
+            if cost <= 0:
+                return _BudgetSpend(self._remaining > 0, before, self._remaining, 0)
             if self._remaining < cost:
-                return False
+                return _BudgetSpend(False, before, self._remaining, 0)
             self._remaining -= cost
-            return True
+            return _BudgetSpend(True, before, self._remaining, cost)
+
+    def refund(self, spend: _BudgetSpend) -> None:
+        if spend.consumed <= 0:
+            return
+        with self._lock:
+            self._remaining = min(self._initial, self._remaining + spend.consumed)
 
 
 class JobManager:
@@ -586,31 +608,92 @@ class JobManager:
         providers = self._providers()
         candidates: list[TrackCandidate] = []
         excerpts_dir = normalized_dir / "clips"
-        remaining_budget = profile.request_budget
+        budget = _BudgetCounter(min(profile.request_budget, job.options.max_provider_calls))
+        budget_exhausted_logged = False
         for plan in plans:
             if self._is_canceled(job.id):
                 item.status = ItemStatus.CANCELED
                 self.db.update_source_item(item)
                 raise JobCanceled()
-            if remaining_budget <= 0:
-                self.db.add_event(job.id, "info", f"Request budget exhausted for {item.id}")
-                break
             excerpt_path = build_excerpt_path(excerpts_dir, Path(plan.source_path), plan.start_ms, plan.end_ms, plan.label)
-            if not excerpt_path.exists():
-                create_excerpt(Path(plan.source_path), plan.start_ms, plan.end_ms, excerpt_path)
-                self._raise_if_canceled(job.id)
+            if not self._can_check_or_call_provider(budget, excerpt_path):
+                if not budget_exhausted_logged:
+                    self.db.add_event(job.id, "info", f"Request budget exhausted for {item.id}")
+                    self._record_budget_exhausted_metric(job.id, item, plan.start_ms, plan.end_ms, budget=budget)
+                    budget_exhausted_logged = True
+                break
+            provider_loop_exhausted = False
             for provider in providers:
-                if remaining_budget <= 0:
-                    break
                 state = provider.state()
                 if not state.available:
+                    self._record_provider_skip_metric(
+                        job.id,
+                        item,
+                        provider,
+                        plan.start_ms,
+                        plan.end_ms,
+                        outcome="provider_unavailable",
+                        skip_reason=state.reason or "provider unavailable",
+                        budget=budget,
+                    )
                     continue
-                provider_hits = self._recognize_with_cache(job.id, item, provider, excerpt_path, plan.start_ms, plan.end_ms)
+                if (
+                    job.options.prefer_free_providers
+                    and self._is_paid_provider(provider)
+                    and self._candidates_have_strong_free_hit(candidates)
+                ):
+                    self._record_provider_skip_metric(
+                        job.id,
+                        item,
+                        provider,
+                        plan.start_ms,
+                        plan.end_ms,
+                        outcome="prefer_free_skip",
+                        skip_reason="strong free-provider hit already available",
+                        budget=budget,
+                    )
+                    continue
+                reserved_spend = self._ensure_excerpt_for_provider_call(
+                    Path(plan.source_path),
+                    plan.start_ms,
+                    plan.end_ms,
+                    excerpt_path,
+                    budget,
+                )
+                if reserved_spend is not None and not reserved_spend.allowed:
+                    if not budget_exhausted_logged:
+                        self.db.add_event(job.id, "info", f"Request budget exhausted for {item.id}")
+                        self._record_budget_exhausted_metric(
+                            job.id, item, plan.start_ms, plan.end_ms, provider=provider, budget=budget
+                        )
+                        budget_exhausted_logged = True
+                    provider_loop_exhausted = True
+                    break
                 self._raise_if_canceled(job.id)
-                remaining_budget -= 1
+                budget_state: dict[str, object] = {}
+                provider_hits = self._recognize_with_cache(
+                    job.id,
+                    item,
+                    provider,
+                    excerpt_path,
+                    plan.start_ms,
+                    plan.end_ms,
+                    budget=budget,
+                    reserved_spend=reserved_spend if reserved_spend and reserved_spend.consumed else None,
+                    budget_state=budget_state,
+                )
+                self._raise_if_canceled(job.id)
+                if budget_state.get("budget_exhausted") and not budget_exhausted_logged:
+                    self.db.add_event(job.id, "info", f"Request budget exhausted for {item.id}")
+                    budget_exhausted_logged = True
+                    provider_loop_exhausted = True
                 if provider_hits:
                     self.db.add_event(job.id, "info", f"{provider.name} matched {provider_hits[0].track.title}")
                 candidates.extend(provider_hits)
+                if provider_loop_exhausted:
+                    break
+            if provider_loop_exhausted:
+                break
             if self._should_stop_early(profile, candidates):
                 self.db.add_event(job.id, "info", f"Early stop reached for {item.id}")
                 break
@@ -624,6 +707,7 @@ class JobManager:
         # title/artist variance can yield two same-identity segments that only
         # merge once tiered-identity does its thing.
         segments = self._stitch_segment_timeline(segments, options=job.options)
+        segments = self._attach_provider_attempt_counts(job.id, item.id, segments)
         self._raise_if_canceled(job.id)
         self.db.replace_segments(job.id, item.id, segments)
         self._record_item_summary_metric(job.id, item.id, segments)
@@ -667,6 +751,37 @@ class JobManager:
             )
         ]
 
+    def _attach_provider_attempt_counts(
+        self,
+        job_id: str,
+        source_item_id: str,
+        segments: list[DetectedSegment],
+    ) -> list[DetectedSegment]:
+        if not segments:
+            return segments
+        metrics = [
+            metric
+            for metric in self.db.list_recognition_metrics(job_id)
+            if (
+                metric.source_item_id == source_item_id
+                and metric.call_count > 0
+                and metric.payload.get("metric_type") == "provider_attempt"
+                and metric.payload.get("provider_call_attempted") is True
+            )
+        ]
+        if not metrics:
+            return segments
+        updated: list[DetectedSegment] = []
+        for segment in segments:
+            attempts = 0
+            for metric in metrics:
+                start = int(metric.payload.get("start_ms", metric.payload.get("probe_start_ms", 0)) or 0)
+                end = int(metric.payload.get("end_ms", metric.payload.get("probe_end_ms", start)) or start)
+                if start < segment.end_ms and end > segment.start_ms:
+                    attempts += metric.call_count
+            updated.append(segment.model_copy(update={"provider_attempts": attempts}))
+        return updated
+
     def _process_long_mix_item(self, job: Job, item: SourceItem, normalized: Path, instrumental: Path | None = None) -> list[DetectedSegment]:
         """Scan a long mix segment-by-segment using a coverage-first allocator
         and (optionally) a parallel worker pool.
@@ -701,6 +816,8 @@ class JobManager:
             probeable_ids.add(id(draft))
 
         budget = _BudgetCounter(self._effective_budget(job.options, providers, probeable, item))
+        budget_exhausted_lock = threading.Lock()
+        budget_exhausted_recorded = {"value": False}
         repeat_matches: dict[str, TrackCandidate] = {}
         repeat_matches_lock = threading.Lock()
         per_draft_result: dict[int, DetectedSegment] = {}
@@ -713,6 +830,21 @@ class JobManager:
         def process_one(index: int, draft: SegmentDraft) -> DetectedSegment:
             with command_job_context(job.id):
                 return process_one_inner(index, draft)
+
+        def record_budget_exhausted_once(
+            start_ms: int,
+            end_ms: int,
+            provider: BaseProvider | None = None,
+            *,
+            record_metric: bool = True,
+        ) -> None:
+            with budget_exhausted_lock:
+                if budget_exhausted_recorded["value"]:
+                    return
+                self.db.add_event(job.id, "info", f"Provider-call budget exhausted for {item.id}")
+                if record_metric:
+                    self._record_budget_exhausted_metric(job.id, item, start_ms, end_ms, provider=provider, budget=budget)
+                budget_exhausted_recorded["value"] = True
 
         def process_one_inner(index: int, draft: SegmentDraft) -> DetectedSegment:
             self._raise_if_canceled(job.id)
@@ -736,19 +868,18 @@ class JobManager:
                     )
                     if confirmed is True:
                         repeat_stats["reconfirmed"] += 1
-                        draft.probe_count = 1
-                        draft.provider_attempts = 1
+                        if draft.probe_count == 0:
+                            draft.probe_count = 1
                         return self._candidate_to_detected(item.id, draft, reusable, reused=True)
                     if confirmed is False:
                         repeat_stats["rejected"] += 1
                     # confirmed is None → no free provider to verify. Fall through
                     # to full probing so we don't propagate a possibly-wrong match.
+                    probe_count = draft.probe_count
+                    provider_attempts = draft.provider_attempts
 
             for probe in draft.probe_windows[: job.options.max_probes_per_segment]:
-                spend = budget.try_spend(1)
-                if not spend:
-                    break
-                probe_count += 1
+                probed_window = False
                 excerpt_path = build_excerpt_path(
                     excerpts_dir,
                     excerpt_source,
@@ -756,13 +887,24 @@ class JobManager:
                     probe.end_ms,
                     f"segment-{probe.reason}",
                 )
-                if not excerpt_path.exists():
-                    create_excerpt(excerpt_source, probe.start_ms, probe.end_ms, excerpt_path)
-                    self._raise_if_canceled(job.id)
+                if not self._can_check_or_call_provider(budget, excerpt_path):
+                    record_budget_exhausted_once(probe.start_ms, probe.end_ms)
+                    break
+                provider_loop_exhausted = False
                 for provider in providers:
                     self._raise_if_canceled(job.id)
                     state = provider.state()
                     if not state.available:
+                        self._record_provider_skip_metric(
+                            job.id,
+                            item,
+                            provider,
+                            probe.start_ms,
+                            probe.end_ms,
+                            outcome="provider_unavailable",
+                            skip_reason=state.reason or "provider unavailable",
+                            budget=budget,
+                        )
                         continue
                     # Prefer-free-providers: once a free provider has produced a
                     # strong match for this probe, skip paid providers for the
@@ -772,14 +914,49 @@ class JobManager:
                         and self._is_paid_provider(provider)
                         and self._candidates_have_strong_free_hit(candidates)
                     ):
+                        self._record_provider_skip_metric(
+                            job.id,
+                            item,
+                            provider,
+                            probe.start_ms,
+                            probe.end_ms,
+                            outcome="prefer_free_skip",
+                            skip_reason="strong free-provider hit already available",
+                            budget=budget,
+                        )
                         continue
-                    if not budget.try_spend(0):
+                    reserved_spend = self._ensure_excerpt_for_provider_call(
+                        excerpt_source,
+                        probe.start_ms,
+                        probe.end_ms,
+                        excerpt_path,
+                        budget,
+                    )
+                    if reserved_spend is not None and not reserved_spend.allowed:
+                        record_budget_exhausted_once(probe.start_ms, probe.end_ms, provider)
+                        provider_loop_exhausted = True
                         break
+                    self._raise_if_canceled(job.id)
+                    budget_state: dict[str, object] = {}
                     provider_hits = self._recognize_with_cache(
-                        job.id, item, provider, excerpt_path, probe.start_ms, probe.end_ms
+                        job.id,
+                        item,
+                        provider,
+                        excerpt_path,
+                        probe.start_ms,
+                        probe.end_ms,
+                        budget=budget,
+                        reserved_spend=reserved_spend if reserved_spend and reserved_spend.consumed else None,
+                        budget_state=budget_state,
                     )
                     self._raise_if_canceled(job.id)
-                    provider_attempts += 1
+                    if budget_state.get("provider_call_attempted"):
+                        provider_attempts += 1
+                    if budget_state.get("provider_call_attempted") or budget_state.get("cache_hit"):
+                        probed_window = True
+                    if budget_state.get("budget_exhausted"):
+                        record_budget_exhausted_once(probe.start_ms, probe.end_ms, provider, record_metric=False)
+                        provider_loop_exhausted = True
                     if provider_hits:
                         self.db.add_event(
                             job.id,
@@ -787,6 +964,12 @@ class JobManager:
                             f"{provider.name} matched {provider_hits[0].track.title} for segment {draft.start_ms}-{draft.end_ms}",
                         )
                     candidates.extend(provider_hits)
+                    if provider_loop_exhausted:
+                        break
+                if probed_window:
+                    probe_count += 1
+                if provider_loop_exhausted:
+                    break
                 if self._probes_have_strong_match(candidates):
                     break
             draft.probe_count = probe_count
@@ -851,10 +1034,12 @@ class JobManager:
             unresolved_indices = [
                 index
                 for index, segment in enumerate(assembled)
-                if segment.kind == SegmentKind.MUSIC_UNRESOLVED and budget.remaining > 0
+                if segment.kind == SegmentKind.MUSIC_UNRESOLVED
             ]
             for index in unresolved_indices:
-                if not budget.try_spend(0):
+                if budget.remaining <= 0:
+                    segment = assembled[index]
+                    record_budget_exhausted_once(segment.start_ms, segment.end_ms)
                     break
                 if self._is_canceled(job.id):
                     break
@@ -865,6 +1050,7 @@ class JobManager:
                     excerpt_source,
                     providers,
                     job.options,
+                    budget=budget,
                 )
                 assembled[index] = retried
 
@@ -901,9 +1087,7 @@ class JobManager:
         Rules:
         - Free-only mode: call count uncapped (so long mixes get full coverage
           when there's no financial cost).
-        - Paid mode: ``max(max_provider_calls, segments * 1.3)`` so mixes
-          with many segments still get their minimum-one-probe coverage even
-          when the hand-configured ceiling is lower.
+        - Paid mode: honor ``max_provider_calls`` as a hard ceiling.
         - When budget_autoscale is disabled, the old fixed-cap behavior is
           preserved.
         """
@@ -915,9 +1099,8 @@ class JobManager:
             # Uncap: 2 × probes × segments is a safe ceiling that still prevents
             # an infinite loop if something goes wrong.
             return max(base, 2 * options.max_probes_per_segment * max(1, len(probeable)))
-        # Paid providers configured — keep the user-specified ceiling but grow
-        # it enough to guarantee coverage.
-        return max(base, int(1.3 * len(probeable)) + 60)
+        # Paid providers configured — keep the user-specified ceiling.
+        return base
 
     def _only_free_providers(self, providers: list[BaseProvider]) -> bool:
         """True when the available provider set contains no paid API."""
@@ -930,6 +1113,30 @@ class JobManager:
 
     def _is_paid_provider(self, provider: BaseProvider) -> bool:
         return provider.name in {ProviderName.AUDD, ProviderName.ACRCLOUD}
+
+    def _can_check_or_call_provider(self, budget: "_BudgetCounter | None", excerpt_path: Path) -> bool:
+        return budget is None or budget.remaining > 0 or excerpt_path.exists()
+
+    def _ensure_excerpt_for_provider_call(
+        self,
+        source_path: Path,
+        start_ms: int,
+        end_ms: int,
+        output_path: Path,
+        budget: "_BudgetCounter | None",
+    ) -> _BudgetSpend | None:
+        if output_path.exists():
+            return None
+        spend = budget.spend(1) if budget is not None else None
+        if spend is not None and not spend.allowed:
+            return spend
+        try:
+            create_excerpt(source_path, start_ms, end_ms, output_path)
+        except Exception:
+            if budget is not None and spend is not None:
+                budget.refund(spend)
+            raise
+        return spend
 
     def _candidates_have_strong_free_hit(self, candidates: list[TrackCandidate]) -> bool:
         for candidate in candidates:
@@ -972,21 +1179,41 @@ class JobManager:
         free_providers = [p for p in providers if not self._is_paid_provider(p) and p.state().available]
         if not free_providers:
             return None
-        if not budget.try_spend(1):
-            return None
         probe = draft.probe_windows[len(draft.probe_windows) // 2]
         excerpt_path = build_excerpt_path(
             excerpts_dir, excerpt_source, probe.start_ms, probe.end_ms, "reconfirm"
         )
-        if not excerpt_path.exists():
+        if not self._can_check_or_call_provider(budget, excerpt_path):
+            return None
+        for provider in free_providers:
             try:
-                create_excerpt(excerpt_source, probe.start_ms, probe.end_ms, excerpt_path)
+                reserved_spend = self._ensure_excerpt_for_provider_call(
+                    excerpt_source,
+                    probe.start_ms,
+                    probe.end_ms,
+                    excerpt_path,
+                    budget,
+                )
             except MediaToolError:
                 return None
-        for provider in free_providers:
+            if reserved_spend is not None and not reserved_spend.allowed:
+                return None
+            budget_state: dict[str, object] = {}
             hits = self._recognize_with_cache(
-                job.id, item, provider, excerpt_path, probe.start_ms, probe.end_ms
+                job.id,
+                item,
+                provider,
+                excerpt_path,
+                probe.start_ms,
+                probe.end_ms,
+                budget=budget,
+                reserved_spend=reserved_spend if reserved_spend and reserved_spend.consumed else None,
+                budget_state=budget_state,
             )
+            if budget_state.get("provider_call_attempted"):
+                draft.provider_attempts += 1
+            if budget_state.get("provider_call_attempted") or budget_state.get("cache_hit"):
+                draft.probe_count = max(1, draft.probe_count)
             if not hits:
                 continue
             # If any hit matches the group's track by tiered identity, accept.
@@ -1441,14 +1668,53 @@ class JobManager:
         excerpt_path: Path,
         start_ms: int,
         end_ms: int,
+        *,
+        budget: "_BudgetCounter | None" = None,
+        reserved_spend: "_BudgetSpend | None" = None,
+        budget_state: dict[str, object] | None = None,
     ) -> list[TrackCandidate]:
         self._raise_if_canceled(job_id)
         started_at = time.monotonic()
         cache_key = fingerprint_cache_key(excerpt_path)
+        payload_base: dict[str, object] = {
+            "metric_type": "provider_attempt",
+            "ledger_version": 1,
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "probe_start_ms": start_ms,
+            "probe_end_ms": end_ms,
+            "cache_key": cache_key,
+        }
+
+        def payload_with_budget(**updates: object) -> dict[str, object]:
+            payload = {
+                **payload_base,
+                "cache_hit": False,
+                "provider_call_attempted": False,
+                "budget_consumed": 0,
+                "budget_exhausted": False,
+                **updates,
+            }
+            if budget is not None:
+                remaining = budget.remaining
+                payload.setdefault("budget_remaining_before", remaining)
+                payload.setdefault("budget_remaining_after", remaining)
+            if budget_state is not None:
+                budget_state.clear()
+                budget_state.update(payload)
+            return payload
+
         cached = self.db.get_provider_cache(cache_key, provider.name)
         if cached:
             payload = json.loads(cached)
             hits = [TrackCandidate.model_validate(candidate) for candidate in payload]
+            if budget is not None and reserved_spend is not None and reserved_spend.consumed:
+                budget.refund(reserved_spend)
+            metric_payload = payload_with_budget(
+                cache_hit=True,
+                outcome="cache_hit_matched" if hits else "cache_hit_empty",
+                budget_consumed=0,
+            )
             self.db.add_recognition_metric(
                 RecognitionMetric(
                     id=str(uuid.uuid4()),
@@ -1459,30 +1725,113 @@ class JobManager:
                     matched=bool(hits),
                     call_count=0,
                     elapsed_ms=int((time.monotonic() - started_at) * 1000),
-                    payload={"start_ms": start_ms, "end_ms": end_ms, "cache_key": cache_key},
+                    payload=metric_payload,
                     created_at=now_iso(),
                 )
             )
             return hits
+        provider_call_started = False
         try:
             self._raise_if_canceled(job_id)
+            spend = reserved_spend or (budget.spend(1) if budget is not None else _BudgetSpend(True, 0, 0, 0))
+            if budget is not None and not spend.allowed:
+                self.db.add_recognition_metric(
+                    RecognitionMetric(
+                        id=str(uuid.uuid4()),
+                        job_id=job_id,
+                        source_item_id=item.id,
+                        provider_name=provider.name,
+                        cache_hit=False,
+                        matched=False,
+                        call_count=0,
+                        elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                        payload=payload_with_budget(
+                            budget_exhausted=True,
+                            budget_consumed=0,
+                            budget_remaining_before=spend.before,
+                            budget_remaining_after=spend.after,
+                            outcome="budget_exhausted",
+                            skip_reason="provider-call budget exhausted",
+                        ),
+                        created_at=now_iso(),
+                    )
+                )
+                return []
+            budget_consumed = spend.consumed
+            budget_fields = (
+                {"budget_remaining_before": spend.before, "budget_remaining_after": spend.after}
+                if budget is not None
+                else {}
+            )
             self._throttle_provider(provider.name)
             self._raise_if_canceled(job_id)
+            provider_call_started = True
             provider_hits = provider.recognize(excerpt_path, start_ms, end_ms)
             self._raise_if_canceled(job_id)
         except JobCanceled:
+            if budget is not None and reserved_spend is not None and reserved_spend.consumed and not provider_call_started:
+                budget.refund(reserved_spend)
             raise
         except ProviderError as exc:
             if self._is_canceled(job_id):
                 raise JobCanceled() from exc
+            self.db.add_recognition_metric(
+                RecognitionMetric(
+                    id=str(uuid.uuid4()),
+                    job_id=job_id,
+                    source_item_id=item.id,
+                    provider_name=provider.name,
+                    cache_hit=False,
+                    matched=False,
+                    call_count=1,
+                    elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                    payload=payload_with_budget(
+                        provider_call_attempted=True,
+                        budget_consumed=budget_consumed,
+                        **budget_fields,
+                        outcome="provider_error",
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                    ),
+                    created_at=now_iso(),
+                )
+            )
             self.db.add_event(job_id, "warning", f"{provider.name} failed on {item.id}: {exc}")
             return []
         except Exception as exc:
             if self._is_canceled(job_id):
                 raise JobCanceled() from exc
+            self.db.add_recognition_metric(
+                RecognitionMetric(
+                    id=str(uuid.uuid4()),
+                    job_id=job_id,
+                    source_item_id=item.id,
+                    provider_name=provider.name,
+                    cache_hit=False,
+                    matched=False,
+                    call_count=1,
+                    elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                    payload=payload_with_budget(
+                        provider_call_attempted=True,
+                        budget_consumed=budget_consumed,
+                        **budget_fields,
+                        outcome="provider_exception",
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                    ),
+                    created_at=now_iso(),
+                )
+            )
             self.db.add_event(job_id, "warning", f"{provider.name} crashed on {item.id}: {exc}")
             return []
         self.db.set_provider_cache(cache_key, provider.name, json.dumps([candidate.model_dump(mode="json") for candidate in provider_hits]))
+        outcome = "provider_call_matched" if provider_hits else "provider_call_empty"
+        metric_payload = payload_with_budget(
+            provider_call_attempted=True,
+            budget_consumed=budget_consumed,
+            **budget_fields,
+            outcome=outcome,
+        )
         self.db.add_recognition_metric(
             RecognitionMetric(
                 id=str(uuid.uuid4()),
@@ -1493,11 +1842,99 @@ class JobManager:
                 matched=bool(provider_hits),
                 call_count=1,
                 elapsed_ms=int((time.monotonic() - started_at) * 1000),
-                payload={"start_ms": start_ms, "end_ms": end_ms, "cache_key": cache_key},
+                payload=metric_payload,
                 created_at=now_iso(),
             )
         )
         return provider_hits
+
+    def _record_provider_skip_metric(
+        self,
+        job_id: str,
+        item: SourceItem,
+        provider: BaseProvider,
+        start_ms: int,
+        end_ms: int,
+        *,
+        outcome: str,
+        skip_reason: str,
+        budget: "_BudgetCounter | None" = None,
+    ) -> None:
+        budget_fields = {}
+        if budget is not None:
+            remaining = budget.remaining
+            budget_fields = {"budget_remaining_before": remaining, "budget_remaining_after": remaining}
+        self.db.add_recognition_metric(
+            RecognitionMetric(
+                id=str(uuid.uuid4()),
+                job_id=job_id,
+                source_item_id=item.id,
+                provider_name=provider.name,
+                cache_hit=False,
+                matched=False,
+                call_count=0,
+                elapsed_ms=0,
+                payload={
+                    "metric_type": "provider_decision",
+                    "ledger_version": 1,
+                    "outcome": outcome,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "probe_start_ms": start_ms,
+                    "probe_end_ms": end_ms,
+                    "cache_hit": False,
+                    "provider_call_attempted": False,
+                    "budget_consumed": 0,
+                    "budget_exhausted": False,
+                    "skip_reason": skip_reason,
+                    **budget_fields,
+                },
+                created_at=now_iso(),
+            )
+        )
+
+    def _record_budget_exhausted_metric(
+        self,
+        job_id: str,
+        item: SourceItem,
+        start_ms: int,
+        end_ms: int,
+        *,
+        provider: BaseProvider | None = None,
+        budget: "_BudgetCounter | None" = None,
+    ) -> None:
+        budget_fields = {}
+        if budget is not None:
+            remaining = budget.remaining
+            budget_fields = {"budget_remaining_before": remaining, "budget_remaining_after": remaining}
+        self.db.add_recognition_metric(
+            RecognitionMetric(
+                id=str(uuid.uuid4()),
+                job_id=job_id,
+                source_item_id=item.id,
+                provider_name=provider.name if provider else None,
+                cache_hit=False,
+                matched=False,
+                call_count=0,
+                elapsed_ms=0,
+                payload={
+                    "metric_type": "provider_decision",
+                    "ledger_version": 1,
+                    "outcome": "budget_exhausted",
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "probe_start_ms": start_ms,
+                    "probe_end_ms": end_ms,
+                    "cache_hit": False,
+                    "provider_call_attempted": False,
+                    "budget_consumed": 0,
+                    "budget_exhausted": True,
+                    "skip_reason": "provider-call budget exhausted",
+                    **budget_fields,
+                },
+                created_at=now_iso(),
+            )
+        )
 
     def _throttle_provider(self, provider_name: ProviderName) -> None:
         min_interval = max(0.0, self.settings.provider_min_interval_ms / 1000)
@@ -1715,6 +2152,8 @@ class JobManager:
         providers = self.provider_registry.active_providers_for_order(options.provider_order)
         items = {item.id: item for item in self.db.get_source_items(job_id)}
         grouped = self._segments_by_source_item(job_id)
+        budget = _BudgetCounter(options.max_provider_calls)
+        budget_exhausted_recorded = False
         retried_segments = 0
         matched_segments = 0
         remaining_unresolved = 0
@@ -1730,8 +2169,26 @@ class JobManager:
             normalized, excerpt_source = self._ensure_retry_media(job, item, options)
             updated_segments = list(segments)
             for unresolved in pending:
-                retried_segments += 1
-                replacement = self._retry_segment(job, item, unresolved, excerpt_source, providers, options)
+                if budget.remaining <= 0:
+                    if not budget_exhausted_recorded:
+                        self._record_budget_exhausted_metric(
+                            job_id,
+                            item,
+                            unresolved.start_ms,
+                            unresolved.end_ms,
+                            budget=budget,
+                        )
+                        budget_exhausted_recorded = True
+                    break
+                replacement = self._retry_segment(
+                    job,
+                    item,
+                    unresolved,
+                    excerpt_source,
+                    providers,
+                    options,
+                    budget=budget,
+                )
                 for index, candidate in enumerate(updated_segments):
                     if (
                         candidate.source_item_id == unresolved.source_item_id
@@ -1740,12 +2197,14 @@ class JobManager:
                     ):
                         updated_segments[index] = replacement
                         break
-                if replacement.kind == SegmentKind.MATCHED_TRACK:
+                retry_had_work = self._segment_retry_had_work(unresolved, replacement)
+                if retry_had_work:
+                    retried_segments += 1
+                if retry_had_work and replacement.kind == SegmentKind.MATCHED_TRACK:
                     matched_segments += 1
-                else:
-                    remaining_unresolved += 1
             self.db.replace_segments(job_id, item_id, updated_segments)
             self._record_item_summary_metric(job_id, item_id, updated_segments)
+            remaining_unresolved += sum(1 for segment in updated_segments if segment.kind == SegmentKind.MUSIC_UNRESOLVED)
         self.db.add_event(
             job_id,
             "info",
@@ -1756,6 +2215,14 @@ class JobManager:
             "matched_segments": matched_segments,
             "remaining_unresolved_segments": remaining_unresolved,
         }
+
+    def _segment_retry_had_work(self, before: DetectedSegment, after: DetectedSegment) -> bool:
+        return (
+            after.probe_count > before.probe_count
+            or after.provider_attempts > before.provider_attempts
+            or after.kind != before.kind
+            or after.track != before.track
+        )
 
     def _segments_by_source_item(self, job_id: str) -> dict[str, list[DetectedSegment]]:
         grouped: dict[str, list[DetectedSegment]] = {}
@@ -1811,6 +2278,8 @@ class JobManager:
         excerpt_source: Path,
         providers: list[BaseProvider],
         options: JobOptions,
+        *,
+        budget: "_BudgetCounter | None" = None,
     ) -> DetectedSegment:
         drafts = SegmentDraft(
             start_ms=segment.start_ms,
@@ -1827,19 +2296,86 @@ class JobManager:
         candidates: list[TrackCandidate] = []
         provider_attempts = 0
         probe_count = 0
+        budget_exhausted_logged = False
         for retry_start, retry_end, reason in self._retry_windows(segment, options.max_probes_per_segment):
-            probe_count += 1
+            probed_window = False
             excerpt_path = build_excerpt_path(excerpts_dir, excerpt_source, retry_start, retry_end, f"retry-{reason}")
-            if not excerpt_path.exists():
-                create_excerpt(excerpt_source, retry_start, retry_end, excerpt_path)
+            if not self._can_check_or_call_provider(budget, excerpt_path):
+                if not budget_exhausted_logged:
+                    self._record_budget_exhausted_metric(job.id, item, retry_start, retry_end, budget=budget)
+                    budget_exhausted_logged = True
+                break
+            provider_loop_exhausted = False
             for provider in providers:
                 state = provider.state()
                 if not state.available:
+                    self._record_provider_skip_metric(
+                        job.id,
+                        item,
+                        provider,
+                        retry_start,
+                        retry_end,
+                        outcome="provider_unavailable",
+                        skip_reason=state.reason or "provider unavailable",
+                        budget=budget,
+                    )
                     continue
-                provider_attempts += 1
-                candidates.extend(
-                    self._recognize_with_cache(job.id, item, provider, excerpt_path, retry_start, retry_end)
+                if (
+                    options.prefer_free_providers
+                    and self._is_paid_provider(provider)
+                    and self._candidates_have_strong_free_hit(candidates)
+                ):
+                    self._record_provider_skip_metric(
+                        job.id,
+                        item,
+                        provider,
+                        retry_start,
+                        retry_end,
+                        outcome="prefer_free_skip",
+                        skip_reason="strong free-provider hit already available",
+                        budget=budget,
+                    )
+                    continue
+                reserved_spend = self._ensure_excerpt_for_provider_call(
+                    excerpt_source,
+                    retry_start,
+                    retry_end,
+                    excerpt_path,
+                    budget,
                 )
+                if reserved_spend is not None and not reserved_spend.allowed:
+                    if not budget_exhausted_logged:
+                        self._record_budget_exhausted_metric(
+                            job.id, item, retry_start, retry_end, provider=provider, budget=budget
+                        )
+                        budget_exhausted_logged = True
+                    provider_loop_exhausted = True
+                    break
+                budget_state: dict[str, object] = {}
+                candidates.extend(
+                    self._recognize_with_cache(
+                        job.id,
+                        item,
+                        provider,
+                        excerpt_path,
+                        retry_start,
+                        retry_end,
+                        budget=budget,
+                        reserved_spend=reserved_spend if reserved_spend and reserved_spend.consumed else None,
+                        budget_state=budget_state,
+                    )
+                )
+                if budget_state.get("provider_call_attempted"):
+                    provider_attempts += 1
+                if budget_state.get("provider_call_attempted") or budget_state.get("cache_hit"):
+                    probed_window = True
+                if budget_state.get("budget_exhausted"):
+                    provider_loop_exhausted = True
+                    break
+            if probed_window:
+                probe_count += 1
+            if provider_loop_exhausted:
+                break
         drafts.probe_count = probe_count
         drafts.provider_attempts = provider_attempts
         drafts.candidates = candidates
@@ -1852,13 +2388,18 @@ class JobManager:
             retried = self._candidate_to_detected(item.id, drafts, best, reused=False)
             retried = retried.model_copy(
                 update={
+                    "probe_count": segment.probe_count + retried.probe_count,
+                    "provider_attempts": segment.provider_attempts + retried.provider_attempts,
                     "explanation": [
                         "Recovered by retrying an unresolved region.",
+                        *segment.explanation,
                         *retried.explanation,
                     ]
                 }
             )
             return retried
+        if probe_count == 0 and provider_attempts == 0 and not candidates:
+            return segment
         return segment.model_copy(
             update={
                 "probe_count": segment.probe_count + probe_count,
