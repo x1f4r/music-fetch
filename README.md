@@ -61,13 +61,20 @@ music-fetch job <job-id> --human
 music-fetch watch <job-id>
 music-fetch metrics <job-id>
 music-fetch metrics <job-id> --json
+music-fetch metrics <job-id> --provider audd --outcome provider_error --summary-only --json
 ```
 
 `music-fetch job <job-id>` remains JSON by default for scripts. `watch` exits `0`
 for `succeeded` and `partial_failed`, `1` for `failed` or `canceled`, and `2`
 on timeout. `music-fetch metrics <job-id>` summarizes provider calls, cache hits,
-budget exhaustion, and recognition outcomes. If a detached worker dies and leaves
-an old job stuck in `queued`/`running`, preview recovery with
+budget exhaustion, and recognition outcomes; use filters such as `--provider`,
+`--outcome`, `--metric-type`, `--source-item-id`, `--matched/--unmatched`,
+`--cache-hit/--cache-miss`, and `--summary-only` for smaller JSON output or
+focused debugging. Repeated values for one filter are ORed; different filter
+types are ANDed. Filtered summaries are computed after filtering, and
+`--summary-only` omits the raw `metrics` array. If a detached worker dies and
+leaves an old job stuck in
+`queued`/`running`, preview recovery with
 `music-fetch recover-jobs`, then mark matching stale jobs failed with
 `music-fetch recover-jobs --apply`.
 

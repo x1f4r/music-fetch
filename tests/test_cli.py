@@ -448,6 +448,7 @@ def test_metrics_json_summarizes_provider_ledger(monkeypatch) -> None:
     payload = json.loads(result.stdout)
     assert payload["schema_version"] == 2
     assert payload["job_id"] == "job-1"
+    assert set(payload) == {"schema_version", "job_id", "job", "summary", "metrics"}
     assert payload["job"]["status"] == "queued"
     assert payload["job"]["max_provider_calls"] == 420
     assert payload["job"]["provider_order"] == ["local_catalog", "vibra", "audd", "acrcloud"]
@@ -473,6 +474,126 @@ def test_metrics_json_summarizes_provider_ledger(monkeypatch) -> None:
     assert providers["vibra"]["provider_calls"] == 1
 
 
+def test_metrics_json_filters_by_provider_outcome_and_type(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(
+        app,
+        [
+            "metrics",
+            "job-1",
+            "--json",
+            "--provider",
+            "VIBRA",
+            "--outcome",
+            "provider_call_matched",
+            "--metric-type",
+            "provider_attempt",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    payload = json.loads(result.stdout)
+    assert payload["filters"] == {
+        "providers": ["vibra"],
+        "outcomes": ["provider_call_matched"],
+        "metric_types": ["provider_attempt"],
+    }
+    assert len(payload["metrics"]) == 1
+    assert payload["metrics"][0]["id"] == "metric-1"
+    assert payload["summary"]["totals"]["metrics"] == 1
+    assert payload["summary"]["totals"]["provider_calls"] == 1
+
+
+def test_metrics_repeated_filters_or_within_dimension_and_across_dimensions(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(
+        app,
+        [
+            "metrics",
+            "job-1",
+            "--json",
+            "--provider",
+            "vibra",
+            "--provider",
+            "audd",
+            "--metric-type",
+            "provider_attempt",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    payload = json.loads(result.stdout)
+    assert payload["filters"]["providers"] == ["audd", "vibra"]
+    assert [metric["id"] for metric in payload["metrics"]] == ["metric-1", "metric-2"]
+    assert payload["summary"]["metric_types"] == {"provider_attempt": 2}
+
+
+def test_metrics_summary_only_omits_raw_rows(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1", "--json", "--summary-only"])
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    payload = json.loads(result.stdout)
+    assert "metrics" not in payload
+    assert payload["summary"]["totals"]["metrics"] == 8
+
+
+def test_metrics_filters_by_source_item(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1", "--json", "--source-item-id", "item-2"])
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    payload = json.loads(result.stdout)
+    assert payload["filters"]["source_item_id"] == "item-2"
+    assert [metric["id"] for metric in payload["metrics"]] == ["metric-7"]
+    assert payload["summary"]["outcomes"] == {"item_summary": 1}
+
+
+def test_metrics_filter_with_no_matches_is_successful(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1", "--json", "--provider", "missing-provider"])
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    payload = json.loads(result.stdout)
+    assert payload["filters"]["providers"] == ["missing-provider"]
+    assert payload["metrics"] == []
+    assert payload["summary"]["totals"]["metrics"] == 0
+    assert payload["summary"]["providers"] == []
+
+
+def test_metrics_filters_by_boolean_flags(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    matched = runner.invoke(app, ["metrics", "job-1", "--json", "--matched"])
+    cache_hit = runner.invoke(app, ["metrics", "job-1", "--json", "--cache-hit"])
+
+    assert matched.exit_code == 0
+    assert cache_hit.exit_code == 0
+    assert calls == [{"recover_orphans": False}, {"recover_orphans": False}]
+    matched_payload = json.loads(matched.stdout)
+    cache_hit_payload = json.loads(cache_hit.stdout)
+    assert matched_payload["filters"] == {"matched": True}
+    assert [metric["id"] for metric in matched_payload["metrics"]] == ["metric-1"]
+    assert cache_hit_payload["filters"] == {"cache_hit": True}
+    assert [metric["id"] for metric in cache_hit_payload["metrics"]] == ["metric-2"]
+
+
 def test_metrics_human_output_highlights_providers(monkeypatch) -> None:
     factory, calls = read_only_context_factory(DummyContext())
     monkeypatch.setattr("music_fetch.cli.create_context", factory)
@@ -488,6 +609,72 @@ def test_metrics_human_output_highlights_providers(monkeypatch) -> None:
     assert "Max provider calls: 420" in result.stdout
     assert "vibra" in result.stdout
     assert "job" in result.stdout
+
+
+def test_metrics_human_output_shows_filters(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1", "--provider", "job", "--metric-type", "item_summary"])
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    assert "Filters:" in result.stdout
+    assert "providers: job" in result.stdout
+    assert "metric_types: item_summary" in result.stdout
+    assert "item_summary" in result.stdout
+
+
+def test_metrics_human_output_shows_boolean_filters(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    positive = runner.invoke(app, ["metrics", "job-1", "--matched", "--cache-hit"])
+    negative = runner.invoke(app, ["metrics", "job-1", "--unmatched", "--cache-miss"])
+
+    assert positive.exit_code == 0
+    assert negative.exit_code == 0
+    assert calls == [{"recover_orphans": False}, {"recover_orphans": False}]
+    assert "Filters:" in positive.stdout
+    assert "matched: true" in positive.stdout
+    assert "cache_hit: true" in positive.stdout
+    assert "Filters:" in negative.stdout
+    assert "matched: false" in negative.stdout
+    assert "cache_hit: false" in negative.stdout
+
+
+def test_metrics_summary_only_requires_json(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1", "--summary-only"])
+
+    assert result.exit_code != 0
+    assert calls == []
+    assert "--summary-only requires --json" in result.output
+
+
+def test_metrics_human_filter_without_matches_is_clear(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1", "--provider", "missing-provider"])
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    assert "No recognition metrics match the active filters." in result.stdout
+
+
+def test_metrics_human_false_filter_without_matches_is_clear(monkeypatch) -> None:
+    factory, calls = read_only_context_factory(DummyContext())
+    monkeypatch.setattr("music_fetch.cli.create_context", factory)
+
+    result = runner.invoke(app, ["metrics", "job-1", "--cache-miss", "--provider", "audd"])
+
+    assert result.exit_code == 0
+    assert calls == [{"recover_orphans": False}]
+    assert "cache_hit: false" in result.stdout
+    assert "No recognition metrics match the active filters." in result.stdout
 
 
 def test_metrics_handles_jobs_without_metrics(monkeypatch) -> None:
