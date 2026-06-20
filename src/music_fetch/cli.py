@@ -10,6 +10,7 @@ import time
 
 import typer
 import uvicorn
+from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
 
@@ -58,19 +59,62 @@ def _job_create(
     max_provider_calls: int = 420,
     provider_order: list[ProviderName] | None = None,
 ) -> JobCreate:
-    options = JobOptions(
-        prefer_separation=prefer_separation,
-        analysis_mode=analysis_mode,
-        recall_profile=recall_profile,
-        enable_metadata_hints=metadata_hints,
-        enable_repeat_detection=repeat_detection,
-        max_windows=max_windows,
-        max_segments=max_segments,
-        max_probes_per_segment=max_probes_per_segment,
-        max_provider_calls=max_provider_calls,
-        provider_order=provider_order or JobOptions().provider_order,
-    )
-    return JobCreate(inputs=inputs, options=options)
+    try:
+        return JobCreate(
+            inputs=inputs,
+            options=_job_options(
+                prefer_separation=prefer_separation,
+                analysis_mode=analysis_mode,
+                recall_profile=recall_profile,
+                metadata_hints=metadata_hints,
+                repeat_detection=repeat_detection,
+                max_windows=max_windows,
+                max_segments=max_segments,
+                max_probes_per_segment=max_probes_per_segment,
+                max_provider_calls=max_provider_calls,
+                provider_order=provider_order,
+            ),
+        )
+    except ValidationError as exc:
+        raise typer.BadParameter(_format_validation_error(exc)) from exc
+
+
+def _job_options(
+    *,
+    prefer_separation: bool = True,
+    analysis_mode: AnalysisMode = AnalysisMode.AUTO,
+    recall_profile: RecallProfile = RecallProfile.MAX_RECALL,
+    metadata_hints: bool = True,
+    repeat_detection: bool = True,
+    max_windows: int = 24,
+    max_segments: int = 360,
+    max_probes_per_segment: int = 3,
+    max_provider_calls: int = 420,
+    provider_order: list[ProviderName] | None = None,
+) -> JobOptions:
+    try:
+        return JobOptions(
+            prefer_separation=prefer_separation,
+            analysis_mode=analysis_mode,
+            recall_profile=recall_profile,
+            enable_metadata_hints=metadata_hints,
+            enable_repeat_detection=repeat_detection,
+            max_windows=max_windows,
+            max_segments=max_segments,
+            max_probes_per_segment=max_probes_per_segment,
+            max_provider_calls=max_provider_calls,
+            provider_order=provider_order or JobOptions().provider_order,
+        )
+    except ValidationError as exc:
+        raise typer.BadParameter(_format_validation_error(exc)) from exc
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    messages = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error.get("loc", ())) or "value"
+        messages.append(f"{location}: {error.get('msg', 'invalid value')}")
+    return "; ".join(messages)
 
 
 def _status_value(value: object) -> str:
@@ -933,8 +977,7 @@ def retry_segments(
     provider_order: list[ProviderName] | None = typer.Option(None, "--provider-order"),
 ) -> None:
     context = create_context()
-    options = _job_create(
-        [],
+    options = _job_options(
         prefer_separation=prefer_separation,
         analysis_mode=analysis_mode,
         recall_profile=recall_profile,
@@ -945,7 +988,7 @@ def retry_segments(
         max_probes_per_segment=max_probes_per_segment,
         max_provider_calls=max_provider_calls,
         provider_order=provider_order,
-    ).options
+    )
     result = context.manager.retry_unresolved_segments(job_id, source_item_id=source_item_id, options_override=options)
     payload = {"job_id": job_id, **result}
     if json_output:

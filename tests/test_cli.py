@@ -421,6 +421,41 @@ def test_submit_passes_job_options(monkeypatch) -> None:
     assert context.manager.payload.options.prefer_separation is False
 
 
+def test_submit_rejects_blank_inputs(monkeypatch) -> None:
+    context = DummyContext()
+    monkeypatch.setattr("music_fetch.cli.create_context", lambda: context)
+    monkeypatch.setattr("music_fetch.cli._spawn_worker", lambda job_id: None)
+
+    result = runner.invoke(app, ["submit", "  "])
+
+    assert result.exit_code != 0
+    assert "inputs" in result.output
+    assert not hasattr(context.manager, "payload")
+
+
+def test_submit_rejects_pathological_options(monkeypatch) -> None:
+    context = DummyContext()
+    monkeypatch.setattr("music_fetch.cli.create_context", lambda: context)
+    monkeypatch.setattr("music_fetch.cli._spawn_worker", lambda job_id: None)
+
+    result = runner.invoke(app, ["submit", "https://example.com/test", "--max-segments", "0"])
+
+    assert result.exit_code != 0
+    assert "max_segments" in result.output
+    assert not hasattr(context.manager, "payload")
+
+
+def test_retry_rejects_pathological_options_without_requiring_inputs(monkeypatch) -> None:
+    context = DummyContext()
+    monkeypatch.setattr("music_fetch.cli.create_context", lambda: context)
+
+    result = runner.invoke(app, ["retry", "job-1", "--max-probes-per-segment", "0"])
+
+    assert result.exit_code != 0
+    assert "max_probes_per_segment" in result.output
+    assert not hasattr(context.manager, "retry_payload")
+
+
 def test_jobs_lists_recent_jobs(monkeypatch) -> None:
     context = DummyContext()
     factory, calls = read_only_context_factory(context)

@@ -103,6 +103,24 @@ def test_create_job_endpoint(tmp_path) -> None:
     assert response.json()["job_id"] == "job-1"
 
 
+def test_create_job_endpoint_rejects_invalid_inputs_and_options() -> None:
+    manager = DummyManager()
+    context = AppContext(settings=type("Settings", (), {"api_token": None})(), db=DummyDb(), manager=manager)
+    client = TestClient(create_api(context))
+
+    empty = client.post("/v1/jobs", json={"inputs": [], "options": {}})
+    blank = client.post("/v1/jobs", json={"inputs": ["  "], "options": {}})
+    pathological = client.post(
+        "/v1/jobs",
+        json={"inputs": ["https://example.com/video"], "options": {"max_segments": 0, "segment_workers": 33}},
+    )
+
+    assert empty.status_code == 422
+    assert blank.status_code == 422
+    assert pathological.status_code == 422
+    assert manager.submitted == []
+
+
 def test_storage_and_library_endpoints() -> None:
     manager = DummyManager()
     context = AppContext(settings=type("Settings", (), {"api_token": None})(), db=DummyDb(), manager=manager)
@@ -216,6 +234,28 @@ def test_upload_endpoint_sanitizes_filename_and_accepts_options(tmp_path) -> Non
     assert submitted.options.analysis_mode.value == "single_track"
     assert submitted.options.prefer_separation is False
     assert ".." not in submitted.inputs[0]
+
+
+def test_upload_endpoint_rejects_invalid_options(tmp_path) -> None:
+    manager = DummyManager()
+    settings = type(
+        "Settings",
+        (),
+        {"api_token": None, "cache_dir": tmp_path, "max_upload_bytes": 4 * 1024 * 1024 * 1024},
+    )()
+    context = AppContext(settings=settings, db=DummyDb(), manager=manager)
+    client = TestClient(create_api(context))
+
+    response = client.post(
+        "/v1/uploads",
+        data={"options_json": '{"max_probes_per_segment":0}'},
+        files={"file": ("song.wav", b"wav", "audio/wav")},
+    )
+
+    assert response.status_code == 400
+    assert "Invalid options_json" in response.json()["detail"]
+    assert manager.submitted == []
+    assert not (tmp_path / "uploads").exists()
 
 
 def test_retry_correct_and_export_endpoints() -> None:
