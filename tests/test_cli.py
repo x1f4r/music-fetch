@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import re
 from typer.testing import CliRunner
 
 from music_fetch.cli import app
 
 
 runner = CliRunner()
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def plain_output(output: str) -> str:
+    return ANSI_RE.sub("", output)
 
 
 class DumpModel:
@@ -686,7 +692,7 @@ def test_metrics_summary_only_requires_json(monkeypatch) -> None:
 
     assert result.exit_code != 0
     assert calls == []
-    assert "--summary-only requires --json" in result.output
+    assert "--summary-only requires --json" in plain_output(result.output)
 
 
 def test_metrics_human_filter_without_matches_is_clear(monkeypatch) -> None:
@@ -803,7 +809,7 @@ def test_job_rejects_conflicting_output_modes(monkeypatch) -> None:
 
     assert result.exit_code != 0
     assert calls == []
-    assert "Use either --json or --human" in result.output
+    assert "Use either --json or --human" in plain_output(result.output)
 
 
 def test_job_unknown_id_exits_with_error(monkeypatch) -> None:
@@ -891,7 +897,7 @@ def test_watch_rejects_tight_poll_interval(monkeypatch) -> None:
 
     assert result.exit_code != 0
     assert calls == []
-    assert "--interval must be >=" in result.output
+    assert "--interval must be >=" in plain_output(result.output)
 
 
 def test_retry_command_passes_overrides(monkeypatch) -> None:

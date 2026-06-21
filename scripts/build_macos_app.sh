@@ -8,6 +8,9 @@ INSTALL_DIR="/Applications/$APP_NAME.app"
 BUILD_DIR="$ROOT_DIR/macos/.build/release"
 EXECUTABLE="$BUILD_DIR/MusicFetchMac"
 APP_BACKEND_COMMAND="${MUSIC_FETCH_BACKEND_COMMAND:-music-fetch}"
+BUNDLE_IDENTIFIER="${MUSIC_FETCH_BUNDLE_IDENTIFIER:-local.musicfetch.app}"
+DEFAULT_CODESIGN_REQUIREMENT="designated => identifier \"$BUNDLE_IDENTIFIER\""
+CODESIGN_REQUIREMENT="${MUSIC_FETCH_CODESIGN_REQUIREMENT:-$DEFAULT_CODESIGN_REQUIREMENT}"
 ICON_SCRIPT="$ROOT_DIR/scripts/generate_app_icon.py"
 ICON_ICNS="$ROOT_DIR/assets/app_icon/MusicFetch.icns"
 INSTALL_APP=0
@@ -42,7 +45,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key>
   <string>MusicFetchMac</string>
   <key>CFBundleIdentifier</key>
-  <string>local.musicfetch.app</string>
+  <string>${BUNDLE_IDENTIFIER}</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -65,18 +68,38 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP_DIR"
+# Keep the local TCC permission identity stable across ad hoc replacement builds.
+codesign --force --deep --sign - --requirements "=$CODESIGN_REQUIREMENT" "$APP_DIR"
 echo "Built $APP_DIR"
 
 if [[ "$INSTALL_APP" -eq 1 ]]; then
   osascript -e 'tell application "Music Fetch" to quit' >/dev/null 2>&1 || true
   sleep 1
 
+  BACKUP_DIR=""
   if [[ -e "$INSTALL_DIR" ]]; then
-    mv "$INSTALL_DIR" "$INSTALL_DIR.previous"
+    BACKUP_DIR="$INSTALL_DIR.previous.$(date +%Y%m%d%H%M%S)"
+    mv "$INSTALL_DIR" "$BACKUP_DIR"
   fi
 
-  ditto "$APP_DIR" "$INSTALL_DIR"
-  rm -rf "$INSTALL_DIR.previous"
+  if ! ditto "$APP_DIR" "$INSTALL_DIR"; then
+    if [[ -n "$BACKUP_DIR" && -e "$BACKUP_DIR" ]]; then
+      rm -rf "$INSTALL_DIR"
+      mv "$BACKUP_DIR" "$INSTALL_DIR"
+    fi
+    exit 1
+  fi
+
+  if ! codesign --verify --deep --strict "$INSTALL_DIR"; then
+    if [[ -n "$BACKUP_DIR" && -e "$BACKUP_DIR" ]]; then
+      rm -rf "$INSTALL_DIR"
+      mv "$BACKUP_DIR" "$INSTALL_DIR"
+    fi
+    exit 1
+  fi
+
   echo "Installed $INSTALL_DIR"
+  if [[ -n "$BACKUP_DIR" ]]; then
+    echo "Previous app backup: $BACKUP_DIR"
+  fi
 fi

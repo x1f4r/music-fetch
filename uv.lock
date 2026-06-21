@@ -855,6 +855,13 @@ test = [
     { name = "pytest-asyncio" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pillow" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "audio-separator", extras = ["cpu"], marker = "extra == 'separation'", specifier = ">=0.42.0" },
@@ -878,6 +885,13 @@ requires-dist = [
     { name = "yt-dlp", specifier = ">=2026.1.29" },
 ]
 provides-extras = ["separation", "test"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pillow", specifier = ">=10.0.0" },
+    { name = "pytest", specifier = ">=8.3.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+]
 
 [[package]]
 name = "networkx"

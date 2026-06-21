@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON: "3.12"
+
+jobs:
+  tests:
+    name: Python tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test tools
+        run: brew install uv ffmpeg chromaprint
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Run pytest
+        run: uv run --python 3.12 pytest
+
+  macos-app:
+    name: macOS app build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        run: brew install uv
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Build app bundle
+        run: ./scripts/build_macos_app.sh
+      - name: Verify app signature identity
+        run: |
+          codesign --verify --deep --strict "dist/Music Fetch.app"
+          codesign -dvvv -r- "dist/Music Fetch.app" 2>&1 | grep 'designated => identifier "local.musicfetch.app"'
