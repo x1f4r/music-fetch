@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Python tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        run: brew install uv
+      - name: Run pytest
+        run: uv run pytest
+
+  macos-app:
+    name: macOS app build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        run: brew install uv
+      - name: Build app bundle
+        run: ./scripts/build_macos_app.sh
+      - name: Verify app signature identity
+        run: |
+          codesign --verify --deep --strict "dist/Music Fetch.app"
+          codesign -dvvv -r- "dist/Music Fetch.app" 2>&1 | grep 'designated => identifier "local.musicfetch.app"'
