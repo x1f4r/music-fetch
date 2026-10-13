@@ -2,16 +2,21 @@
 
 use clap::Parser;
 
+mod library;
+
 #[derive(Parser)]
 #[command(name = "mf", version, about = "Music Fetch engine CLI")]
 enum Cli {
     /// Print the engine version.
     Version,
+    #[command(flatten)]
+    Library(library::Command),
 }
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse() {
         Cli::Version => println!("{}", mfcore::core_version()),
+        Cli::Library(command) => library::run(command)?,
     }
     Ok(())
 }
