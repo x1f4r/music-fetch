@@ -22,5 +22,13 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "gzip", "brotli", "multipart", "http2", "charset", "query", "form"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
+# shazam, providers
+realfft = "3.5"
+crc32fast = "1.5"
+base64 = "0.23"
+sha2 = "0.11"
+sha1 = "0.11"
+hmac = "0.13"
+percent-encoding = "2.3"
 
 [dev-dependencies]

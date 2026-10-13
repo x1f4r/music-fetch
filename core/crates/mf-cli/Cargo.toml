@@ -15,3 +15,5 @@ tokio.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
+# shazam
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
