@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.local/bin:$PATH"
 export MFIDX_ROOT="${MFIDX_ROOT:-$HOME/melody-build}"
 LOGS="$MFIDX_ROOT/logs"
-COPY_TO="${MFIDX_COPY_TO:-mac:Documents/projects/music-fetch-data}"
+# Optional rsync destination for the results, e.g. "workstation:music-fetch-data".
+COPY_TO="${MFIDX_COPY_TO:-}"
 
 exec 3>&2  # pipeline.out: one line per step, whatever the step's own redirection
 
@@ -45,9 +46,11 @@ run export > "$LOGS/export.out" 2>&1 || exit 1
 run eval-synth > "$LOGS/eval-synth.out" 2>&1
 run eval-chad > "$LOGS/eval-chad.out" 2>&1
 
-if rsync -a "$MFIDX_ROOT/out/" "$COPY_TO/melody/" && rsync -a "$MFIDX_ROOT/eval/" "$COPY_TO/eval/"; then
+if [[ -z "$COPY_TO" ]]; then
+  echo "$(date '+%F %T') results are in $MFIDX_ROOT/out and $MFIDX_ROOT/eval" >&2
+elif rsync -a "$MFIDX_ROOT/out/" "$COPY_TO/melody/" && rsync -a "$MFIDX_ROOT/eval/" "$COPY_TO/eval/"; then
   echo "$(date '+%F %T') copied results to $COPY_TO" >&2
 else
-  echo "$(date '+%F %T') copy to $COPY_TO failed; run scripts/fetch-results.sh on the Mac" >&2
+  echo "$(date '+%F %T') copy to $COPY_TO failed; run scripts/fetch-results.sh on your workstation" >&2
 fi
 echo "$(date '+%F %T') pipeline finished" >&2
