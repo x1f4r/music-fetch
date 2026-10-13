@@ -1,5 +1,7 @@
 //! `mf`: developer CLI for the Music Fetch engine.
 
+mod lyrics;
+
 use clap::Parser;
 
 mod library;
@@ -17,6 +19,7 @@ enum Cli {
     Media(media::Command),
     Shazam(shazam::Command),
     Links(links::LinksCommand),
+    Lyrics(lyrics::Command),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -26,6 +29,7 @@ fn main() -> anyhow::Result<()> {
         Cli::Media(command) => media::run(command)?,
         Cli::Shazam(command) => shazam::run(command)?,
         Cli::Links(command) => links::run(command)?,
+        Cli::Lyrics(command) => lyrics::run(command)?,
     }
     Ok(())
 }

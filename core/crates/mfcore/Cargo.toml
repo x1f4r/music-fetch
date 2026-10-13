@@ -43,5 +43,8 @@ regex = "1.11"
 unicode-normalization = "0.1.24"
 lru = "0.18"
 strsim = "0.11"
+# lyrics
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+unicode-normalization = "0.1"
 
 [dev-dependencies]
