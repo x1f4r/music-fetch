@@ -727,9 +727,10 @@ impl Live {
             return;
         }
         self.ctx.emitter.flush_pitch();
-        let frames = (self.pitch.is_some() && !self.frames.is_empty()).then(|| std::mem::take(&mut self.frames));
         let capture = std::mem::take(&mut self.capture);
-        match hum::run_impression_detailed(&self.ctx, &capture, frames).await {
+        // The live frames drive the trace and the detector; matching re-tracks the
+        // whole capture offline, which measured a few points better on MIR-QBSH.
+        match hum::run_impression_detailed(&self.ctx, &capture, None).await {
             Ok((outcome, candidates)) => {
                 let top = candidates.first().map(|c| &c.track);
                 let update = SessionUpdate {
