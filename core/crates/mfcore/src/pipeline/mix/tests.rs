@@ -1,6 +1,6 @@
 use super::*;
 use crate::pipeline::hints::{HintSource, TrackHint};
-use crate::pipeline::testutil::{FakeServices, TempPcm, emitter, noise, play, track};
+use crate::pipeline::testutil::{FakeServices, Play, TempPcm, emitter, noise, play, track};
 
 fn songs(pieces: &[Piece]) -> Vec<(u64, u64, String)> {
     pieces
@@ -21,26 +21,30 @@ async fn analyze(services: &FakeServices, pcm: &PcmFile, hints: MixHints) -> Mix
 
 #[tokio::test(flavor = "multi_thread")]
 async fn blind_compilation_with_hard_cuts() {
-    // Eight full-length tracks of 80–100 s back to back.
+    // Six full-length tracks of 64–78 s back to back.
     let mut plays = Vec::new();
     let mut at = 0;
-    for k in 0..8u64 {
-        let len = 80 + (k * 7) % 21;
+    for k in 0..6u64 {
+        let len = 64 + (k * 5) % 15;
         plays.push(play(at, at + len, &track(&format!("Artist {k}"), &format!("Song {k}"), len), 0));
         at += len;
     }
     let audio = noise(at, 1);
     let media = TempPcm::new(&audio);
-    let services = FakeServices::new(audio, plays.clone());
+    let mut services = FakeServices::new(audio, plays.clone());
+    // Catalog previews let the pipeline confirm each answer without a second probe.
+    for p in &plays {
+        services = services.with_preview_of(&p.track, 30, 30);
+    }
     let report = analyze(&services, &media.pcm, MixHints::default()).await;
     let found = songs(&report.pieces);
-    assert_eq!(found.len(), 8, "{found:?}\n{:#?}", report.log);
+    assert_eq!(found.len(), 6, "{found:?}\n{:#?}", report.log);
     for (p, f) in plays.iter().zip(&found) {
         assert_eq!(f.2, p.track.title);
         assert!(close(f.0, p.start_ms / 1000, 3), "{f:?} vs {p:?}");
     }
     // About one probe per track.
-    assert!(services.calls() <= 12, "{} probes: {:#?}", services.calls(), report.log);
+    assert!(services.calls() <= 9, "{} probes: {:#?}", services.calls(), report.log);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -61,6 +65,26 @@ async fn blind_dj_mix_with_partial_plays_and_a_short_track() {
     assert!(close(found[1].0, 190, 12) && close(found[2].0, 380, 12) && close(found[3].0, 440, 12), "{found:?}");
     // Never more than the budget: 660 s / 45 s + 10.
     assert!(services.calls() <= 24);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lone_false_answer_is_dropped() {
+    // An unreleased track the recognizer once mistakes for something else.
+    let a = track("A", "Known One", 150);
+    let c = track("C", "Known Two", 150);
+    let ghost = track("Z", "Misheard", 300);
+    let plays = vec![play(0, 150, &a, 0), play(150, 300, &track("ID", "Unreleased", 150), 0), play(300, 450, &c, 0)];
+    let audio = noise(450, 7);
+    let media = TempPcm::new(&audio);
+    let mut services = FakeServices::new(audio, plays).with_preview_of(&a, 30, 30).with_preview_of(&c, 30, 30);
+    // The recognizer knows neither the unreleased track nor (mostly) anything there.
+    services.overrides.push((150_000, 176_000, Some(ghost)));
+    services.overrides.push((150_000, 300_000, None));
+    services.catalog.retain(|t| t.title != "Unreleased");
+    let report = analyze(&services, &media.pcm, MixHints::default()).await;
+    let titles: Vec<String> = songs(&report.pieces).into_iter().map(|f| f.2).collect();
+    assert!(!titles.contains(&"Misheard".to_string()), "{titles:?}\n{:#?}", report.log);
+    assert!(titles.contains(&"Known One".to_string()) && titles.contains(&"Known Two".to_string()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -148,6 +172,27 @@ async fn a_wrong_hint_is_overruled_by_the_audio() {
     assert_eq!(found[1].2, "Actually Played", "{:#?}", report.log);
     let second = &report.pieces.iter().find(|p| p.start_ms == 130_000).unwrap();
     assert!(second.alternates.iter().any(|t| t.title == "Claimed"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tracklist_that_stops_matching_is_abandoned() {
+    // The first two entries are right; the rest name songs that never play.
+    let real: Vec<Track> = (0..5).map(|k| track(&format!("R{k}"), &format!("Real {k}"), 100)).collect();
+    let wrong: Vec<Track> = (0..3).map(|k| track(&format!("W{k}"), &format!("Wrong {k}"), 100)).collect();
+    let plays: Vec<Play> =
+        real.iter().enumerate().map(|(k, t)| play(k as u64 * 100, k as u64 * 100 + 100, t, 0)).collect();
+    let audio = noise(500, 8);
+    let media = TempPcm::new(&audio);
+    let mut services =
+        FakeServices::new(audio, plays).with_preview_of(&real[0], 30, 30).with_preview_of(&real[1], 30, 30);
+    services.catalog.extend(wrong.iter().cloned());
+    let mut entries = vec![hint(0, &real[0]), hint(100, &real[1])];
+    entries.extend(wrong.iter().enumerate().map(|(k, t)| hint(200 + k as u64 * 100, t)));
+    let list = Tracklist { source: HintSource::Description, entries };
+    let report = analyze(&services, &media.pcm, MixHints { tracklist: Some(list), untimed: Vec::new() }).await;
+    let titles: Vec<String> = songs(&report.pieces).into_iter().map(|f| f.2).collect();
+    assert_eq!(titles, vec!["Real 0", "Real 1", "Real 2", "Real 3", "Real 4"], "{:#?}", report.log);
+    assert!(report.log.iter().any(|l| l.contains("does not match")));
 }
 
 #[test]

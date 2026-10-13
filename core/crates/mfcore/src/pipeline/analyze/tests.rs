@@ -23,6 +23,59 @@ fn validates_links_and_files() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+fn temp_dir() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("mf-analyze-{}", crate::util::new_id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_song_file_is_one_segment() {
+    use crate::pipeline::testutil::{FakeServices, noise, play, session, track};
+    let dir = temp_dir();
+    let audio = noise(200, 21);
+    let path = dir.join("Artist - Song.wav");
+    crate::audio::wav::write_wav(&path, &audio, crate::audio::SAMPLE_RATE).unwrap();
+    let song = track("Artist", "Song", 200);
+    let services = FakeServices::new(audio, vec![play(0, 200, &song, 0)]);
+    let (ctx, events) = session(&dir, SessionKind::File);
+    let input = validate(path.to_str().unwrap()).unwrap();
+    let report = run_with(&ctx, &services, input, AnalyzeMode::Auto, &AnalyzeOptions::default()).await.unwrap();
+    assert_eq!(report.strategy, Strategy::Single, "{:?}", report.log);
+    assert_eq!(report.segments.len(), 1);
+    assert_eq!((report.segments[0].start_ms, report.segments[0].end_ms), (0, 200_000));
+    assert_eq!(report.outcome, Outcome::Completed { identified: 1, total: 1 });
+    // The file name named the song and the first probe confirmed it.
+    assert_eq!(services.calls(), 1);
+    assert_eq!(report.segments[0].tier, crate::model::Tier::Confirmed);
+    let events = events.0.lock();
+    assert!(events.iter().any(|e| matches!(e, crate::model::SessionEvent::Source { .. })));
+    assert!(events.iter().any(|e| matches!(e, crate::model::SessionEvent::Segment { .. })));
+    ctx.cleanup();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_two_song_file_is_a_mix() {
+    use crate::pipeline::testutil::{FakeServices, noise, play, session, track};
+    let dir = temp_dir();
+    let audio = noise(320, 22);
+    let path = dir.join("recording.wav");
+    crate::audio::wav::write_wav(&path, &audio, crate::audio::SAMPLE_RATE).unwrap();
+    let a = track("A", "First", 160);
+    let b = track("B", "Second", 160);
+    let services = FakeServices::new(audio, vec![play(0, 160, &a, 0), play(160, 320, &b, 0)]);
+    let (ctx, _) = session(&dir, SessionKind::File);
+    let input = validate(path.to_str().unwrap()).unwrap();
+    let report = run_with(&ctx, &services, input, AnalyzeMode::Auto, &AnalyzeOptions::default()).await.unwrap();
+    assert_eq!(report.strategy, Strategy::Mix, "{:?}", report.log);
+    let tracks: Vec<_> = report.segments.iter().filter(|s| s.kind == SegmentKind::Track).collect();
+    assert_eq!(tracks.len(), 2, "{:#?}", report.segments);
+    assert!(tracks[1].start_ms.abs_diff(160_000) <= 3_000);
+    ctx.cleanup();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn durations_within_tolerance() {
     assert!(within(212_000, 213_000, 0.12));

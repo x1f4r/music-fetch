@@ -46,6 +46,19 @@ pub struct TrackHint {
 }
 
 impl TrackHint {
+    /// Talk rather than a song: "Interview with …", "Episode 1100 (Intro)", "Outro".
+    pub fn is_talk(&self) -> bool {
+        const TALK: &[&str] = &["interview", "interviews", "talk", "speech", "announcement", "intro", "outro", "q&a"];
+        let artist = self.artist.to_lowercase();
+        if !(artist.is_empty() || artist.contains("episode") || artist.contains("interview")) {
+            return false;
+        }
+        let text = format!("{artist} {}", self.title.to_lowercase());
+        let words: Vec<&str> =
+            text.split(|c: char| !c.is_alphanumeric() && c != '&').filter(|w| !w.is_empty()).collect();
+        words.iter().any(|w| TALK.contains(w))
+    }
+
     /// The entry as a track (title and artist only).
     pub fn to_track(&self) -> Track {
         let artists = split_artists(&self.artist);

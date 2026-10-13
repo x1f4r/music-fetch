@@ -508,6 +508,8 @@ pub struct Metrics {
     precision_version: f64,
     start_error_median_s: f64,
     start_error_p90_s: f64,
+    /// Median of predicted minus true start (negative: predictions come early).
+    start_bias_s: f64,
     splits: usize,
     merges: usize,
     /// Singles: segments beyond one, and whether the song is right.
@@ -631,6 +633,7 @@ fn evaluate_mix(case: &Case, report: &Report) -> anyhow::Result<Metrics> {
     m.precision_version = ratio(correct_version, counted);
     // Start error: the earliest prediction of the same song inside the true span.
     let mut errors: Vec<f64> = Vec::new();
+    let mut signed: Vec<f64> = Vec::new();
     for &g in truth_match.keys() {
         let t = &truth[g];
         let first = predicted
@@ -643,6 +646,7 @@ fn evaluate_mix(case: &Case, report: &Report) -> anyhow::Result<Metrics> {
             .min()
             .unwrap_or(t.start);
         let err = (first as f64 - t.start as f64).abs() / 1000.0;
+        signed.push((first as f64 - t.start as f64) / 1000.0);
         errors.push(err);
         m.start_errors.push((t.label.clone(), err));
     }
@@ -650,6 +654,8 @@ fn evaluate_mix(case: &Case, report: &Report) -> anyhow::Result<Metrics> {
     errors.sort_by(f64::total_cmp);
     m.start_error_median_s = percentile(&errors, 0.5);
     m.start_error_p90_s = percentile(&errors, 0.9);
+    signed.sort_by(f64::total_cmp);
+    m.start_bias_s = percentile(&signed, 0.5);
     // Splits: a true track covered by more than one prediction of that song.
     for &g in &real {
         let t = &truth[g];
@@ -773,7 +779,7 @@ fn summary_line(run: &CaseRun) -> String {
     );
     match run.kind.as_str() {
         "mix" => format!(
-            "{}: recall {:.0} % (v {:.0} %), precision {:.0} % (v {:.0} %), start err {:.1}/{:.1} s, splits {}, merges {}; {calls}",
+            "{}: recall {:.0} % (v {:.0} %), precision {:.0} % (v {:.0} %), start err {:.1}/{:.1} s (bias {:+.1}), splits {}, merges {}; {calls}",
             run.strategy,
             m.recall * 100.0,
             m.recall_version * 100.0,
@@ -781,6 +787,7 @@ fn summary_line(run: &CaseRun) -> String {
             m.precision_version * 100.0,
             m.start_error_median_s,
             m.start_error_p90_s,
+            m.start_bias_s,
             m.splits,
             m.merges
         ),
@@ -805,9 +812,96 @@ fn write_reports(dir: &Path, runs: &[CaseRun]) -> anyhow::Result<()> {
     let md = markdown(runs);
     let md_path = dir.join(format!("mix-eval-{stamp}.md"));
     std::fs::write(&md_path, &md)?;
+    let html_path = dir.join(format!("mix-eval-{stamp}.html"));
+    std::fs::write(&html_path, html(&md))?;
     println!("{md}");
-    eprintln!("reports: {} and {}", md_path.display(), json_path.display());
+    eprintln!("reports: {}, {} and {}", md_path.display(), html_path.display(), json_path.display());
     Ok(())
+}
+
+/// The Markdown report as a self-contained HTML page (headings, tables, lists).
+fn html(md: &str) -> String {
+    fn escape(text: &str) -> String {
+        text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    }
+    fn inline(text: &str) -> String {
+        let escaped = escape(text);
+        let mut out = String::new();
+        for (k, part) in escaped.split("**").enumerate() {
+            if k % 2 == 1 {
+                out += &format!("<strong>{part}</strong>");
+            } else {
+                out += part;
+            }
+        }
+        out
+    }
+    let mut body = String::new();
+    let mut table: Vec<Vec<String>> = Vec::new();
+    let mut list: Vec<String> = Vec::new();
+    let flush = |body: &mut String, table: &mut Vec<Vec<String>>, list: &mut Vec<String>| {
+        if !table.is_empty() {
+            *body += "<table>";
+            for (k, row) in table.iter().enumerate() {
+                let tag = if k == 0 { "th" } else { "td" };
+                *body += "<tr>";
+                for cell in row {
+                    let class =
+                        if k > 0 && cell.chars().next().is_some_and(|c| c.is_ascii_digit()) { " class=n" } else { "" };
+                    *body += &format!("<{tag}{class}>{}</{tag}>", inline(cell));
+                }
+                *body += "</tr>";
+            }
+            *body += "</table>";
+            table.clear();
+        }
+        if !list.is_empty() {
+            *body += "<ul>";
+            for item in list.iter() {
+                *body += &format!("<li>{}</li>", inline(item));
+            }
+            *body += "</ul>";
+            list.clear();
+        }
+    };
+    for line in md.lines() {
+        let line = line.trim_end();
+        if let Some(row) = line.strip_prefix('|') {
+            let cells: Vec<String> = row.trim_end_matches('|').split('|').map(|c| c.trim().to_string()).collect();
+            if cells.iter().all(|c| c.chars().all(|ch| ch == '-' || ch == ':')) {
+                continue;
+            }
+            table.push(cells);
+            continue;
+        }
+        if let Some(item) = line.strip_prefix("- ") {
+            list.push(item.to_string());
+            continue;
+        }
+        flush(&mut body, &mut table, &mut list);
+        if let Some(h) = line.strip_prefix("### ") {
+            body += &format!("<h3>{}</h3>", inline(h));
+        } else if let Some(h) = line.strip_prefix("## ") {
+            body += &format!("<h2>{}</h2>", inline(h));
+        } else if let Some(h) = line.strip_prefix("# ") {
+            body += &format!("<h1>{}</h1>", inline(h));
+        } else if !line.is_empty() {
+            body += &format!("<p>{}</p>", inline(line));
+        }
+    }
+    flush(&mut body, &mut table, &mut list);
+    format!(
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width\">\
+         <title>Mix evaluation</title><style>\
+         body{{font:14px/1.45 -apple-system,system-ui,sans-serif;max-width:1180px;margin:32px auto;padding:0 20px;color:#1d1d1f}}\
+         h1{{font-size:26px;margin:0 0 20px}}h2{{font-size:18px;margin:32px 0 10px}}h3{{font-size:15px;margin:20px 0 6px}}\
+         table{{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}}\
+         th,td{{padding:5px 8px;border-bottom:1px solid #e5e5ea;text-align:left;white-space:nowrap}}\
+         th{{font-weight:600;color:#6e6e73;font-size:12px}}td.n{{text-align:right}}\
+         tr:last-child td{{border-bottom:2px solid #c7c7cc}}ul{{margin:4px 0 12px;padding-left:20px;color:#3a3a3c}}\
+         @media(prefers-color-scheme:dark){{body{{background:#1c1c1e;color:#f2f2f7}}th,td{{border-color:#3a3a3c}}ul{{color:#d1d1d6}}}}\
+         </style><body>{body}</body></html>"
+    )
 }
 
 fn chrono_like_stamp() -> String {
@@ -821,7 +915,7 @@ fn markdown(runs: &[CaseRun]) -> String {
         let mixes: Vec<&CaseRun> = runs.iter().filter(|r| r.mode == mode && r.kind == "mix").collect();
         if !mixes.is_empty() {
             out += &format!("## Mixes ({mode})\n\n");
-            out += "| case | min | true | pred | recall | recall (ver.) | precision | precision (ver.) | start err med / p90 s | splits | merges | calls/h |\n";
+            out += "| case | min | true | pred | recall | recall (ver.) | precision | precision (ver.) | start err med / p90 (bias) s | splits | merges | calls/h |\n";
             out += "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
             let (mut truth, mut matched, mut matched_v, mut pred, mut correct, mut correct_v) =
                 (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -834,7 +928,7 @@ fn markdown(runs: &[CaseRun]) -> String {
                     continue;
                 }
                 out += &format!(
-                    "| {} | {:.0} | {} | {} | {:.1} % | {:.1} % | {:.1} % | {:.1} % | {:.1} / {:.1} | {} | {} | {:.1} |\n",
+                    "| {} | {:.0} | {} | {} | {:.1} % | {:.1} % | {:.1} % | {:.1} % | {:.1} / {:.1} ({:+.1}) | {} | {} | {:.1} |\n",
                     r.id,
                     r.duration_s / 60.0,
                     m.truth,
@@ -845,6 +939,7 @@ fn markdown(runs: &[CaseRun]) -> String {
                     m.precision_version * 100.0,
                     m.start_error_median_s,
                     m.start_error_p90_s,
+                    m.start_bias_s,
                     m.splits,
                     m.merges,
                     m.calls_per_hour

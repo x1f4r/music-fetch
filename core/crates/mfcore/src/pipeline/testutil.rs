@@ -197,6 +197,49 @@ impl SessionObserver for Events {
     }
 }
 
+/// A session on an in-memory store with no network services, for running a
+/// pipeline end to end with [`FakeServices`]. The work directory is under `dir`.
+pub fn session(dir: &std::path::Path, kind: SessionKind) -> (crate::pipeline::ctx::SessionCtx, Arc<Events>) {
+    use crate::pipeline::ctx::{EngineCtx, SessionCtx};
+    let store = Arc::new(Store::open_in_memory().expect("store"));
+    store.create_session("s", kind, "test", None, 0).expect("session");
+    let http = crate::links::fetch::test_client();
+    let engine = Arc::new(EngineCtx {
+        config: crate::config::EngineConfig {
+            data_dir: dir.to_string_lossy().into_owned(),
+            cache_dir: dir.to_string_lossy().into_owned(),
+            country: "US".into(),
+            language: "en-US".into(),
+            app_version: "test".into(),
+            media_tools: None,
+            melody_index_manifest_url: String::new(),
+        },
+        shazam: Arc::new(crate::shazam::ShazamClient::new(http.clone(), "US", "en-US")),
+        http,
+        store: store.clone(),
+        budget: Default::default(),
+        credentials: Default::default(),
+        melody: Default::default(),
+        pitch: Default::default(),
+        media: None,
+        decoder: None,
+        speech: None,
+        runtime: tokio::runtime::Handle::current(),
+    });
+    let events = Arc::new(Events::default());
+    let emitter = Emitter::new("s", events.clone(), store);
+    emitter.started(kind);
+    let ctx = SessionCtx {
+        engine,
+        id: "s".into(),
+        cancel: CancelToken::new(),
+        credentials: Default::default(),
+        emitter,
+        work_dir: dir.join("work"),
+    };
+    (ctx, events)
+}
+
 /// An emitter on an in-memory store that records its events.
 pub fn emitter() -> (Emitter, Arc<Events>) {
     let store = Arc::new(Store::open_in_memory().expect("store"));

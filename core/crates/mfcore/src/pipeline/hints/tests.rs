@@ -43,6 +43,22 @@ fn entry_formats() {
 }
 
 #[test]
+fn talk_entries() {
+    let h = |artist: &str, title: &str| TrackHint {
+        start_ms: 0,
+        artist: artist.into(),
+        title: title.into(),
+        is_id: false,
+        raw: String::new(),
+    };
+    assert!(h("", "Interview with Argy").is_talk());
+    assert!(h("Episode 1100 (Intro)", "A State of Trance").is_talk());
+    assert!(h("", "Outro").is_talk());
+    assert!(!h("The xx", "Intro").is_talk());
+    assert!(!h("Argy", "Aria").is_talk());
+}
+
+#[test]
 fn performer_from_media_titles() {
     assert_eq!(performer("Kiasmos live for Cercle at Citadelle de Sisteron, France").as_deref(), Some("Kiasmos"));
     assert_eq!(

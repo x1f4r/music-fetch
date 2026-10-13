@@ -31,7 +31,8 @@ mf eval mixes tools/eval/mixes/manifest.json --mode both \
   in `previews/`.
 - `--mode blind` disables every hint (tracklists, titles, playlist metadata) and
   measures the audio path alone; `hinted` is the product default.
-- Reports (Markdown and JSON) are written to `--report-dir`.
+- Reports (Markdown, HTML and JSON with every predicted segment and the decision
+  log) are written to `--report-dir`.
 
 Run evaluation traffic from a machine other than the one you use the app on, so a
 rate limit never hits your own listening. `run-remote.sh` syncs the source to
