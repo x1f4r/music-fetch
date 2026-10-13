@@ -765,7 +765,6 @@ fn melody_index_with_a_bad_manifest_fails() {
 
 /// The full install path, with an index built from JSONL by the melody builder.
 #[test]
-#[ignore = "needs the melody index builder"]
 fn melody_index_installs_and_swaps_in() {
     let dir = std::env::temp_dir().join(format!("mf-index-build-{}", mfcore::util::new_id()));
     std::fs::create_dir_all(&dir).unwrap();

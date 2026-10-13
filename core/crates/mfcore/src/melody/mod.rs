@@ -7,6 +7,7 @@ pub mod index;
 pub mod matcher;
 pub mod notes;
 pub mod pitch;
+pub mod swiftf0;
 
 pub use detect::ImpressionDetector;
 pub use index::{MelodyIndex, SongMeta};

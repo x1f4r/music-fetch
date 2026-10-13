@@ -36,9 +36,6 @@ pub enum Command {
     Analyze(AnalyzeArgs),
     /// Print a stored session as JSON.
     Session(SessionArgs),
-    /// Install, check or remove the melody index.
-    #[command(subcommand)]
-    Index(IndexCommand),
 }
 
 #[derive(Args, Clone)]
@@ -179,7 +176,6 @@ pub fn run(command: Command) -> Result<()> {
         Command::Listen(args) => listen(args),
         Command::Analyze(args) => analyze(args),
         Command::Session(args) => session(args),
-        Command::Index(command) => run_index(command),
     }
 }
 

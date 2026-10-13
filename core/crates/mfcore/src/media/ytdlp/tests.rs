@@ -212,7 +212,10 @@ fn rejects_non_web_urls() {
     let backend = YtDlpSubprocess::new(config(None, "yt-dlp", &[]));
     let (_, handle, _) = task();
     for url in ["/etc/passwd", "file:///etc/passwd", "ytsearch:abc", "", "-o"] {
-        assert!(matches!(backend.probe(url.into(), false, handle.clone()), Err(PlatformError::Unavailable { .. })), "{url}");
+        assert!(
+            matches!(backend.probe(url.into(), false, handle.clone()), Err(PlatformError::Unavailable { .. })),
+            "{url}"
+        );
     }
 }
 
