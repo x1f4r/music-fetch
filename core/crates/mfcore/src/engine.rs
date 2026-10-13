@@ -419,8 +419,10 @@ impl Engine {
         let body_ctx = ctx.clone();
         let state = self.index.clone();
         Ok(self.spawn_session(ctx, SessionKind::Hum, async move {
-            let _guard = guard;
-            match melody_index::install(&body_ctx, &url).await {
+            let result = melody_index::install(&body_ctx, &url).await;
+            // Allow the next download before anyone hears about this one ending.
+            drop(guard);
+            match result {
                 Ok(manifest) => {
                     let mut available = state.available.lock();
                     if available.as_ref().is_some_and(|m| m.version == manifest.version) {
@@ -580,6 +582,25 @@ impl Engine {
         &self.ctx
     }
 
+    /// Run a custom pipeline as a library session with the engine's guards
+    /// (`Started` first, panics become `Failed { Internal }`, cancellation).
+    /// For tools and tests; the body emits its own terminal event.
+    #[doc(hidden)]
+    pub fn start_custom_session<F, Fut>(
+        &self,
+        kind: SessionKind,
+        observer: Arc<dyn SessionObserver>,
+        body: F,
+    ) -> Result<Arc<AnalysisSession>>
+    where
+        F: FnOnce(Arc<SessionCtx>) -> Fut,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let ctx = self.open_session(kind, "", None, observer, true)?;
+        let future = body(ctx.clone());
+        Ok(self.spawn_session(ctx, kind, future))
+    }
+
     /// Create the session row (when `persist`), its emitter and context, and
     /// register it for cancellation.
     fn open_session(
@@ -703,6 +724,12 @@ impl LiveSession {
 }
 
 impl LiveSession {
+    /// False once the session stopped taking audio (a match, auto-stop, `finish()`,
+    /// cancellation).
+    pub fn is_capturing(&self) -> bool {
+        self.input.is_open()
+    }
+
     /// True when all pushed audio was processed and no recognizer call is running.
     /// Tools use it to feed recordings faster than real time.
     pub fn is_settled(&self) -> bool {

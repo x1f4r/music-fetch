@@ -6,6 +6,7 @@ mod library;
 mod links;
 mod lyrics;
 mod media;
+mod session;
 mod shazam;
 
 #[derive(Parser)]
@@ -23,6 +24,8 @@ enum Cli {
     Links(links::LinksCommand),
     #[command(flatten)]
     Lyrics(lyrics::Command),
+    #[command(flatten)]
+    Session(session::Command),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -33,6 +36,7 @@ fn main() -> anyhow::Result<()> {
         Cli::Shazam(command) => shazam::run(command)?,
         Cli::Links(command) => links::run(command)?,
         Cli::Lyrics(command) => lyrics::run(command)?,
+        Cli::Session(command) => session::run(command)?,
     }
     Ok(())
 }

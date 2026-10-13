@@ -157,6 +157,12 @@ impl LiveInput {
         state.backlog_ms = 0.0;
     }
 
+    /// False once the session stopped listening (pushes are ignored).
+    pub fn is_open(&self) -> bool {
+        let state = self.state.lock();
+        !state.closed && !state.finished
+    }
+
     /// Queued audio not yet processed.
     pub fn backlog_ms(&self) -> u64 {
         self.state.lock().backlog_ms.max(0.0) as u64
@@ -820,6 +826,11 @@ fn percentile(sorted: &[f32], p: f32) -> f32 {
 const BLOCK_RATE: f32 = SAMPLE_RATE as f32 / BLOCK as f32;
 /// Speech analysis window and hop, in level blocks (≈ 2 s and 1 s).
 const SPEECH_WINDOW: usize = 60;
+/// Level range (p90 − p10) of a speech window: pauses between words. Music
+/// stays within ~6–16 dB, speech spans 25 dB and more.
+const SPEECH_DEPTH_DB: f32 = 20.0;
+/// Minimum share of envelope modulation at syllable rate.
+const SPEECH_SYLLABIC: f32 = 0.2;
 const SPEECH_HOP: usize = 30;
 
 /// Share of audible ~2 s windows that look like speech: deep syllabic level
@@ -854,7 +865,7 @@ fn speech_like(window_db: &[f32], frames: &[&PitchFrame]) -> bool {
     let mut sorted = window_db.to_vec();
     sorted.sort_by(f32::total_cmp);
     let depth = percentile(&sorted, 0.9) - percentile(&sorted, 0.1);
-    if depth < 15.0 || syllabic_ratio(window_db) < 0.4 {
+    if depth < SPEECH_DEPTH_DB || syllabic_ratio(window_db) < SPEECH_SYLLABIC {
         return false;
     }
     if frames.len() < 20 {
