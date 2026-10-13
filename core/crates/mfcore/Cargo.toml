@@ -22,5 +22,9 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "gzip", "brotli", "multipart", "http2", "charset", "query", "form"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
+# melody
+tract-onnx = "0.23.8"
+memmap2 = "0.9.11"
+realfft = "3.5.0"
 
 [dev-dependencies]
