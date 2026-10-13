@@ -8,7 +8,10 @@ struct Rng(u64);
 
 impl Rng {
     fn next(&mut self) -> f32 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (self.0 >> 40) as f32 / (1u64 << 24) as f32
     }
 }
@@ -19,7 +22,8 @@ fn random_melody(rng: &mut Rng, n: usize) -> Vec<[f64; 3]> {
     let mut t = 0.0f64;
     (0..n)
         .map(|_| {
-            let step: f64 = [-4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 5.0, -5.0, 7.0][(rng.next() * 10.0) as usize % 10];
+            let step: f64 = [-4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 5.0, -5.0, 7.0]
+                [(rng.next() * 10.0) as usize % 10];
             pitch = (pitch + step).clamp(50.0, 80.0);
             let dur: f64 = [250.0, 250.0, 500.0, 375.0, 750.0][(rng.next() * 5.0) as usize % 5];
             let note = [pitch, t, dur * 0.9];
@@ -37,7 +41,11 @@ fn song(title: &str, notes: Vec<[f64; 3]>) -> SongInput {
         deezer_id: None,
         year: None,
         popularity: Some(0.5),
-        phrases: vec![PhraseInput { source: Some("preview".into()), start_ms: 0, notes }],
+        phrases: vec![PhraseInput {
+            source: Some("preview".into()),
+            start_ms: 0,
+            notes,
+        }],
     }
 }
 
@@ -53,13 +61,19 @@ fn sing(notes: &[[f64; 3]], shift: f32, stretch: f32, rng: &mut Rng) -> Vec<Pitc
                 .find(|n| (n[1] as f32) <= t && t < (n[1] + n[2]) as f32 - 30.0)
                 .map(|n| n[0] as f32 + shift + (rng.next() - 0.5) * 0.4)
                 .unwrap_or(f32::NAN);
-            PitchFrame { t_ms: f * 16, midi, confidence: if midi.is_finite() { 0.9 } else { 0.2 } }
+            PitchFrame {
+                t_ms: f * 16,
+                midi,
+                confidence: if midi.is_finite() { 0.9 } else { 0.2 },
+            }
         })
         .collect()
 }
 
 fn index(rng: &mut Rng, target: &[[f64; 3]]) -> MelodyIndex {
-    let mut songs: Vec<SongInput> = (0..300).map(|i| song(&format!("Song {i}"), random_melody(rng, 60))).collect();
+    let mut songs: Vec<SongInput> = (0..300)
+        .map(|i| song(&format!("Song {i}"), random_melody(rng, 60)))
+        .collect();
     songs.insert(137, song("Target", target.to_vec()));
     let (bytes, _) = build_bytes(&songs, "test").expect("build");
     MelodyIndex::from_bytes(bytes).expect("open")
@@ -71,10 +85,16 @@ fn finds_a_transposed_slower_rendition() {
     let target = random_melody(&mut rng, 60);
     let idx = index(&mut rng, &target);
     // Hum notes 20..36 a fourth higher and 25% slower.
-    let excerpt: Vec<[f64; 3]> = target[20..36].iter().map(|n| [n[0], n[1] - target[20][1], n[2]]).collect();
+    let excerpt: Vec<[f64; 3]> = target[20..36]
+        .iter()
+        .map(|n| [n[0], n[1] - target[20][1], n[2]])
+        .collect();
     let query = query_from_frames(&sing(&excerpt, 5.0, 1.25, &mut rng)).expect("query");
     let matches = search(&idx, &query, 5);
-    assert_eq!(matches.first().map(|m| m.song.title.as_str()), Some("Target"));
+    assert_eq!(
+        matches.first().map(|m| m.song.title.as_str()),
+        Some("Target")
+    );
     let best = &matches[0];
     assert!(best.score > 0.5, "score {}", best.score);
     assert!((best.key_shift - 5.0).abs() < 0.6, "key {}", best.key_shift);
@@ -99,7 +119,10 @@ fn scores_a_named_song() {
     let mut rng = Rng(2);
     let target = random_melody(&mut rng, 50);
     let idx = index(&mut rng, &target);
-    let excerpt: Vec<[f64; 3]> = target[5..22].iter().map(|n| [n[0], n[1] - target[5][1], n[2]]).collect();
+    let excerpt: Vec<[f64; 3]> = target[5..22]
+        .iter()
+        .map(|n| [n[0], n[1] - target[5][1], n[2]])
+        .collect();
     let query = query_from_frames(&sing(&excerpt, -3.0, 0.9, &mut rng)).expect("query");
     let target_id = idx.find_song("Target", "Test").expect("target").id;
     let hit = score_song(&idx, &query, target_id).expect("scored");
@@ -119,7 +142,13 @@ fn empty_index_and_thin_queries() {
     assert!(search(&empty, &query, 5).is_empty());
     assert!(score_song(&empty, &query, 0).is_none());
     // A long drone has no pitch changes to search with.
-    let drone: Vec<PitchFrame> = (0..400).map(|f| PitchFrame { t_ms: f * 16, midi: 60.0, confidence: 0.9 }).collect();
+    let drone: Vec<PitchFrame> = (0..400)
+        .map(|f| PitchFrame {
+            t_ms: f * 16,
+            midi: 60.0,
+            confidence: 0.9,
+        })
+        .collect();
     let q = query_from_frames(&drone).expect("query");
     let idx = index(&mut rng, &target);
     let _ = search(&idx, &q, 5);
@@ -131,11 +160,21 @@ fn query_keys_cover_sung_errors() {
     let steps: Vec<Step> = [60.0, 68.4, 66.1, 64.0, 66.0]
         .iter()
         .enumerate()
-        .map(|(i, &p)| Step { pitch: p, onset_ms: i as u32 * 300, end_ms: i as u32 * 300 + 250 })
+        .map(|(i, &p)| Step {
+            pitch: p,
+            onset_ms: i as u32 * 300,
+            end_ms: i as u32 * 300 + 250,
+        })
         .collect();
     let keys = query_keys(&steps);
-    assert!(keys.iter().any(|&(j, k, _)| j == 0 && k == index::interval_key(&[9, -2, -2, 2])));
-    assert!(keys.iter().any(|&(j, k, _)| j == 0 && k == index::interval_key(&[8, -2, -2, 2])));
+    assert!(
+        keys.iter()
+            .any(|&(j, k, _)| j == 0 && k == index::interval_key(&[9, -2, -2, 2]))
+    );
+    assert!(
+        keys.iter()
+            .any(|&(j, k, _)| j == 0 && k == index::interval_key(&[8, -2, -2, 2]))
+    );
 }
 
 #[test]
@@ -144,11 +183,17 @@ fn note_alignment_survives_an_inserted_note() {
         let steps: Vec<Step> = p
             .iter()
             .enumerate()
-            .map(|(i, &x)| Step { pitch: x, onset_ms: i as u32 * 300, end_ms: i as u32 * 300 + 250 })
+            .map(|(i, &x)| Step {
+                pitch: x,
+                onset_ms: i as u32 * 300,
+                end_ms: i as u32 * 300 + 250,
+            })
             .collect();
         shape(&steps)
     };
-    let reference = shape_of(&[55.0, 57.0, 60.0, 62.0, 64.0, 62.0, 60.0, 59.0, 60.0, 67.0, 65.0, 64.0]);
+    let reference = shape_of(&[
+        55.0, 57.0, 60.0, 62.0, 64.0, 62.0, 60.0, 59.0, 60.0, 67.0, 65.0, 64.0,
+    ]);
     // Reference notes 1..9 a fourth up, with a passing 66 inserted.
     let query = shape_of(&[62.0, 65.0, 66.0, 67.0, 69.0, 67.0, 65.0, 64.0, 65.0]);
     let mut table = AlignTable::default();

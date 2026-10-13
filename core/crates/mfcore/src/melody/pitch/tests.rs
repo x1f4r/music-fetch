@@ -4,7 +4,9 @@ use super::*;
 
 fn tracker() -> Arc<PitchTracker> {
     static TRACKER: OnceLock<Arc<PitchTracker>> = OnceLock::new();
-    TRACKER.get_or_init(|| Arc::new(PitchTracker::new().expect("model loads"))).clone()
+    TRACKER
+        .get_or_init(|| Arc::new(PitchTracker::new().expect("model loads")))
+        .clone()
 }
 
 /// A voice-like tone: fundamental plus decaying harmonics, at `peak` amplitude.
@@ -14,7 +16,9 @@ fn tone(hz: f32, seconds: f32, peak: f32) -> Vec<f32> {
     let mut out: Vec<f32> = (0..n)
         .map(|_| {
             phase += 2.0 * std::f32::consts::PI * hz / SAMPLE_RATE as f32;
-            (1..=6).map(|k| (k as f32 * phase).sin() / k as f32).sum::<f32>()
+            (1..=6)
+                .map(|k| (k as f32 * phase).sin() / k as f32)
+                .sum::<f32>()
         })
         .collect();
     let m = out.iter().fold(0f32, |m, x| m.max(x.abs()));
@@ -33,7 +37,11 @@ fn melody() -> Vec<f32> {
 }
 
 fn voiced(frames: &[FrameDetail]) -> Vec<f32> {
-    frames.iter().filter(|f| f.voiced).map(|f| f.midi()).collect()
+    frames
+        .iter()
+        .filter(|f| f.voiced)
+        .map(|f| f.midi())
+        .collect()
 }
 
 fn median(mut v: Vec<f32>) -> f32 {
@@ -43,7 +51,9 @@ fn median(mut v: Vec<f32>) -> f32 {
 
 #[test]
 fn tracks_a_harmonic_tone() {
-    let a = tracker().analyze_detailed(&tone(220.0, 2.0, 0.5)).expect("analysis");
+    let a = tracker()
+        .analyze_detailed(&tone(220.0, 2.0, 0.5))
+        .expect("analysis");
     assert_eq!(a.frames.len(), 125);
     assert!(!a.whistle);
     let v = voiced(&a.frames);
@@ -54,8 +64,20 @@ fn tracks_a_harmonic_tone() {
 
 #[test]
 fn quiet_input_is_normalized() {
-    let loud = voiced(&tracker().analyze_detailed(&tone(330.0, 2.0, 0.5)).expect("analysis").frames).len();
-    let quiet = voiced(&tracker().analyze_detailed(&tone(330.0, 2.0, 0.003)).expect("analysis").frames).len();
+    let loud = voiced(
+        &tracker()
+            .analyze_detailed(&tone(330.0, 2.0, 0.5))
+            .expect("analysis")
+            .frames,
+    )
+    .len();
+    let quiet = voiced(
+        &tracker()
+            .analyze_detailed(&tone(330.0, 2.0, 0.003))
+            .expect("analysis")
+            .frames,
+    )
+    .len();
     assert!(quiet + 5 >= loud, "quiet {quiet} vs loud {loud}");
 }
 
@@ -63,7 +85,14 @@ fn quiet_input_is_normalized() {
 fn silence_and_hostile_input() {
     let t = tracker();
     assert!(t.analyze(&[]).is_empty());
-    assert!(voiced(&t.analyze_detailed(&vec![0.0; 16_000]).expect("analysis").frames).is_empty());
+    assert!(
+        voiced(
+            &t.analyze_detailed(&vec![0.0; 16_000])
+                .expect("analysis")
+                .frames
+        )
+        .is_empty()
+    );
     let short = t.analyze(&[0.1; 100]);
     assert_eq!(short.len(), 1);
     let mut hostile = tone(200.0, 1.0, 0.5);
@@ -126,14 +155,20 @@ fn whistles_above_the_model_ceiling() {
     let mut audio = Vec::new();
     for hz in [2600.0, 2900.0, 2450.0] {
         let n = 8000;
-        audio.extend((0..n).map(|i| 0.3 * (2.0 * std::f32::consts::PI * hz * i as f32 / 16_000.0).sin()));
+        audio.extend(
+            (0..n).map(|i| 0.3 * (2.0 * std::f32::consts::PI * hz * i as f32 / 16_000.0).sin()),
+        );
     }
     let t = tracker();
     let a = t.analyze_detailed(&audio).expect("analysis");
     assert!(a.whistle);
     let v = voiced(&a.frames);
     assert!(v.len() > 60, "{} voiced", v.len());
-    let first: Vec<f32> = a.frames[5..25].iter().filter(|f| f.voiced).map(|f| f.hz).collect();
+    let first: Vec<f32> = a.frames[5..25]
+        .iter()
+        .filter(|f| f.voiced)
+        .map(|f| f.hz)
+        .collect();
     assert!((median(first) - 2600.0).abs() < 30.0);
     // The stream switches to the whistle path and then agrees with the batch.
     let mut s = StreamingPitch::new(t);
@@ -149,20 +184,37 @@ fn whistles_above_the_model_ceiling() {
 
 #[test]
 fn upsampler_interpolates() {
-    let x: Vec<f32> = (0..4000).map(|i| (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 16_000.0).sin()).collect();
+    let x: Vec<f32> = (0..4000)
+        .map(|i| (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 16_000.0).sin())
+        .collect();
     let y = upsample_2x(&x);
     assert_eq!(y.len(), 8000);
     for i in 100..3900 {
         assert_eq!(y[2 * i], x[i]);
         let truth = (2.0 * std::f32::consts::PI * 1000.0 * (i as f32 + 0.5) / 16_000.0).sin();
-        assert!((y[2 * i + 1] - truth).abs() < 2e-3, "{i}: {} vs {truth}", y[2 * i + 1]);
+        assert!(
+            (y[2 * i + 1] - truth).abs() < 2e-3,
+            "{i}: {} vs {truth}",
+            y[2 * i + 1]
+        );
     }
 }
 
 #[test]
 fn reference_frames_follow_the_reference_package() {
     let t = tracker();
-    for (len, frames) in [(1usize, 1usize), (255, 1), (256, 1), (511, 1), (512, 2), (16_100, 62)] {
-        assert_eq!(t.reference_frames(&vec![0.01; len]).expect("frames").len(), frames, "{len}");
+    for (len, frames) in [
+        (1usize, 1usize),
+        (255, 1),
+        (256, 1),
+        (511, 1),
+        (512, 2),
+        (16_100, 62),
+    ] {
+        assert_eq!(
+            t.reference_frames(&vec![0.01; len]).expect("frames").len(),
+            frames,
+            "{len}"
+        );
     }
 }

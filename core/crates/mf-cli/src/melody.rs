@@ -33,6 +33,9 @@ pub enum MelodyCommand {
         /// Time this many batch analyses of the first 10 s and report the median.
         #[arg(long)]
         bench: Option<usize>,
+        /// Worker threads for batch analysis (default: up to 4).
+        #[arg(long)]
+        threads: Option<usize>,
     },
     /// Find the song someone hums, whistles or sings in a WAV file.
     Hum {
@@ -111,14 +114,16 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
         MelodyCommand::Pitch {
             wav,
             bench: Some(n),
+            threads,
             ..
-        } => bench_pitch(&wav, n),
+        } => bench_pitch(&wav, n, threads),
         MelodyCommand::Pitch {
             wav,
             raw,
             stream,
             out,
             bench: None,
+            ..
         } => pitch(&wav, raw, stream, out.as_deref()),
         MelodyCommand::Hum {
             wav,
@@ -362,11 +367,14 @@ fn pitch(wav: &Path, raw: bool, stream: bool, out: Option<&Path>) -> anyhow::Res
     Ok(())
 }
 
-fn bench_pitch(wav: &Path, n: usize) -> anyhow::Result<()> {
+fn bench_pitch(wav: &Path, n: usize, threads: Option<usize>) -> anyhow::Result<()> {
     let samples = read_wav_16k(wav)?;
     let clip = &samples[..samples.len().min(160_000)];
     let started = Instant::now();
-    let tracker = PitchTracker::new()?;
+    let tracker = match threads {
+        Some(t) => PitchTracker::with_threads(t)?,
+        None => PitchTracker::new()?,
+    };
     eprintln!("model loaded in {:.1} ms", ms(started));
     let _ = tracker.analyze_detailed(clip)?;
     let mut times = Vec::with_capacity(n);
@@ -618,6 +626,26 @@ fn eval_qbsh(
         pct(&search, 1.0)
     );
     println!("wall    {wall:.1} s with {threads} threads");
+    println!("top-1 score   queries   correct");
+    for b in 0..10 {
+        let (lo, hi) = (b as f32 / 10.0, (b + 1) as f32 / 10.0);
+        let in_bin: Vec<&EvalRow> = rows
+            .iter()
+            .filter(|r| {
+                r.top
+                    .as_ref()
+                    .is_some_and(|t| t.1 >= lo && (t.1 < hi || b == 9))
+            })
+            .collect();
+        if !in_bin.is_empty() {
+            let correct = in_bin.iter().filter(|r| r.rank == Some(1)).count();
+            println!(
+                "  {lo:.1}-{hi:.1}   {:>7}   {:.3}",
+                in_bin.len(),
+                correct as f64 / in_bin.len() as f64
+            );
+        }
+    }
     for r in rows.iter().filter(|r| r.rank != Some(1)).take(5) {
         eprintln!("miss {} rank {:?} top {:?}", r.wav, r.rank, r.top);
     }

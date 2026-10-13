@@ -303,84 +303,63 @@ impl Model {
     }
 
     /// Frames for a whole signal, replicating `SwiftF0.detect` at 16 kHz.
+    ///
+    /// The signal is processed in fixed-size overlapping chunks (features and CNN
+    /// together, so memory stays bounded), in parallel on up to `threads` threads.
+    /// Each chunk keeps the frames that have the full context or touch a signal
+    /// edge; the last chunk is aligned to the end.
     pub fn analyze(&self, samples: &[f32], threads: usize) -> Result<Vec<RawFrame>> {
         if samples.is_empty() {
             return Ok(Vec::new());
         }
         let n = frame_count(samples.len());
-        let mut feats = vec![[0f32; FEATURES]; n];
-        let threads = threads.clamp(1, 16).min(n.div_ceil(32));
-        let per = n.div_ceil(threads);
-        std::thread::scope(|s| {
-            for (k, part) in feats.chunks_mut(per).enumerate() {
-                s.spawn(move || {
-                    let mut scratch = self.scratch();
-                    for (j, out) in part.iter_mut().enumerate() {
-                        self.features(samples, 0, k * per + j, &mut scratch, out);
-                    }
-                });
-            }
-        });
-        let (hz, conf) = self.cnn_chunked(&feats, threads)?;
-        Ok(postprocess(samples, 0, 0, &hz, &conf))
-    }
-
-    /// CNN over a whole feature sequence in fixed-size overlapping chunks, in parallel.
-    fn cnn_chunked(&self, feats: &[Features], threads: usize) -> Result<(Vec<f32>, Vec<f32>)> {
-        let n = feats.len();
-        if n <= CHUNK_FRAMES {
-            return self.cnn(feats);
-        }
-        // Chunk inputs [a, a + CHUNK_FRAMES); each keeps the frames that have the full
-        // context or touch a signal edge. The last chunk is aligned to the end.
+        let t = n.min(CHUNK_FRAMES);
         let step = CHUNK_FRAMES - 2 * CNN_CONTEXT;
         let mut starts: Vec<usize> = (0..)
             .map(|k| k * step)
             .take_while(|&a| a + CHUNK_FRAMES < n)
             .collect();
-        starts.push(n - CHUNK_FRAMES);
-        let results: Vec<Result<(Vec<f32>, Vec<f32>)>> = if threads <= 1 {
-            starts
-                .iter()
-                .map(|&a| self.cnn(&feats[a..a + CHUNK_FRAMES]))
-                .collect()
+        starts.push(n - t);
+        let run = |a: usize, scratch: &mut Scratch| -> CnnOutput {
+            let mut feats = vec![[0f32; FEATURES]; t];
+            for (j, out) in feats.iter_mut().enumerate() {
+                self.features(samples, 0, a + j, scratch, out);
+            }
+            self.cnn(&feats)
+        };
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<Mutex<Option<CnnOutput>>> =
+            starts.iter().map(|_| Mutex::new(None)).collect();
+        let work = || {
+            let mut scratch = self.scratch();
+            loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(&a) = starts.get(i) else { break };
+                *slots[i].lock() = Some(run(a, &mut scratch));
+            }
+        };
+        let threads = threads.clamp(1, 16).min(starts.len());
+        if threads <= 1 {
+            work();
         } else {
-            let next = std::sync::atomic::AtomicUsize::new(0);
-            let slots: Vec<Mutex<Option<CnnOutput>>> =
-                starts.iter().map(|_| Mutex::new(None)).collect();
             std::thread::scope(|s| {
-                for _ in 0..threads.min(starts.len()) {
-                    s.spawn(|| {
-                        loop {
-                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let Some(&a) = starts.get(i) else { break };
-                            *slots[i].lock() = Some(self.cnn(&feats[a..a + CHUNK_FRAMES]));
-                        }
-                    });
+                for _ in 0..threads {
+                    s.spawn(&work);
                 }
             });
-            slots
-                .into_iter()
-                .map(|s| {
-                    s.into_inner()
-                        .unwrap_or_else(|| Err(MfError::internal("pitch tracking failed")))
-                })
-                .collect()
-        };
+        }
         let mut hz = vec![0f32; n];
         let mut conf = vec![0f32; n];
-        for (&a, result) in starts.iter().zip(results) {
-            let (h, c) = result?;
+        for (&a, slot) in starts.iter().zip(slots) {
+            let (h, c) = slot
+                .into_inner()
+                .unwrap_or_else(|| Err(MfError::internal("pitch tracking failed")))?;
             let lo = if a == 0 { 0 } else { a + CNN_CONTEXT };
-            let hi = if a + CHUNK_FRAMES == n {
-                n
-            } else {
-                a + CHUNK_FRAMES - CNN_CONTEXT
-            };
+            let hi = if a + t == n { n } else { a + t - CNN_CONTEXT };
             hz[lo..hi].copy_from_slice(&h[lo - a..hi - a]);
             conf[lo..hi].copy_from_slice(&c[lo - a..hi - a]);
         }
-        Ok((hz, conf))
+        Ok(postprocess(samples, 0, 0, &hz, &conf))
     }
 }
 

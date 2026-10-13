@@ -19,7 +19,10 @@ struct Rng(u64);
 
 impl Rng {
     fn next(&mut self) -> f32 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (self.0 >> 40) as f32 / (1u64 << 24) as f32 - 0.5
     }
 }
@@ -28,15 +31,29 @@ impl Rng {
 fn hum() -> Vec<f32> {
     let mut out = Vec::new();
     let mut phase = 0f32;
-    for (i, midi) in [57.0f32, 59.0, 60.0, 62.0, 64.0, 62.0, 60.0, 59.0, 57.0, 60.0, 64.0, 62.0].iter().enumerate() {
+    for (i, midi) in [
+        57.0f32, 59.0, 60.0, 62.0, 64.0, 62.0, 60.0, 59.0, 57.0, 60.0, 64.0, 62.0,
+    ]
+    .iter()
+    .enumerate()
+    {
         let hz = 440.0 * 2f32.powf((midi - 69.0) / 12.0);
         for n in 0..7000 {
             let t = n as f32 / 16_000.0;
             let env = (t / 0.05).min(1.0) * ((0.4375 - t) / 0.08).clamp(0.0, 1.0);
-            phase += 2.0 * std::f32::consts::PI * hz * (1.0 + 0.006 * (2.0 * std::f32::consts::PI * 5.0 * t).sin()) / 16_000.0;
-            out.push(0.3 * env * (phase.sin() + 0.4 * (2.0 * phase).sin() + 0.15 * (3.0 * phase).sin()));
+            phase += 2.0
+                * std::f32::consts::PI
+                * hz
+                * (1.0 + 0.006 * (2.0 * std::f32::consts::PI * 5.0 * t).sin())
+                / 16_000.0;
+            out.push(
+                0.3 * env * (phase.sin() + 0.4 * (2.0 * phase).sin() + 0.15 * (3.0 * phase).sin()),
+            );
         }
-        out.extend(std::iter::repeat_n(0.0, if i % 3 == 2 { 4000 } else { 800 }));
+        out.extend(std::iter::repeat_n(
+            0.0,
+            if i % 3 == 2 { 4000 } else { 800 },
+        ));
     }
     out
 }
@@ -44,7 +61,12 @@ fn hum() -> Vec<f32> {
 /// Recorded-music stand-in: a three-voice chord progression, bass and drums.
 fn ensemble() -> Vec<f32> {
     let mut rng = Rng(9);
-    let chords = [[60.0f32, 64.0, 67.0], [57.0, 60.0, 64.0], [53.0, 57.0, 60.0], [55.0, 59.0, 62.0]];
+    let chords = [
+        [60.0f32, 64.0, 67.0],
+        [57.0, 60.0, 64.0],
+        [53.0, 57.0, 60.0],
+        [55.0, 59.0, 62.0],
+    ];
     (0..16_000 * 6)
         .map(|n| {
             let t = n as f32 / 16_000.0;
@@ -54,7 +76,13 @@ fn ensemble() -> Vec<f32> {
                 let hz = 440.0 * 2f32.powf((m - 69.0) / 12.0);
                 x += 0.12 * (2.0 * std::f32::consts::PI * hz * t + k as f32).sin();
             }
-            x += 0.15 * (2.0 * std::f32::consts::PI * 440.0 * 2f32.powf((chord[0] - 24.0 - 69.0) / 12.0) * t).sin();
+            x += 0.15
+                * (2.0
+                    * std::f32::consts::PI
+                    * 440.0
+                    * 2f32.powf((chord[0] - 24.0 - 69.0) / 12.0)
+                    * t)
+                    .sin();
             let beat = (t * 4.0).fract();
             if beat < 0.04 {
                 x += 0.5 * rng.next() * (1.0 - beat / 0.04);
@@ -67,14 +95,26 @@ fn ensemble() -> Vec<f32> {
 #[test]
 fn humming_is_an_impression() {
     let d = run(&hum());
-    assert_eq!(d.verdict(), Some(true), "p {:?}, features {:?}", d.probability(), d.features());
+    assert_eq!(
+        d.verdict(),
+        Some(true),
+        "p {:?}, features {:?}",
+        d.probability(),
+        d.features()
+    );
     assert!(d.voiced_ms() > 3000);
 }
 
 #[test]
 fn a_band_is_music() {
     let d = run(&ensemble());
-    assert_eq!(d.verdict(), Some(false), "p {:?}, features {:?}", d.probability(), d.features());
+    assert_eq!(
+        d.verdict(),
+        Some(false),
+        "p {:?}, features {:?}",
+        d.probability(),
+        d.features()
+    );
 }
 
 #[test]
@@ -100,7 +140,9 @@ fn harmonicity_separates_one_voice_from_a_chord() {
         for (i, s) in x.iter_mut().enumerate() {
             for &hz in voices {
                 for k in 1..6 {
-                    *s += (2.0 * std::f32::consts::PI * hz * k as f32 * i as f32 / SAMPLE_RATE).sin() / k as f32;
+                    *s += (2.0 * std::f32::consts::PI * hz * k as f32 * i as f32 / SAMPLE_RATE)
+                        .sin()
+                        / k as f32;
                 }
             }
         }
@@ -108,12 +150,17 @@ fn harmonicity_separates_one_voice_from_a_chord() {
         let mut input: Vec<f32> = x
             .iter()
             .enumerate()
-            .map(|(i, v)| v * (0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / FFT as f32).cos()))
+            .map(|(i, v)| {
+                v * (0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / FFT as f32).cos())
+            })
             .collect();
         let mut out = fft.make_output_vec();
         fft.process(&mut input, &mut out).expect("fft");
         let (lo, hi) = band();
-        out[lo..=hi].iter().map(|z| z.norm_sqr() + 1e-12).collect::<Vec<f32>>()
+        out[lo..=hi]
+            .iter()
+            .map(|z| z.norm_sqr() + 1e-12)
+            .collect::<Vec<f32>>()
     };
     let one = harmonicity(&spectrum(&[220.0]), 220.0).expect("score");
     let chord = harmonicity(&spectrum(&[220.0, 277.2, 329.6]), 220.0).expect("score");
