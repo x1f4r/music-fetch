@@ -30,7 +30,11 @@ const WAIT: Duration = Duration::from_secs(30);
 enum Body {
     Bytes(Vec<u8>),
     /// Sent in pieces with a pause before each (slow downloads).
-    Slow { data: Vec<u8>, piece: usize, pause: Duration },
+    Slow {
+        data: Vec<u8>,
+        piece: usize,
+        pause: Duration,
+    },
 }
 
 #[derive(Clone)]
@@ -302,7 +306,8 @@ fn live_session_matches_on_the_first_query() {
     let server = shazam_server(MATCH_JSON);
     let fx = engine_with(&server, "/manifest.json");
     let recorder = Arc::new(Recorder::default());
-    let session = fx.engine.start_listening(CaptureSource::Microphone, ListenMode::Recording, recorder.clone()).unwrap();
+    let session =
+        fx.engine.start_listening(CaptureSource::Microphone, ListenMode::Recording, recorder.clone()).unwrap();
     feed(&session, &music(12.0, 0.5), 44_100, 2);
     session.finish();
     let events = recorder.wait_terminal();
@@ -367,7 +372,8 @@ fn quiet_input_reports_too_quiet() {
     let server = shazam_server(MATCH_JSON);
     let fx = engine_with(&server, "/manifest.json");
     let recorder = Arc::new(Recorder::default());
-    let session = fx.engine.start_listening(CaptureSource::Microphone, ListenMode::Recording, recorder.clone()).unwrap();
+    let session =
+        fx.engine.start_listening(CaptureSource::Microphone, ListenMode::Recording, recorder.clone()).unwrap();
     // About −60 dBFS.
     feed(&session, &music(8.0, 0.0015), 44_100, 2);
     session.finish();
@@ -385,7 +391,8 @@ fn finishing_early_reports_too_short() {
     let server = shazam_server(MATCH_JSON);
     let fx = engine_with(&server, "/manifest.json");
     let recorder = Arc::new(Recorder::default());
-    let session = fx.engine.start_listening(CaptureSource::Microphone, ListenMode::Recording, recorder.clone()).unwrap();
+    let session =
+        fx.engine.start_listening(CaptureSource::Microphone, ListenMode::Recording, recorder.clone()).unwrap();
     feed(&session, &music(2.0, 0.5), 44_100, 2);
     session.finish();
     session.push_pcm(&bytes(&music(1.0, 0.5)), 44_100, 2); // ignored after finish
@@ -721,11 +728,20 @@ fn melody_index_installs_and_swaps_in() {
     let _cleanup = TempDir(dir.clone());
     let jsonl = dir.join("songs.jsonl");
     let notes = |base: f32| -> String {
-        (0..24).map(|i| format!("[{}, {}, 300]", base + [0.0, 2.0, 4.0, 5.0, 7.0, 5.0, 4.0, 2.0][i % 8], i * 320)).collect::<Vec<_>>().join(", ")
+        (0..24)
+            .map(|i| format!("[{}, {}, 300]", base + [0.0, 2.0, 4.0, 5.0, 7.0, 5.0, 4.0, 2.0][i % 8], i * 320))
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     let lines = [
-        format!(r#"{{"title": "Song A", "artist": "Artist A", "isrc": null, "deezer_id": 1, "year": 2001, "popularity": 0.5, "phrases": [{{"source": "midi", "start_ms": 0, "notes": [{}]}}]}}"#, notes(60.0)),
-        format!(r#"{{"title": "Song B", "artist": "Artist B", "isrc": null, "deezer_id": 2, "year": 2002, "popularity": 0.4, "phrases": [{{"source": "midi", "start_ms": 0, "notes": [{}]}}]}}"#, notes(64.0)),
+        format!(
+            r#"{{"title": "Song A", "artist": "Artist A", "isrc": null, "deezer_id": 1, "year": 2001, "popularity": 0.5, "phrases": [{{"source": "midi", "start_ms": 0, "notes": [{}]}}]}}"#,
+            notes(60.0)
+        ),
+        format!(
+            r#"{{"title": "Song B", "artist": "Artist B", "isrc": null, "deezer_id": 2, "year": 2002, "popularity": 0.4, "phrases": [{{"source": "midi", "start_ms": 0, "notes": [{}]}}]}}"#,
+            notes(64.0)
+        ),
     ];
     std::fs::write(&jsonl, lines.join("\n")).unwrap();
     let mfi = dir.join("melody-index.mfi");

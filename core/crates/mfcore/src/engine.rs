@@ -28,10 +28,10 @@ use crate::model::{
 use crate::pipeline::analyze::{self, AnalyzeInput};
 use crate::pipeline::ctx::{EngineCtx, SessionCtx, preview_expired};
 use crate::pipeline::emitter::Emitter;
+use crate::pipeline::hum;
 use crate::pipeline::live::{self, LiveInput, panic_message};
 use crate::pipeline::melody_index::{self, Manifest};
 use crate::pipeline::recognize::CallBudget;
-use crate::pipeline::hum;
 use crate::platform::{MediaBackend, PlatformDecoder, SessionObserver, SpeechToText};
 use crate::shazam::{QueuePolicy, ShazamClient};
 use crate::store::{SessionUpdate, Store};
@@ -104,7 +104,12 @@ impl Registry {
 
 /// Cancel a session: absolute and prompt. `Canceled` is emitted from an engine
 /// thread even when the session body is stuck in a blocking call.
-fn cancel_running(runtime: &tokio::runtime::Handle, cancel: &CancelToken, emitter: &Emitter, input: Option<&LiveInput>) {
+fn cancel_running(
+    runtime: &tokio::runtime::Handle,
+    cancel: &CancelToken,
+    emitter: &Emitter,
+    input: Option<&LiveInput>,
+) {
     cancel.cancel();
     if let Some(input) = input {
         input.wake();
@@ -296,7 +301,12 @@ impl Engine {
         segment.confidence = 1.0;
         segment.tier = Tier::Confirmed;
         segment.evidence.retain(|e| e.source != EvidenceSource::User);
-        segment.evidence.push(Evidence { source: EvidenceSource::User, at_ms: segment.start_ms, score: 1.0, detail: None });
+        segment.evidence.push(Evidence {
+            source: EvidenceSource::User,
+            at_ms: segment.start_ms,
+            score: 1.0,
+            detail: None,
+        });
         self.ctx.store.upsert_segment(&session_id, &segment)?;
         Ok(segment)
     }
@@ -344,10 +354,8 @@ impl Engine {
     /// melody index.
     pub fn storage_usage(&self) -> StorageUsage {
         let data = PathBuf::from(&self.ctx.config.data_dir);
-        let database: u64 = ["", "-wal", "-shm"]
-            .iter()
-            .map(|suffix| file_size(&data.join(format!("{DATABASE_FILE}{suffix}"))))
-            .sum();
+        let database: u64 =
+            ["", "-wal", "-shm"].iter().map(|suffix| file_size(&data.join(format!("{DATABASE_FILE}{suffix}")))).sum();
         StorageUsage {
             database_bytes: database + dir_size(&self.ctx.recordings_dir()),
             cache_bytes: dir_size(Path::new(&self.ctx.config.cache_dir)),
@@ -390,9 +398,8 @@ impl Engine {
     pub fn check_melody_index(&self) -> Result<MelodyIndexStatus> {
         let ctx = self.ctx.clone();
         let url = self.ctx.config.melody_index_manifest_url.clone();
-        let manifest = self.block_on(async move {
-            melody_index::fetch_manifest(&ctx.http, &url, &CancelToken::new()).await
-        })??;
+        let manifest =
+            self.block_on(async move { melody_index::fetch_manifest(&ctx.http, &url, &CancelToken::new()).await })??;
         *self.index.available.lock() = Some(manifest);
         Ok(self.melody_index_status())
     }
@@ -470,11 +477,14 @@ impl Engine {
             {
                 return cached;
             }
-            let fetched =
-                tokio::time::timeout(LYRICS_LIMIT, crate::lyrics::fetch_lyrics(&ctx.http, &track)).await.ok()?;
+            let lookup = crate::lyrics::lookup_lyrics(&ctx.http, &track);
+            // Only definite answers are cached; an unreachable LRCLIB is asked again next time.
+            let fetched = tokio::time::timeout(LYRICS_LIMIT, lookup).await.ok()?.ok()?;
             let ttl = if fetched.is_some() { LYRICS_TTL_MS } else { NO_LYRICS_TTL_MS };
-            if let Ok(json) = serde_json::to_string(&fetched) {
-                let _ = ctx.store.cache_put(LYRICS_NAMESPACE, &key, &json, ttl);
+            if let Ok(json) = serde_json::to_string(&fetched)
+                && let Err(e) = ctx.store.cache_put(LYRICS_NAMESPACE, &key, &json, ttl)
+            {
+                tracing::warn!("lyrics cache write failed: {e}");
             }
             fetched
         });
@@ -637,7 +647,8 @@ impl Engine {
         kind: SessionKind,
         body: impl Future<Output = ()> + Send + 'static,
     ) -> Arc<AnalysisSession> {
-        self.registry.insert(&ctx.id, Running { cancel: ctx.cancel.clone(), emitter: ctx.emitter.clone(), input: None });
+        self.registry
+            .insert(&ctx.id, Running { cancel: ctx.cancel.clone(), emitter: ctx.emitter.clone(), input: None });
         let handle = Arc::new(AnalysisSession {
             id: ctx.id.clone(),
             cancel: ctx.cancel.clone(),

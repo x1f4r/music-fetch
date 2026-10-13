@@ -447,7 +447,8 @@ mod tests {
         cancel.cancel();
         emitter.level(0.5, 0.5);
         emitter.notice(Notice::MoveCloser);
-        emitter.finished(Outcome::Matched { track: Track { title: "x".into(), ..Track::default() } }, Default::default());
+        emitter
+            .finished(Outcome::Matched { track: Track { title: "x".into(), ..Track::default() } }, Default::default());
         emitter.canceled();
         let events = recorder.0.lock().clone();
         assert_eq!(events.len(), 3, "{events:?}");

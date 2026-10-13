@@ -178,8 +178,8 @@ pub async fn fetch_manifest(http: &reqwest::Client, url: &str, cancel: &CancelTo
     if body.len() > MAX_MANIFEST_BYTES {
         return Err(MfError::network("The melody index manifest is too large."));
     }
-    let manifest: Manifest = serde_json::from_slice(&body)
-        .map_err(|_| MfError::network("The melody index manifest could not be read."))?;
+    let manifest: Manifest =
+        serde_json::from_slice(&body).map_err(|_| MfError::network("The melody index manifest could not be read."))?;
     manifest.validate()?;
     Ok(manifest)
 }
@@ -211,11 +211,14 @@ pub async fn install(ctx: &SessionCtx, manifest_url: &str) -> Result<Manifest> {
     ctx.emitter.phase(Phase::Downloading, Some(0.0));
     let manifest = fetch_manifest(&engine.http, manifest_url, &ctx.cancel).await?;
     let dir = melody_dir(engine);
-    std::fs::create_dir_all(&dir).map_err(|_| MfError::Storage { message: "The app folder is not writable.".into() })?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|_| MfError::Storage { message: "The app folder is not writable.".into() })?;
 
     let current = installed_manifest(engine);
     if engine.melody_index().is_some()
-        && current.as_ref().is_some_and(|m| m.version == manifest.version && m.sha256.eq_ignore_ascii_case(&manifest.sha256))
+        && current
+            .as_ref()
+            .is_some_and(|m| m.version == manifest.version && m.sha256.eq_ignore_ascii_case(&manifest.sha256))
     {
         ctx.emitter.phase(Phase::Downloading, Some(1.0));
         return Ok(manifest);
@@ -227,10 +230,7 @@ pub async fn install(ctx: &SessionCtx, manifest_url: &str) -> Result<Manifest> {
     ctx.cancel.check()?;
 
     let open_path = partial_path.clone();
-    let opened = tokio::task::spawn_blocking(move || guarded(|| MelodyIndex::open(&open_path)))
-        .await
-        .ok()
-        .flatten();
+    let opened = tokio::task::spawn_blocking(move || guarded(|| MelodyIndex::open(&open_path))).await.ok().flatten();
     let index = match opened {
         Some(Ok(index)) => index,
         _ => return Err(MfError::internal("the downloaded melody index could not be opened")),
@@ -254,7 +254,10 @@ async fn download(ctx: &SessionCtx, manifest: &Manifest, path: &Path) -> Result<
         _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
     };
     if !response.status().is_success() {
-        return Err(MfError::network(format!("The melody index download failed (HTTP {}).", response.status().as_u16())));
+        return Err(MfError::network(format!(
+            "The melody index download failed (HTTP {}).",
+            response.status().as_u16()
+        )));
     }
     let storage = |_| MfError::Storage { message: "The melody index could not be saved.".into() };
     let mut file = tokio::fs::File::create(path).await.map_err(storage)?;
@@ -346,11 +349,13 @@ mod tests {
         assert!(Manifest { sha256: "xyz".into(), ..good.clone() }.validate().is_err());
         assert!(Manifest { url: "file:///etc/passwd".into(), ..good.clone() }.validate().is_err());
         assert!(Manifest { bytes: 0, ..good.clone() }.validate().is_err());
-        assert_eq!(Manifest { min_core: Some("99.0".into()), ..good.clone() }.validate(), Err(MfError::IndexUnavailable));
-        let parsed: Manifest = serde_json::from_str(
-            r#"{"version": "2026.10.1", "url": "https://x/y.mfi", "sha256": "00", "bytes": 1}"#,
-        )
-        .unwrap();
+        assert_eq!(
+            Manifest { min_core: Some("99.0".into()), ..good.clone() }.validate(),
+            Err(MfError::IndexUnavailable)
+        );
+        let parsed: Manifest =
+            serde_json::from_str(r#"{"version": "2026.10.1", "url": "https://x/y.mfi", "sha256": "00", "bytes": 1}"#)
+                .unwrap();
         assert_eq!(parsed.songs, 0);
         assert_eq!(parsed.min_core, None);
     }

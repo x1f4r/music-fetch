@@ -192,12 +192,14 @@ fn default_dir(var: &str, cache: bool) -> Result<PathBuf> {
     Ok(match (cfg!(target_os = "macos"), cache) {
         (true, false) => home.join("Library/Application Support/Music Fetch"),
         (true, true) => home.join("Library/Caches/Music Fetch"),
-        (false, false) => {
-            std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/share")).join("music-fetch")
-        }
-        (false, true) => {
-            std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".cache")).join("music-fetch")
-        }
+        (false, false) => std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local/share"))
+            .join("music-fetch"),
+        (false, true) => std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".cache"))
+            .join("music-fetch"),
     })
 }
 
@@ -284,7 +286,12 @@ impl SessionObserver for Printer {
 struct FixedTranscript(Vec<String>);
 
 impl SpeechToText for FixedTranscript {
-    fn transcribe(&self, wav_path: String, _language: String, task: Arc<TaskHandle>) -> Result<Vec<String>, PlatformError> {
+    fn transcribe(
+        &self,
+        wav_path: String,
+        _language: String,
+        task: Arc<TaskHandle>,
+    ) -> Result<Vec<String>, PlatformError> {
         if task.is_canceled() {
             return Err(PlatformError::Canceled);
         }

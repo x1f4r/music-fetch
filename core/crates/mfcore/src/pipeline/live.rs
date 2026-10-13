@@ -110,8 +110,8 @@ impl LiveInput {
         if data.len() < 4 {
             return;
         }
-        let valid = (MIN_INPUT_RATE..=MAX_INPUT_RATE).contains(&sample_rate)
-            && (1..=MAX_INPUT_CHANNELS).contains(&channels);
+        let valid =
+            (MIN_INPUT_RATE..=MAX_INPUT_RATE).contains(&sample_rate) && (1..=MAX_INPUT_CHANNELS).contains(&channels);
         if !valid {
             let mut state = self.state.lock();
             if !state.warned_format {
@@ -400,7 +400,8 @@ impl Live {
     }
 
     fn process(&mut self, chunk: Chunk) {
-        let needs_new = self.resampler.as_ref().is_none_or(|r| r.input_rate() != chunk.rate || r.channels() != chunk.channels);
+        let needs_new =
+            self.resampler.as_ref().is_none_or(|r| r.input_rate() != chunk.rate || r.channels() != chunk.channels);
         if needs_new {
             match StreamResampler::new(chunk.rate, chunk.channels) {
                 Ok(r) => self.resampler = Some(r),
@@ -617,7 +618,11 @@ impl Live {
         self.update_inflight();
     }
 
-    fn on_result(&mut self, who: &str, result: std::result::Result<Result<Option<RecognitionHit>>, tokio::task::JoinError>) {
+    fn on_result(
+        &mut self,
+        who: &str,
+        result: std::result::Result<Result<Option<RecognitionHit>>, tokio::task::JoinError>,
+    ) {
         match result {
             Ok(Ok(Some(hit))) => {
                 if self.matched.is_none() {
@@ -760,8 +765,11 @@ impl Live {
             source_url: None,
         };
         self.ctx.emitter.segment(segment);
-        let update =
-            SessionUpdate { title: Some(track.title.clone()), subtitle: Some(track.artist.clone()), ..Default::default() };
+        let update = SessionUpdate {
+            title: Some(track.title.clone()),
+            subtitle: Some(track.artist.clone()),
+            ..Default::default()
+        };
         self.ctx.emitter.finished(Outcome::Matched { track }, update);
     }
 

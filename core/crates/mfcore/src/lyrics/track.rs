@@ -49,9 +49,15 @@ impl Record {
 
 /// Lyrics for `track`, or `None` when LRCLIB has none (or is unreachable).
 pub async fn fetch_lyrics(http: &reqwest::Client, track: &Track) -> Option<Lyrics> {
+    lookup_lyrics(http, track).await.ok().flatten()
+}
+
+/// Like [`fetch_lyrics`], but tells "no lyrics" (`Ok(None)`) apart from "LRCLIB
+/// could not be asked" (`Err`), so callers only cache definite answers.
+pub async fn lookup_lyrics(http: &reqwest::Client, track: &Track) -> Result<Option<Lyrics>, LyricsUnavailable> {
     let title = text::base_title(&track.title);
     if title.trim().is_empty() || track.artist.trim().is_empty() {
-        return None;
+        return Ok(None);
     }
     let cancel = CancelToken::new();
     let stats = Stats::default();
@@ -69,17 +75,17 @@ pub async fn fetch_lyrics(http: &reqwest::Client, track: &Track) -> Option<Lyric
         Ok(fetched) => {
             if let Ok(record) = serde_json::from_str::<Record>(&fetched.body) {
                 if record.instrumental == Some(true) && !record.has_text() {
-                    return None;
+                    return Ok(None);
                 }
                 if let Some(lyrics) = record.into_lyrics() {
-                    return Some(lyrics);
+                    return Ok(Some(lyrics));
                 }
             }
         }
         Err(FetchError::NotFound) => {}
         Err(e) => {
             tracing::debug!(?e, "lrclib get failed");
-            return None;
+            return Err(LyricsUnavailable);
         }
     }
 
@@ -87,14 +93,19 @@ pub async fn fetch_lyrics(http: &reqwest::Client, track: &Track) -> Option<Lyric
     let params = [("track_name", title.clone()), ("artist_name", primary)];
     let fetched = match fetcher.fetch(Remote::Lrclib, "", || http.get(SEARCH_URL).query(&params)).await {
         Ok(fetched) => fetched,
+        Err(FetchError::NotFound) => return Ok(None),
         Err(e) => {
             tracing::debug!(?e, "lrclib search failed");
-            return None;
+            return Err(LyricsUnavailable);
         }
     };
-    let records = serde_json::from_str::<Vec<Record>>(&fetched.body).ok()?;
-    best_record(records, &title, &track.artist, track.duration_ms)?.into_lyrics()
+    let records = serde_json::from_str::<Vec<Record>>(&fetched.body).map_err(|_| LyricsUnavailable)?;
+    Ok(best_record(records, &title, &track.artist, track.duration_ms).and_then(Record::into_lyrics))
 }
+
+/// LRCLIB could not be reached or answered unexpectedly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LyricsUnavailable;
 
 /// The search result with lyrics whose title and an artist match, closest in duration.
 fn best_record(records: Vec<Record>, title: &str, artist: &str, duration_ms: Option<u64>) -> Option<Record> {

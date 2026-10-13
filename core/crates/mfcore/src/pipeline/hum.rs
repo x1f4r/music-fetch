@@ -156,7 +156,7 @@ pub async fn run_lyric_search(ctx: &SessionCtx, text: &str) {
     }
     let top = &candidates[0].track;
     let update = SessionUpdate {
-        subtitle: Some(format!("{} \u{b7} {}", top.artist, top.title)),
+        subtitle: Some(top.artist.clone()),
         artwork_url: top.artwork_url.clone(),
         ..Default::default()
     };
@@ -216,10 +216,8 @@ async fn melody_source(
         None => {
             let engine = ctx.engine.clone();
             let audio = audio.to_vec();
-            let analyzed = blocking("pitch tracking", move || {
-                engine.pitch_tracker().map(|tracker| tracker.analyze(&audio))
-            })
-            .await;
+            let analyzed =
+                blocking("pitch tracking", move || engine.pitch_tracker().map(|tracker| tracker.analyze(&audio))).await;
             match analyzed {
                 Some(Ok(frames)) => frames,
                 Some(Err(e)) => {
@@ -234,8 +232,9 @@ async fn melody_source(
         return empty();
     };
     let search_query = query.clone();
-    let matches =
-        blocking("melody search", move || matcher::search(&index, &search_query, MELODY_TOP_K)).await.unwrap_or_default();
+    let matches = blocking("melody search", move || matcher::search(&index, &search_query, MELODY_TOP_K))
+        .await
+        .unwrap_or_default();
     Answer::Melody { query: Some(query), matches }
 }
 
@@ -270,8 +269,10 @@ async fn transcribe(ctx: &SessionCtx, speech: Arc<dyn SpeechToText>, audio: &[f3
     let path = dir.join("impression.wav");
     let samples = f32_to_i16(audio);
     let wav_path = path.clone();
-    if !matches!(blocking("writing the speech clip", move || write_wav(&wav_path, &samples, SAMPLE_RATE)).await, Some(Ok(())))
-    {
+    if !matches!(
+        blocking("writing the speech clip", move || write_wav(&wav_path, &samples, SAMPLE_RATE)).await,
+        Some(Ok(()))
+    ) {
         return Vec::new();
     }
     // A child token stops the recognizer on timeout without canceling the session.
@@ -471,7 +472,11 @@ impl Fusion {
     }
 
     /// Find lyric/ACR tracks in the melody index (cached per identity).
-    async fn lookup_songs(&mut self, index: &Arc<MelodyIndex>, others: &[(CandidateSourceKind, Track, f32, Option<String>)]) {
+    async fn lookup_songs(
+        &mut self,
+        index: &Arc<MelodyIndex>,
+        others: &[(CandidateSourceKind, Track, f32, Option<String>)],
+    ) {
         let missing: Vec<(String, String, String)> = others
             .iter()
             .map(|(_, t, _, _)| (identity::identity_key(t), t.title.clone(), t.artist.clone()))
@@ -483,7 +488,10 @@ impl Fusion {
         let index = index.clone();
         let keys: Vec<String> = missing.iter().map(|(k, _, _)| k.clone()).collect();
         let found = blocking("melody index lookup", move || {
-            missing.into_iter().map(|(key, title, artist)| (key, index.find_song(&title, &artist).map(|s| s.id))).collect::<Vec<_>>()
+            missing
+                .into_iter()
+                .map(|(key, title, artist)| (key, index.find_song(&title, &artist).map(|s| s.id)))
+                .collect::<Vec<_>>()
         })
         .await;
         match found {
@@ -493,7 +501,11 @@ impl Fusion {
     }
 
     /// Score the query against index songs of lyric/ACR candidates (cached per song).
-    async fn score_support(&mut self, index: &Arc<MelodyIndex>, others: &[(CandidateSourceKind, Track, f32, Option<String>)]) {
+    async fn score_support(
+        &mut self,
+        index: &Arc<MelodyIndex>,
+        others: &[(CandidateSourceKind, Track, f32, Option<String>)],
+    ) {
         let Some(query) = self.query.clone() else { return };
         let found: Vec<u32> = self.melody.iter().map(|m| m.song.id).collect();
         let mut ids: Vec<u32> = others
@@ -674,7 +686,6 @@ pub(crate) async fn enrich(ctx: &SessionCtx, candidates: Vec<Candidate>) -> Vec<
     if candidates.is_empty() {
         return candidates;
     }
-    ctx.emitter.phase(Phase::Finishing, None);
     let deadline = tokio::time::Instant::now() + ENRICH_BUDGET;
     let tracks = join_all(candidates.iter().map(|c| {
         let track = c.track.clone();
@@ -782,8 +793,11 @@ mod tests {
 
     #[test]
     fn downsampling_halves_and_filters() {
-        let tone = |f: f32| (0..16_000).map(|n| (2.0 * std::f32::consts::PI * f * n as f32 / 16_000.0).sin()).collect::<Vec<_>>();
-        let rms = |x: &[f32]| (x[100..x.len() - 100].iter().map(|v| v * v).sum::<f32>() / (x.len() - 200) as f32).sqrt();
+        let tone = |f: f32| {
+            (0..16_000).map(|n| (2.0 * std::f32::consts::PI * f * n as f32 / 16_000.0).sin()).collect::<Vec<_>>()
+        };
+        let rms =
+            |x: &[f32]| (x[100..x.len() - 100].iter().map(|v| v * v).sum::<f32>() / (x.len() - 200) as f32).sqrt();
         let low = downsample_half(&tone(440.0));
         assert_eq!(low.len(), 8000);
         assert!((rms(&low) - 0.707).abs() < 0.05);

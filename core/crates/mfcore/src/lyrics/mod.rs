@@ -37,7 +37,7 @@ use self::merge::{Candidate, Sighting};
 use self::score::{Features, LyricEvidence};
 use self::sources::{Hit, ParseError};
 
-pub use self::track::fetch_lyrics;
+pub use self::track::{LyricsUnavailable, fetch_lyrics, lookup_lyrics};
 
 /// Results returned, at most.
 const MAX_RESULTS: usize = 5;
