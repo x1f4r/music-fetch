@@ -531,13 +531,6 @@ impl Engine {
                 message: format!("The folder {} cannot be created ({}).", dir.display(), e.kind()),
             })?;
         }
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(WORKER_THREADS)
-            .max_blocking_threads(MAX_BLOCKING_THREADS)
-            .thread_name("mf-core")
-            .enable_all()
-            .build()
-            .map_err(|e| MfError::internal(format!("could not start the engine runtime: {e}")))?;
         let http = crate::util::http::build_client(&config.app_version)?;
         let store = Arc::new(Store::open(&data_dir.join(DATABASE_FILE))?);
         match store.recover_interrupted() {
@@ -562,6 +555,14 @@ impl Engine {
                 Arc::new(YtDlpSubprocess::new(tools).with_temp_dir(cache_dir.join("tmp"))) as Arc<dyn MediaBackend>
             })
         });
+        // Built last: a runtime dropped on an error path would panic inside async callers.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(WORKER_THREADS)
+            .max_blocking_threads(MAX_BLOCKING_THREADS)
+            .thread_name("mf-core")
+            .enable_all()
+            .build()
+            .map_err(|e| MfError::internal(format!("could not start the engine runtime: {e}")))?;
         let ctx = Arc::new(EngineCtx {
             config,
             http,
