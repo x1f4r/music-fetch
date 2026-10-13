@@ -144,6 +144,11 @@ struct Fixture {
 }
 
 fn engine_with(server: &Server, manifest_path: &str) -> Fixture {
+    engine_with_wait(server, manifest_path, Duration::from_secs(5))
+}
+
+/// `max_wait`: the longest breaker cool-down a query waits out.
+fn engine_with_wait(server: &Server, manifest_path: &str, max_wait: Duration) -> Fixture {
     let dir = std::env::temp_dir().join(format!("mf-engine-test-{}", mfcore::util::new_id()));
     let config = EngineConfig {
         data_dir: dir.join("data").to_string_lossy().into_owned(),
@@ -158,8 +163,8 @@ fn engine_with(server: &Server, manifest_path: &str) -> Fixture {
         interactive_spacing: Duration::ZERO,
         batch_spacing: Duration::ZERO,
         jitter: Duration::ZERO,
-        interactive_max_wait: Duration::from_secs(5),
-        batch_max_wait: Duration::from_secs(5),
+        interactive_max_wait: max_wait,
+        batch_max_wait: max_wait,
         breaker_base: Duration::from_millis(200),
         breaker_max: Duration::from_secs(1),
         retry_delays: Vec::new(),
@@ -348,6 +353,44 @@ fn live_session_without_a_match_queries_on_schedule() {
     assert_eq!(server.hits("/discovery/"), 5);
     let detail = fx.engine.session(session.id()).unwrap().unwrap();
     assert_eq!(detail.entry.status, SessionStatus::NoMatch);
+}
+
+#[test]
+fn format_changes_mid_session_keep_the_timeline() {
+    let server = shazam_server(NO_MATCH_JSON);
+    let fx = engine_with(&server, "/manifest.json");
+    let recorder = Arc::new(Recorder::default());
+    let session =
+        fx.engine.start_listening(CaptureSource::Microphone, ListenMode::Recording, recorder.clone()).unwrap();
+    feed(&session, &music(3.0, 0.5), 44_100, 2);
+    let mono: Vec<f32> = music(6.0, 0.5).chunks(2).map(|f| f[0]).collect();
+    feed(&session, &mono[..44_100 * 3], 44_100, 1);
+    let at_48k: Vec<f32> = (0..48_000 * 3).map(|i| mono[i * 44_100 / 48_000]).collect();
+    feed(&session, &at_48k, 48_000, 1);
+    session.finish();
+    let events = recorder.wait_terminal();
+    assert!(matches!(check_contract(&events), SessionEvent::Finished { outcome: Outcome::NoMatch { .. } }));
+    // 9 s of audio: queries at 4 s and 8 s, none at the end (the last one is recent).
+    assert_eq!(server.hits("/discovery/"), 2);
+}
+
+#[test]
+fn rate_limits_are_announced_and_the_session_keeps_listening() {
+    let server = Server::start(vec![Route {
+        prefix: "/discovery/".into(),
+        status: 429,
+        content_type: "text/plain",
+        body: Body::Bytes(b"slow down".to_vec()),
+    }]);
+    let fx = engine_with_wait(&server, "/manifest.json", Duration::ZERO);
+    let recorder = Arc::new(Recorder::default());
+    let session =
+        fx.engine.start_listening(CaptureSource::Microphone, ListenMode::Recording, recorder.clone()).unwrap();
+    feed(&session, &music(14.0, 0.5), 44_100, 2);
+    session.finish();
+    let events = recorder.wait_terminal();
+    assert!(notices(&events).iter().any(|n| matches!(n, Notice::RateLimited { .. })), "{events:?}");
+    assert!(matches!(check_contract(&events), SessionEvent::Finished { outcome: Outcome::NoMatch { .. } }));
 }
 
 #[test]
