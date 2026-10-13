@@ -44,3 +44,8 @@ def test_pick_prefers_previews_and_popularity():
 def test_aliases_rescue_native_script_titles():
     t = Target(1, "Ao to Natsu", "Mrs. GREEN APPLE", [("Mrs. GREEN APPLE", "青と夏")], None)
     assert score(t, cand("青と夏", "Mrs. GREEN APPLE")) >= 0.95
+
+
+def test_recovery_album_is_not_a_cover():
+    t = Target(1, "Not Afraid", "Eminem", [], None)
+    assert score(t, cand("Not Afraid", "Eminem", album="Recovery")) >= 0.95

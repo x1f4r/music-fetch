@@ -9,8 +9,10 @@ export MFIDX_ROOT="${MFIDX_ROOT:-$HOME/melody-build}"
 LOGS="$MFIDX_ROOT/logs"
 COPY_TO="${MFIDX_COPY_TO:-mac:Documents/projects/music-fetch-data}"
 
+exec 3>&2  # pipeline.out: one line per step, whatever the step's own redirection
+
 run() {
-  echo "$(date '+%F %T') mfidx $*" >&2
+  echo "$(date '+%F %T') mfidx $*" >&3
   uv run --no-sync mfidx "$@"
 }
 
@@ -32,8 +34,8 @@ pid_midi=$!
 wait "$pid_resolve" "$pid_midi"
 wait "$pid_extract"
 
-# Second pass: retries of transient errors.
-run resolve >> "$LOGS/resolve.out" 2>&1
+# Second pass: transient errors, and unmatched songs once more.
+run resolve --retry-not-found >> "$LOGS/resolve.out" 2>&1
 run extract >> "$LOGS/extract.out" 2>&1
 
 run validate > "$LOGS/validate.out" 2>&1

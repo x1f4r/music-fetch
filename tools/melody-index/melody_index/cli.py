@@ -29,6 +29,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("resolve", help="stage 2: Deezer track per song")
     p.add_argument("--workers", type=int, default=6)
     p.add_argument("--limit", type=int)
+    p.add_argument(
+        "--retry-not-found", action="store_true", help="search again for unmatched songs"
+    )
 
     p = sub.add_parser("extract", help="stage 3: previews -> RMVPE -> phrases (GPU)")
     p.add_argument("--limit", type=int)
@@ -87,7 +90,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "resolve":
         from . import resolve
 
-        out = resolve.run(P, workers=args.workers, limit=args.limit)
+        out = resolve.run(
+            P, workers=args.workers, limit=args.limit, retry_not_found=args.retry_not_found
+        )
     elif args.cmd == "extract":
         from .extract import Extractor
 

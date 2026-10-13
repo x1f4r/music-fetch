@@ -80,3 +80,17 @@ def test_leading_the_and_double_a_sides():
     assert title_key("Another Brick in the Wall, Part 2") == title_key(
         "Another Brick In The Wall (Part II)"
     )
+
+
+def test_artist_edge_cases():
+    assert "brunomars" in artist_parts("Silk Sonic (Bruno Mars & Anderson .Paak)")
+    assert primary_artist("Silk Sonic (Bruno Mars & Anderson .Paak)") == "Silk Sonic"
+    assert artist_parts('Missy "Misdemeanor" Elliott') == ["missyelliott"]
+    assert "willow" in artist_parts("THE ANXIETY: WILLOW & Tyler Cole")
+    assert 0.8 <= artist_similarity("Lady Antebellum", "Lady A") < 1.0
+    assert artist_similarity("Adele", "Coldplay") < 0.5
+    assert (
+        title_key("Saudade Burra - Ao Vivo")
+        == title_key("Saudade Burra (Ao Vivo)")
+        == "saudadeburra"
+    )

@@ -19,7 +19,7 @@ _VERSION_WORDS = (
     r"remaster(?:ed)?|re-?master|remix|mix|edit|version|versión|live|mono|stereo|acoustic|"
     r"demo|instrumental|explicit|clean|radio|extended|single|album|bonus|deluxe|original|"
     r"re-?recorded|from|soundtrack|ost|theme|sped\s+up|slowed|unplugged|session|"
-    r"anniversary|edition|remake|cover|reprise|\d{4}"
+    r"anniversary|edition|remake|cover|reprise|ao\s+vivo|en\s+vivo|en\s+directo|\d{4}"
 )
 _VERSION_GROUP_RE = re.compile(rf"\s*[\(\[][^\)\]]*\b(?:{_VERSION_WORDS})\b[^\)\]]*[\)\]]", re.I)
 _DASH_TAIL_RE = re.compile(r"\s+[-–—]\s+.*$")
@@ -32,14 +32,15 @@ _ARTIST_FEAT_RE = re.compile(
     r"\s+(?:feat\.?|featuring|ft\.?|with|duet\s+with|x|vs\.?|versus|presents|pres\.)\s+.*$", re.I
 )
 _ARTIST_SPLIT_RE = re.compile(
-    r"\s*(?:,|;|/|\+|&|×|\b(?:and|featuring|feat|ft|with|x|vs|versus)\b\.?)\s*", re.I
+    r"\s*(?:,|;|/|\+|&|×|:|\(|\)|\b(?:and|featuring|feat|ft|with|x|vs|versus)\b\.?)\s*", re.I
 )
 _THE_SUFFIX_RE = re.compile(r"^(.*),\s*the$", re.I)
+_NICKNAME_RE = re.compile(r"\s*[\"“”][^\"“”]+[\"“”]\s*")  # Missy "Misdemeanor" Elliott
 
 # Words that mark a Deezer candidate as not the original recording.
 NON_ORIGINAL_RE = re.compile(
-    r"karaoke|tribute|made famous|in the style of|cover|instrumental|8[- ]?bit|lullaby|"
-    r"music box|piano version|backing track|workout|originally performed|re-?recorded by",
+    r"\b(?:karaoke|tribute|made famous|in the style of|covers?|instrumental|8[- ]?bit|lullaby|"
+    r"music box|piano version|backing track|workout|originally performed|re-?recorded by)\b",
     re.I,
 )
 
@@ -102,9 +103,14 @@ def _unthe(name: str) -> str:
     return re.sub(r"^the\s+", "", n, flags=re.I)
 
 
+def _clean_artist(artist: str) -> str:
+    a = unicodedata.normalize("NFKC", artist or "").strip()
+    return _NICKNAME_RE.sub(" ", a).strip()
+
+
 def primary_artist(artist: str) -> str:
     """First credited artist ("Drake Featuring Rihanna" -> "Drake")."""
-    a = unicodedata.normalize("NFKC", artist or "").strip()
+    a = _ANY_GROUP_RE.sub("", _clean_artist(artist)).strip() or _clean_artist(artist)
     a = _ARTIST_FEAT_RE.sub("", a)
     parts = [p for p in _ARTIST_SPLIT_RE.split(a) if p and p.strip()]
     return parts[0].strip() if parts else a
@@ -112,7 +118,7 @@ def primary_artist(artist: str) -> str:
 
 def artist_parts(artist: str) -> list[str]:
     """Compact keys of every credited artist, in credit order, without duplicates."""
-    a = unicodedata.normalize("NFKC", artist or "").strip()
+    a = _clean_artist(artist)
     m = _THE_SUFFIX_RE.match(a)
     if m:
         a = "The " + m.group(1)
@@ -182,4 +188,10 @@ def artist_similarity(a: str, b: str) -> float:
         return 1.0
     best = max(fuzz.ratio(x, y) for x in pa for y in pb)
     whole = fuzz.ratio(compact(a), compact(b))
-    return max(best, whole) / 100.0
+    # Renamed or shortened acts ("Lady Antebellum" -> "Lady A"): a prefix/infix match
+    # counts, but never as a full match.
+    partial = max(
+        (fuzz.partial_ratio(x, y) * 0.85 for x in pa for y in pb if min(len(x), len(y)) >= 4),
+        default=0.0,
+    )
+    return max(best, whole, partial) / 100.0

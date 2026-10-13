@@ -46,8 +46,8 @@ def queries(t: Target) -> list[str]:
     out: list[str] = []
     pairs = [(t.artist, t.title)] + [a for a in t.aliases if a != (t.artist, t.title)]
     for artist, title in pairs[:3]:
-        pa = primary_artist(artist)
-        core = title_core(title)
+        pa = primary_artist(artist).replace('"', "")
+        core = title_core(title).replace('"', "")
         loose = _GROUP_RE.sub("", core).strip() or core
         for q in (f"{pa} {core}", f"{pa} {loose}"):
             if q not in out:
@@ -202,9 +202,15 @@ def pending(conn, limit: int, max_attempts: int = 3) -> list[Target]:
     return out
 
 
-def run(paths: Paths, workers: int = 6, limit: int | None = None) -> dict[str, Any]:
+def run(
+    paths: Paths, workers: int = 6, limit: int | None = None, retry_not_found: bool = False
+) -> dict[str, Any]:
     conn = dbm.connect(paths.db)
     dbm.stage_started(conn, "resolve")
+    if retry_not_found:
+        # After matcher changes: search again for songs that found nothing last time.
+        n = conn.execute("DELETE FROM deezer WHERE status='not_found'").rowcount
+        log.info("resolve: retrying %d songs that were not found", n)
     client = DeezerClient(paths.state)
     done = 0
     ok = 0
