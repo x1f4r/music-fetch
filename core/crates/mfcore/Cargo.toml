@@ -36,5 +36,12 @@ sha2 = "0.11"
 sha1 = "0.11"
 hmac = "0.13"
 percent-encoding = "2.3"
+# links, catalog, identity
+url = "2.5"
+scraper = { version = "0.27", default-features = false }
+regex = "1.11"
+unicode-normalization = "0.1.24"
+lru = "0.18"
+strsim = "0.11"
 
 [dev-dependencies]

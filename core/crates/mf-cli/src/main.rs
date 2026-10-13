@@ -5,6 +5,7 @@ use clap::Parser;
 mod library;
 mod media;
 mod shazam;
+mod links;
 
 #[derive(Parser)]
 #[command(name = "mf", version, about = "Music Fetch engine CLI")]
@@ -15,6 +16,7 @@ enum Cli {
     Library(library::Command),
     Media(media::Command),
     Shazam(shazam::Command),
+    Links(links::LinksCommand),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -23,6 +25,7 @@ fn main() -> anyhow::Result<()> {
         Cli::Library(command) => library::run(command)?,
         Cli::Media(command) => media::run(command)?,
         Cli::Shazam(command) => shazam::run(command)?,
+        Cli::Links(command) => links::run(command)?,
     }
     Ok(())
 }
