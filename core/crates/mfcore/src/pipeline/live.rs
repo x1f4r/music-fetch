@@ -350,6 +350,9 @@ impl Live {
 
     fn run(mut self) {
         self.ctx.emitter.phase(Phase::Listening, None);
+        if self.impression_at_ms.is_some() {
+            self.notify_missing_index();
+        }
         self.start_pitch();
         let stop = self.listen();
         self.input.close();
@@ -468,6 +471,13 @@ impl Live {
         }
     }
 
+    /// Humming needs the melody index: tell the app as soon as an impression starts.
+    fn notify_missing_index(&self) {
+        if self.ctx.engine.melody_index().is_none() {
+            self.ctx.emitter.notice(Notice::MelodyIndexMissing);
+        }
+    }
+
     fn recording_rules(&self) -> bool {
         self.impression_at_ms.is_none()
     }
@@ -489,6 +499,7 @@ impl Live {
             self.impression_at_ms = Some(elapsed);
             self.pending_query = false;
             self.ctx.emitter.notice(Notice::ImpressionDetected);
+            self.notify_missing_index();
         }
         if self.recording_rules() {
             while self.next_query < QUERY_TIMES_MS.len() && elapsed >= QUERY_TIMES_MS[self.next_query] {
@@ -730,7 +741,7 @@ impl Live {
         let capture = std::mem::take(&mut self.capture);
         // The live frames drive the trace and the detector; matching re-tracks the
         // whole capture offline, which measured a few points better on MIR-QBSH.
-        match hum::run_impression_detailed(&self.ctx, &capture, None).await {
+        match hum::run_impression_detailed(&self.ctx, &capture, None, false).await {
             Ok((outcome, candidates)) => {
                 let top = candidates.first().map(|c| &c.track);
                 let update = SessionUpdate {

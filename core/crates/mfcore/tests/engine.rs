@@ -456,7 +456,8 @@ fn hum_mode_keeps_the_recording_and_reports_a_missing_index() {
     session.finish();
     let events = recorder.wait_terminal();
     assert_eq!(events[0], SessionEvent::Started { session_id: session.id(), kind: SessionKind::Hum });
-    assert!(notices(&events).contains(&Notice::MelodyIndexMissing), "{events:?}");
+    let missing = notices(&events).iter().filter(|n| **n == Notice::MelodyIndexMissing).count();
+    assert_eq!(missing, 1, "{events:?}");
     assert_eq!(
         check_contract(&events),
         SessionEvent::Finished { outcome: Outcome::NoMatch { reason: NoMatchReason::NotFound } }

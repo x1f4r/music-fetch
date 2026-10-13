@@ -63,20 +63,23 @@ const MAX_COMBINED: f32 = 0.99;
 /// and returns the outcome; the caller emits the terminal event. `frames` are the
 /// live pitch frames when already computed.
 pub async fn run_impression(ctx: &SessionCtx, audio: &[f32], frames: Option<Vec<PitchFrame>>) -> Result<Outcome> {
-    Ok(run_impression_detailed(ctx, audio, frames).await?.0)
+    Ok(run_impression_detailed(ctx, audio, frames, true).await?.0)
 }
 
 /// [`run_impression`] that also returns the final candidates (best first).
+/// `notify_missing_index`: emit `Notice::MelodyIndexMissing` when there is no
+/// index (live sessions already did when the impression started).
 pub async fn run_impression_detailed(
     ctx: &SessionCtx,
     audio: &[f32],
     frames: Option<Vec<PitchFrame>>,
+    notify_missing_index: bool,
 ) -> Result<(Outcome, Vec<Candidate>)> {
     ctx.cancel.check()?;
     keep_recording(ctx, audio).await;
     ctx.emitter.phase(Phase::MatchingMelody, None);
     let index = ctx.engine.melody_index();
-    if index.is_none() {
+    if index.is_none() && notify_missing_index {
         ctx.emitter.notice(Notice::MelodyIndexMissing);
     }
 

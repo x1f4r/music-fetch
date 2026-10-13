@@ -186,8 +186,9 @@ impl Engine {
             runtime: self.ctx.runtime.clone(),
         });
         if let Err(e) = live::spawn(ctx.clone(), source, mode, input, move || registry.remove(&id)) {
+            // Nothing was announced yet: report the error here only.
             self.registry.remove(&ctx.id);
-            ctx.emitter.failed(&e);
+            let _ = self.ctx.store.delete_sessions(std::slice::from_ref(&ctx.id));
             return Err(e);
         }
         Ok(session)
@@ -238,6 +239,8 @@ impl Engine {
     /// Delete sessions: running ones are canceled first; their kept recordings
     /// and cached media are removed too.
     pub fn delete_sessions(&self, ids: Vec<String>) -> Result<()> {
+        // Ids name files below the app folders: accept only what the engine issues.
+        let ids: Vec<String> = ids.into_iter().filter(|id| is_session_id(id)).collect();
         let mut waiting = Vec::new();
         for id in &ids {
             if let Some(running) = self.registry.get(id) {
@@ -778,6 +781,12 @@ impl AnalysisSession {
     }
 }
 
+/// Session ids are UUIDs; anything else (path separators, "..") is rejected
+/// before it is used in a file name.
+fn is_session_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 fn file_title(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
@@ -860,6 +869,14 @@ fn remove_leftovers(ctx: &EngineCtx) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_ids_cannot_name_other_files() {
+        assert!(is_session_id(&new_id()));
+        assert!(!is_session_id("../etc"));
+        assert!(!is_session_id("a/b"));
+        assert!(!is_session_id(""));
+    }
 
     #[test]
     fn truncates_titles() {
