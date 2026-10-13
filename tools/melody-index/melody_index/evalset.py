@@ -248,14 +248,21 @@ _YT_NOISE_RE = re.compile(
     re.I,
 )
 _YT_TAIL_RE = re.compile(
-    r"\s*[|/]\s*.*$|\s+(official\s+)?(music\s+)?video\s*$|\s+lyrics?\s*$", re.I
+    r"\s*[|/]\s*.*$|\s+(official\s+)?(music\s+)?(video|mv|m/v)\s*$|\s+lyrics?\s*$|\.mp4$", re.I
 )
+_YT_QUOTED_RE = re.compile(r"^(?P<artist>[^'‘’\"“”]+?)\s*['‘’\"“](?P<title>[^'‘’\"“”]+)['‘’\"”]")
 
 
 def parse_youtube_title(title: str, author: str) -> tuple[str, str]:
     """Best-effort (artist, song) from a YouTube title and channel name."""
-    t = _YT_NOISE_RE.sub("", title or "").strip()
-    t = _YT_TAIL_RE.sub("", t).strip().strip('"“”')
+    t = (title or "").replace("_", " ")
+    t = _YT_NOISE_RE.sub("", t).strip()
+    t = _YT_TAIL_RE.sub("", t).strip()
+    quoted = _YT_QUOTED_RE.match(t)
+    if quoted and " - " not in t:
+        # BTS (방탄소년단) 'Dynamite' Official MV
+        return quoted["artist"].strip(), quoted["title"].strip()
+    t = t.strip('"“”')
     for sep in (" - ", " – ", " — ", " -- ", ": "):
         if sep in t:
             a, s = t.split(sep, 1)

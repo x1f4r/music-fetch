@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int)
     p.add_argument("--follow", action="store_true", help="keep running until stage 2 has finished")
     p.add_argument("--batch", type=int, default=8)
-    p.add_argument("--fetchers", type=int, default=8)
+    p.add_argument("--fetchers", type=int, default=12)
     p.add_argument("--half", action="store_true", help="fp16 inference")
 
     sub.add_parser("renote", help="recompute preview phrases from stored f0")

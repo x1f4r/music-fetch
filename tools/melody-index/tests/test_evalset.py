@@ -64,3 +64,11 @@ def test_expected_key_and_youtube_titles():
         "Shape of You",
     )
     json.dumps(parse_youtube_title("", ""))
+    assert parse_youtube_title("BTS (방탄소년단) 'Dynamite' Official MV", "HYBE LABELS") == (
+        "BTS (방탄소년단)",
+        "Dynamite",
+    )
+    assert parse_youtube_title("Joe_Cocker_-_You_Can_Leave_Your_Hat_On_(HQ).mp4", "x") == (
+        "Joe Cocker",
+        "You Can Leave Your Hat On",
+    )

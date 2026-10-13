@@ -97,7 +97,7 @@ class Extractor:
         self,
         paths: Paths,
         batch: int = 8,
-        fetchers: int = 8,
+        fetchers: int = 12,
         half: bool = False,
         prm: NoteParams = DEFAULT_PARAMS,
     ) -> None:
