@@ -123,6 +123,25 @@ Fusion:
 - Keep the capture as `data_dir/recordings/<session>.wav` (16 kHz mono) so the user can
   retry after installing or updating the melody index. Delete it with the session.
 
+## Recognizer call budget
+
+Rate limits from recognizers were the main failure of 0.4. Rules:
+
+- One `ShazamClient` per engine. A token bucket shared by all sessions: capacity 4,
+  refill one token per 9 s (≈ 6.7 calls/min sustained), and at least 2 s between calls.
+  Interactive calls (live listening, a single short file) may use the whole bucket;
+  batch calls (mixes, playlists) only take a token while ≥ 2 remain, so a person
+  listening never waits behind a mix.
+- Any 429 / non-JSON 200 opens the breaker (30 s doubling to 60 min) **and** halves the
+  refill rate for the next hour. Sessions pause and resume; they never fail because of a
+  limit (they finish with what they have only after the batch wait cap).
+- Every result is cached persistently (signature hash), so re-analysing the same media
+  costs nothing.
+- Most mix and playlist tracks should be identified **without** Shazam: tracklist hints
+  verified by local fingerprint matching, and metadata for playlist entries. Shazam fills
+  the gaps. Target: ≤ 25 Shazam calls per hour of mix audio when a timestamped tracklist
+  exists, ≤ 70 without one.
+
 ## Analysis sessions (`pipeline/analyze.rs`)
 
 1. Validate synchronously: trimmed input; URL (`links::looks_like_url`, first URL in
@@ -133,75 +152,136 @@ Fusion:
      `Confirmed`, evidence `Metadata`) → `Finished(Completed { n, n })`.
    - `Resolution::Media` → `Source` (with hints); continue.
 3. Media: unless `direct`, `MediaBackend::probe` → `media::parse_probe` → refresh
-   `Source` (title, uploader, thumbnail, duration, item count).
-   - Playlist (`entries` non-empty): process entries in order (cap 200; notice when
-     truncated) as items: `Item { index, count, title }`, then the single-media path with
-     `item_index = index`. A failing entry becomes an `Unidentified` segment with the
-     error in its evidence detail; the session continues.
-4. Single media: `Phase(Downloading, fraction)` → `download_audio` (or a direct HTTP
+   `Source` (title, uploader, thumbnail, duration, item count). For media ≥ 8 min the
+   probe also asks for the top comments (pinned first) to find tracklists.
+4. Playlists: see "Playlists" below.
+5. Single media: `Phase(Downloading, fraction)` → `download_audio` (or a direct HTTP
    download with the SSRF guard and a 2 GiB cap) into `cache_dir/sessions/<id>/` →
    `Phase(Decoding)` → `audio::decode::decode_file` → delete the download.
-5. Strategy: `Impression` mode → impression analysis on the first 30 s. `Mix` mode, or
-   duration ≥ 240 s, or ≥ 2 chapters, or ≥ 3 description timestamps → mix. Otherwise
-   single.
-6. Delete `cache_dir/sessions/<id>/` at the end in every outcome.
+6. Strategy (see below): `Impression` mode → impression analysis on the first 30 s;
+   otherwise **survey → single or mix**.
+7. Delete `cache_dir/sessions/<id>/` at the end in every outcome.
 
-### Single strategy
+### Hints (`pipeline/hints.rs`)
 
-- Rank 12 s windows (hop 6 s) by energy and spectral richness; pick up to 3, at least
-  12 s apart, preferring the middle of the file.
-- Query them in order with `Priority::Interactive` until: two probes agree
-  (`Confirmed`, 0.95), or one probe has max(|timeskew|, |freqskew|) ≤ 0.002 (`Likely`,
-  0.88). A single loose-skew match after all probes → `Likely` 0.72.
-- No Shazam match → paid providers on the best window if configured.
-- Still nothing → use page hints (YouTube "Music" card, TikTok sound) as a `Possible`
-  segment (0.55, evidence `PageHint`) if present; else an `Unidentified` segment.
-- One segment spanning `[0, duration]`. `Finished(Completed { identified, 1 })`.
+Collected before any recognizer call:
+
+- Chapters (yt-dlp), timestamped lines in the description, timestamped tracklists in
+  the top/pinned comments (uploader and pinned comments first), YouTube "Music" cards
+  and Shorts sound (no times), TikTok sound, `track`/`artist` fields from the extractor.
+- Tracklist parser: handles `00:00 Artist - Title`, `[0:00] Artist – Title (Remix)`,
+  `1. Artist - Title [Label] 03:45`, `01 | Artist - Title`, en/em dashes, `ID - ID`,
+  `w/` mashups, `vs.`/`x` collaborations, labels in brackets, emoji/bullets. A tracklist
+  is accepted when ≥ 3 entries have strictly increasing times inside the duration;
+  among sources pick the one with the most valid entries.
+- Version qualifiers (remix, edit, extended, live, acoustic, VIP, bootleg, rework,
+  sped up, slowed) are kept: they select the exact recording.
+
+### Local fingerprint matching (`fingerprint/`)
+
+A landmark matcher (constellation hashing) built on the Shazam peak extractor:
+
+- References: previews of candidate tracks (Deezer 30 s, iTunes/Apple 30–90 s, decoded in
+  memory, never stored), keyed by identity.
+- Hashes: anchor peak paired with up to 5 later peaks within 0.08–1.5 s and a bounded
+  frequency span; hash = (f1, f2, Δt). Matching votes on (reference, time offset); a
+  match needs ≥ 10 aligned hashes and a clear lead over the runner-up.
+- DJ tempo/pitch changes: search speed factors 0.94–1.06 (resample, vinyl-style) and Δt
+  scale factors (key-lock) in 1 % steps around the hinted region only.
+- Uses: verify tracklist hints, confirm "same track still playing", and detect a track
+  that is played twice — all without recognizer calls.
+
+### Survey: one song or many?
+
+Never decide by duration alone. A single song must never be split.
+
+1. Priors: extractor `track`/`artist` (YouTube Music, Topic channels, SoundCloud) → a
+   single track; `catalog::find` on the title ("Artist - Title …") with a duration
+   within ±12 % → strong single prior; mix keywords in title/description (mix, set,
+   live set, DJ, Boiler Room, tracklist, compilation, playlist, radio, episode,
+   "full album", "1 hour") and a timestamped tracklist → strong mix prior.
+2. Media < 15 min without a mix prior: survey probes at 20 %, 50 % and 80 % (12 s
+   windows, Interactive priority for media < 10 min, else Batch):
+   - All matched probes are the same identity → **single**, even when offsets jump
+     (loops, extended edits, repeated choruses). One segment `[0, duration]`, tier from
+     agreement (2+ probes → Confirmed).
+   - Probes disagree → **mix** (keep the survey results).
+   - No probe matches → two more probes (35 %, 65 %), then paid providers; still nothing
+     → page hints as `Possible`, else one `Unidentified` segment. Never several
+     `Unidentified` pieces for a short file.
+3. Media ≥ 15 min, or a strong mix prior → **mix** directly (with the tracklist, if any).
 
 ### Mix strategy (`pipeline/mix.rs`)
 
-1. `Phase(Segmenting)`: `features::compute(pcm, 1000)`.
-2. Frame labels with global (whole-file percentile) normalization: silence
-   (RMS < −50 dBFS), speech (voice-band energy, zcr, low chroma strength, syllabic
-   modulation), music otherwise. Smooth labels with a 5-frame majority filter.
-3. Boundaries: Foote novelty on the self-similarity of z-scored [chroma ‖ mfcc ‖ flatness]
-   with a 24 s checkerboard kernel (12 s for media < 20 min); peaks above the 80th
-   percentile and ≥ 20 s apart (8 s for < 20 min); plus chapter starts and description
-   timestamps snapped to the nearest frame; plus label changes lasting ≥ 8 s.
-4. Regions: consecutive spans between boundaries with their dominant label. Music
-   regions shorter than 15 s merge into the neighbour with the closest feature mean.
-5. Probe plan, in time order: the middle 12 s of every music region; regions > 4 min
-   also get probes at 25 % and 75 %. Emit an `Unidentified` (or `Speech`/`Silence`)
-   segment for every region up front so the timeline is complete from the start.
-6. Run probes with `Priority::Batch`. On a match at window start W with Shazam offset o:
-   - Enrich once per identity (cache by identity) for duration.
-   - Projected span = [W − o, W − o + duration] ∩ mix. Skip pending probes of later
-     regions whose middle lies inside the projected span minus 20 s; keep one
-     verification probe if the skipped stretch is > 3 min.
-   - Emit/replace segments: the region becomes `Track`; adjacent regions inside the
-     projected span with no contradicting evidence join it (`SegmentRemoved` for the
-     merged ones).
-7. Unresolved music regions after the pass: one more probe at a different position
-   (start + 30 %); then paid providers (budget: 30 calls per session) if configured;
-   then description/chapter hints (`catalog::find` on "Artist - Title" text near the
-   region start → `Possible`, evidence `PageHint`).
-8. Final stitch (`pipeline/stitch.rs`, ported from 0.4):
-   - Bridge `Track(X) → {Speech|Silence|Unidentified} → Track(Y)` when `same_track(X, Y)`
-     and the bridge ≤ budget: longer neighbour < 10 s → 2 s, < 60 s → 5 s, < 600 s →
-     8 s, else 19 s.
-   - Merge adjacent same-identity tracks when the gap ≤ allowance: < 10 s → 2 s,
-     < 60 s → 5 s, < 600 s → 12 s, else 30 s.
-   - Merge rule: end = max, confidence = max, evidence = union, alternates deduped.
-   - Clamp overlaps (end = next.start), drop zero-length segments.
-   - Never merge different ISRCs.
-9. Tiers: ≥ 2 agreeing probes → Confirmed 0.95; one tight-skew probe → Likely 0.88;
-   loose skew → Likely 0.72 (Possible if it contradicts a neighbour); hint only →
-   Possible 0.55; nothing → Unknown.
-10. `Progress` after every probe: `analyzed_ms` = end of the furthest processed region;
-    ETA = remaining probes × measured average probe time (including spacing).
-11. Rate limits: on `RateLimited`, emit the notice and wait (Batch allows 10 min). If the
-    breaker stays open longer, finish with what was found (`Completed`) and a notice.
-12. `source_url` of each segment = `links::deep_link(source_url, start_ms)`.
+1. `Phase(Segmenting)`: `features::compute(pcm, 1000)`; labels (silence / speech /
+   music, global percentile normalization, 5-frame majority smoothing); novelty curve
+   (Foote, 24 s checkerboard kernel; 12 s below 20 min) and its peaks as candidate
+   change points. Emit placeholder segments so the timeline is complete from the start.
+2. **Hinted pass** (timestamped tracklist): for each entry, `catalog::find` (keep the
+   version qualifier) → previews → local match within [tᵢ − 30 s, tᵢ₊₁ + 30 s] (speed and
+   key-lock search). Verified → segment starting at the refined time, `Confirmed`,
+   evidence `PageHint` + local match. Not verified → one Shazam probe at
+   tᵢ + clamp((tᵢ₊₁ − tᵢ)/2, 20 s, 60 s): same track → `Confirmed`; a different track →
+   trust the audio (`Likely`) and flag the hint as wrong; nothing → `Possible` from the
+   hint. Untimed hints (YouTube "Music" cards) become the candidate set for local
+   matching across the whole mix before any probing.
+3. **Adaptive probing** for everything still unexplained, in time order:
+   - A match of X at window start T with Shazam offset o and skew s gives the start
+     Sₓ = T − o/(1 + s) and, with the track duration D (enrichment), the latest end
+     Eₓ = Sₓ + D/(1 + s).
+   - Next probe at min(Eₓ − 15 s, T + 150 s), at least T + 30 s; without D, T + 90 s.
+   - Two consecutive matches X (at T₁) and Y (at T₂): the boundary is Y's start
+     estimate when it falls in [T₁, T₂], else X's end estimate when it does, else the
+     strongest novelty peak in [T₁, T₂]; snap to a novelty peak within ±8 s.
+   - Unexplained gap ≥ 30 s between Eₓ and Sᵧ, or T₂ − T₁ > 4 min → probe the middle (a
+     short track may sit there). Repeat until no gap qualifies or the budget
+     (duration / 45 s + 10 probes) is spent.
+   - Before probing a stretch, try local matching against the previews of tracks already
+     identified in this mix (replays) — free.
+4. Unresolved music regions: one more probe at a different position, then paid
+   providers (≤ 30 calls) if configured; then untimed hints.
+5. **Stitch** (`pipeline/stitch.rs`, ported from 0.4): bridge Track(X) → short gap →
+   Track(X) (bridge budget by longer neighbour: < 10 s → 2 s, < 60 s → 5 s, < 600 s → 8 s,
+   else 19 s); merge adjacent same-identity tracks when their start estimates agree
+   within 5 s or the gap ≤ allowance (< 10 s → 2 s, < 60 s → 5 s, < 600 s → 12 s, else
+   30 s); a replay of X with a different start estimate stays a separate segment; clamp
+   overlaps; drop zero-length segments; never merge different ISRCs or different
+   versions (remix vs original).
+6. Tiers: ≥ 2 agreeing probes or hint + local match → Confirmed 0.95; one tight-skew
+   probe → Likely 0.88; loose skew → Likely 0.72 (Possible if it contradicts a
+   neighbour); hint only → Possible 0.55; nothing → Unknown.
+7. `Progress` after every step: `analyzed_ms` = end of the furthest explained stretch;
+   ETA from remaining probes × measured time per probe (including pacing).
+8. `source_url` of each segment = `links::deep_link(source_url, start_ms)`.
+
+### Playlists
+
+- Entries in order (cap 300; notice when truncated), `Item` events, `item_index` = entry.
+- **Metadata first:** extractor `track`/`artist`, or a title parsed as "Artist - Title"
+  without risky qualifiers (live, cover, remix, sped up, slowed, nightcore, karaoke,
+  instrumental, 8D), matched by `catalog::find` with a duration within ±8 s (± 25 s for
+  "official video") → segment `Likely` 0.9, evidence `Metadata`, no audio needed.
+- Otherwise (or when the qualifier says it is a different version): download the
+  entry's audio and run the survey (an entry ≥ 15 min becomes a nested mix).
+- Up to 2 downloads in parallel; recognizer calls go through the shared budget.
+
+## Evaluation (`tools/eval/mixes`)
+
+A manifest of real cases with ground truth, run with `mf eval mixes`:
+
+- DJ mixes and compilations with 5, ~15, ~30 and 50+ songs whose YouTube description or
+  pinned comment has a timestamped tracklist; long single songs (7–12 min, extended
+  mixes, songs with spoken interludes or long silent breaks); short and long YouTube
+  playlists.
+- Metrics per case: track recall and precision (identity match, version-aware and
+  version-agnostic), start-time error (median and p90), splits (a true track covered by
+  > 1 predicted segment), merges (a predicted segment covering > 1 true track), single
+  songs split (must be 0), Shazam calls per hour.
+- Two modes: **blind** (hints disabled — measures recognition and segmentation) and
+  **hinted** (the product default).
+- Live recognizer traffic for evaluation runs from a non-primary IP with ≥ 9 s spacing;
+  all responses are cached on disk keyed by signature hash, so algorithm iterations
+  replay from the cache.
 
 ## Caching
 
