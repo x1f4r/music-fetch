@@ -63,7 +63,8 @@ Single stages (`uv run mfidx <stage> --help`):
 | Command | Stage |
 |---|---|
 | `mfidx universe [--refresh] [--max-songs 60000]` | 1. chart sources -> deduplicated songs with popularity |
-| `mfidx resolve [--limit N]` | 2. Deezer track per song |
+| `mfidx resolve [--limit N] [--retry-not-found]` | 2. Deezer track per song |
+| `mfidx years` | release dates for songs without a chart year (`/track/{id}`) |
 | `mfidx extract [--limit N] [--follow]` | 3. previews -> RMVPE -> notes -> phrases |
 | `mfidx renote` | recompute preview phrases from stored f0 (no network) |
 | `mfidx midi [--step catalog\|link\|extract]` | 4. Lakh MIDI melodies |
@@ -92,8 +93,9 @@ The top 60k songs are kept.
 the resolver issues plain queries (artist + title, then without brackets, then title alone) and
 verifies candidates with fuzzy title and artist similarity, penalizing karaoke/cover/tribute
 uploads and preferring candidates with a preview and a higher Deezer rank. Chart entries that
-already carry a Deezer id skip the search. `/track/{id}` adds ISRC, release date and the
-preview URL. All api.deezer.com traffic of all processes shares one limiter (≤ 40 requests per
+already carry a Deezer id skip the search. Search results already carry the ISRC and a signed
+preview URL; `mfidx years` fetches `/track/{id}` for release dates of songs without a chart
+year. All api.deezer.com traffic of all processes shares one limiter (≤ 40 requests per
 5.2 s, `flock`ed state file) with exponential backoff on quota errors (code 4), 429 and 5xx.
 
 **3. Preview melodies.** The preview URL is signed and expires after ~15 min, so the extractor

@@ -285,3 +285,40 @@ def run(
         dbm.stage_finished(conn, "resolve", info)
     log.info("resolve finished: %s", info)
     return info
+
+
+def fill_years(paths: Paths, workers: int = 4) -> dict[str, Any]:
+    """Release dates for resolved songs without a chart year (search results carry none)."""
+    conn = dbm.connect(paths.db)
+    client = DeezerClient(paths.state)
+    rows = conn.execute(
+        "SELECT d.song_id, d.deezer_id FROM deezer d JOIN songs s ON s.id=d.song_id"
+        " WHERE d.status='ok' AND d.release_date IS NULL AND s.year IS NULL AND s.in_universe=1"
+        " ORDER BY s.score DESC"
+    ).fetchall()
+    t0 = time.time()
+
+    def fetch(row) -> tuple[str, str | None, int]:
+        try:
+            track = client.track(int(row["deezer_id"]))
+        except DeezerError:
+            return "", None, row["song_id"]
+        date = track.get("release_date") or (track.get("album") or {}).get("release_date") or ""
+        return date, track.get("isrc") or None, row["song_id"]
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for start in range(0, len(rows), 500):
+            updates = list(pool.map(fetch, rows[start : start + 500]))
+            with dbm.Tx(conn):
+                conn.executemany(
+                    "UPDATE deezer SET release_date=?, isrc=COALESCE(?, isrc) WHERE song_id=?",
+                    updates,
+                )
+            done += len(updates)
+            log.info(
+                "years: %d/%d, %.0f songs/min", done, len(rows), done / (time.time() - t0) * 60
+            )
+    info = {"songs": done, "seconds": round(time.time() - t0, 1), "requests": client.requests}
+    log.info("years finished: %s", info)
+    return info

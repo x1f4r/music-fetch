@@ -37,6 +37,7 @@ wait "$pid_extract"
 # Second pass: transient errors, and unmatched songs once more.
 run resolve --retry-not-found >> "$LOGS/resolve.out" 2>&1
 run extract >> "$LOGS/extract.out" 2>&1
+run years > "$LOGS/years.out" 2>&1
 
 run validate > "$LOGS/validate.out" 2>&1
 run famous > "$MFIDX_ROOT/out/famous.json" 2> "$LOGS/famous.out"

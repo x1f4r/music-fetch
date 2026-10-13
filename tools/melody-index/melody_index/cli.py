@@ -33,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
         "--retry-not-found", action="store_true", help="search again for unmatched songs"
     )
 
+    sub.add_parser("years", help="release dates for resolved songs without a chart year")
+
     p = sub.add_parser("extract", help="stage 3: previews -> RMVPE -> phrases (GPU)")
     p.add_argument("--limit", type=int)
     p.add_argument("--follow", action="store_true", help="keep running until stage 2 has finished")
@@ -93,6 +95,10 @@ def main(argv: list[str] | None = None) -> int:
         out = resolve.run(
             P, workers=args.workers, limit=args.limit, retry_not_found=args.retry_not_found
         )
+    elif args.cmd == "years":
+        from . import resolve
+
+        out = resolve.fill_years(P)
     elif args.cmd == "extract":
         from .extract import Extractor
 
