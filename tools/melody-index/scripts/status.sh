@@ -2,7 +2,7 @@
 # Progress, throughput and ETA of the build on the GPU host, plus the latest log lines.
 set -euo pipefail
 
-HOST="${MFIDX_HOST:-legion-cachy}"
+HOST="${MFIDX_HOST:?set MFIDX_HOST to the ssh host of the GPU machine}"
 here="$(cd "$(dirname "$0")" && pwd)"
 
 "$here/remote.sh" mfidx status
