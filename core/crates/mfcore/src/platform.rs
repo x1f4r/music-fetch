@@ -11,8 +11,11 @@ use crate::util::cancel::TaskHandle;
 /// Fetches media with yt-dlp (or an equivalent).
 #[uniffi::export(with_foreign)]
 pub trait MediaBackend: Send + Sync {
-    /// Return yt-dlp `--dump-single-json --flat-playlist` output for `url`.
-    fn probe(&self, url: String, task: Arc<TaskHandle>) -> Result<String, PlatformError>;
+    /// Return yt-dlp `--dump-single-json --flat-playlist` output for `url`. With
+    /// `with_comments`, also fetch up to 40 top comments (YouTube: pinned first,
+    /// `--write-comments --extractor-args "youtube:max_comments=40,all,0,0;comment_sort=top"`)
+    /// so tracklists posted in comments can be used.
+    fn probe(&self, url: String, with_comments: bool, task: Arc<TaskHandle>) -> Result<String, PlatformError>;
 
     /// Download the best audio-only stream of `url` into `dest_dir` (m4a preferred,
     /// no post-processing) and return the absolute file path. Report progress with

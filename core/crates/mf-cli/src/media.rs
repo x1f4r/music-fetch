@@ -93,7 +93,7 @@ pub fn run(command: Command) -> Result<()> {
 
 fn probe(url: &str, raw: bool, tools: &Tools, cancel: &CancelToken) -> Result<()> {
     let task = TaskHandle::new(cancel.clone());
-    let json = tools.backend().probe(url.to_string(), task)?;
+    let json = tools.backend().probe(url.to_string(), false, task)?;
     if raw {
         println!("{json}");
         return Ok(());

@@ -32,7 +32,7 @@ fn probe_args_keep_default_runtimes_without_config() {
     let (program, prefix) = backend.program();
     assert_eq!(program, "/usr/bin/yt-dlp");
     assert!(prefix.is_empty());
-    let args = strings(&backend.probe_args("https://www.youtube.com/watch?v=x"));
+    let args = strings(&backend.probe_args("https://www.youtube.com/watch?v=x", false));
     assert_eq!(
         args,
         [
@@ -58,7 +58,7 @@ fn args_with_python_and_runtimes() {
     let (program, prefix) = backend.program();
     assert_eq!(program, "/app/python3");
     assert_eq!(strings(&prefix), ["/app/yt-dlp.zip"]);
-    let args = strings(&backend.probe_args("https://example.com/a"));
+    let args = strings(&backend.probe_args("https://example.com/a", false));
     let pos = args.iter().position(|a| a == "--no-js-runtimes").unwrap();
     assert_eq!(args[pos + 1..pos + 5], ["--js-runtimes", "quickjs:/app/qjs", "--js-runtimes", "deno:/opt/deno"]);
 }
@@ -212,7 +212,7 @@ fn rejects_non_web_urls() {
     let backend = YtDlpSubprocess::new(config(None, "yt-dlp", &[]));
     let (_, handle, _) = task();
     for url in ["/etc/passwd", "file:///etc/passwd", "ytsearch:abc", "", "-o"] {
-        assert!(matches!(backend.probe(url.into(), handle.clone()), Err(PlatformError::Unavailable { .. })), "{url}");
+        assert!(matches!(backend.probe(url.into(), false, handle.clone()), Err(PlatformError::Unavailable { .. })), "{url}");
     }
 }
 
@@ -220,7 +220,7 @@ fn rejects_non_web_urls() {
 fn missing_binary_is_reported() {
     let backend = YtDlpSubprocess::new(config(None, "/nonexistent/yt-dlp", &[]));
     let (_, handle, _) = task();
-    match backend.probe("https://example.com".into(), handle) {
+    match backend.probe("https://example.com".into(), false, handle) {
         Err(PlatformError::Failed { message }) => assert!(message.contains("not found"), "{message}"),
         other => panic!("{other:?}"),
     }
@@ -288,7 +288,7 @@ use fake::{fake, fake_with, gone, read_pids};
 fn probe_returns_stdout_json() {
     let f = fake(r#"printf '{"id": "abc", "title": "T"}\n'"#);
     let (_, handle, _) = task();
-    let json = f.backend.probe("https://example.com/v".into(), handle).unwrap();
+    let json = f.backend.probe("https://example.com/v".into(), false, handle).unwrap();
     assert_eq!(json, r#"{"id": "abc", "title": "T"}"#);
 }
 
@@ -298,7 +298,7 @@ fn probe_failure_maps_stderr() {
     let f = fake("echo 'ERROR: [youtube] abc: Private video. Sign in if granted access' >&2; exit 1");
     let (_, handle, _) = task();
     assert_eq!(
-        f.backend.probe("https://example.com/v".into(), handle),
+        f.backend.probe("https://example.com/v".into(), false, handle),
         Err(PlatformError::Unavailable { message: "This media is private.".into() })
     );
 }
@@ -382,7 +382,7 @@ fn environment_and_private_temp_dir() {
         |b| b,
     );
     let (_, handle, _) = task();
-    let json = f.backend.probe("https://example.com/v".into(), handle).unwrap();
+    let json = f.backend.probe("https://example.com/v".into(), false, handle).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["foo"], "bar");
     let tmp = value["tmp"].as_str().unwrap();
@@ -411,7 +411,7 @@ wait
     );
     let (_, handle, _) = task();
     let started = Instant::now();
-    let json = f.backend.probe("https://example.com/v".into(), handle).unwrap();
+    let json = f.backend.probe("https://example.com/v".into(), false, handle).unwrap();
     assert_eq!(json.len(), 4_000_000 + 11);
     assert!(started.elapsed() < Duration::from_secs(30));
 }
@@ -514,7 +514,7 @@ fn probe_times_out() {
     );
     let (_, handle, _) = task();
     let started = Instant::now();
-    match f.backend.probe("https://example.com/v".into(), handle) {
+    match f.backend.probe("https://example.com/v".into(), false, handle) {
         Err(PlatformError::Failed { message }) => assert!(message.contains("timed out"), "{message}"),
         other => panic!("{other:?}"),
     }
@@ -548,7 +548,7 @@ fn helper_holding_the_pipes_does_not_hang() {
     let f = fake(r#"sleep 30 & echo $! > "$TMPDIR/../helper"; echo '{"ok": true}'; exit 0"#);
     let (_, handle, _) = task();
     let started = Instant::now();
-    let json = f.backend.probe("https://example.com/v".into(), handle).unwrap();
+    let json = f.backend.probe("https://example.com/v".into(), false, handle).unwrap();
     assert_eq!(json, r#"{"ok": true}"#);
     assert!(started.elapsed() < PIPE_GRACE + Duration::from_secs(2));
     for pid in read_pids(&f.dir.path().join("tmp/helper")) {
@@ -571,7 +571,7 @@ mod live {
         let dir = TestDir::new("live");
         let backend = system_backend(&dir);
         let (_, handle, seen) = task();
-        let json = backend.probe(url.into(), handle.clone()).expect("probe");
+        let json = backend.probe(url.into(), false, handle.clone()).expect("probe");
         let info = parse_probe(&json).expect("parse");
         let duration = info.duration_ms.expect("duration") as f64 / 1000.0;
         assert!((duration - expected_secs).abs() < 2.0, "probe duration {duration}");
@@ -609,7 +609,7 @@ mod live {
         let backend = system_backend(&dir);
         let (_, handle, _) = task();
         // A well-formed id that does not exist.
-        let err = backend.probe("https://www.youtube.com/watch?v=aaaaaaaaaaa".into(), handle).unwrap_err();
+        let err = backend.probe("https://www.youtube.com/watch?v=aaaaaaaaaaa".into(), false, handle).unwrap_err();
         assert!(matches!(err, PlatformError::Unavailable { .. }), "{err:?}");
     }
 

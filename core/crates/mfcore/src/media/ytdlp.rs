@@ -95,8 +95,14 @@ impl YtDlpSubprocess {
         args
     }
 
-    fn probe_args(&self, url: &str) -> Vec<OsString> {
+    fn probe_args(&self, url: &str, with_comments: bool) -> Vec<OsString> {
         let mut args = self.common_args();
+        if with_comments {
+            args.extend(
+                ["--write-comments", "--extractor-args", "youtube:max_comments=40,all,0,0;comment_sort=top"]
+                    .map(OsString::from),
+            );
+        }
         args.extend(["-J", "--flat-playlist", "--skip-download", "--"].map(OsString::from));
         args.push(url.into());
         args
@@ -165,10 +171,10 @@ impl YtDlpSubprocess {
 }
 
 impl MediaBackend for YtDlpSubprocess {
-    fn probe(&self, url: String, task: Arc<TaskHandle>) -> Result<String, PlatformError> {
+    fn probe(&self, url: String, with_comments: bool, task: Arc<TaskHandle>) -> Result<String, PlatformError> {
         let url = check_url(&url)?;
         let temp = self.private_temp()?;
-        let cmd = self.command(self.probe_args(url), temp.path());
+        let cmd = self.command(self.probe_args(url, with_comments), temp.path());
         let run = run(cmd, Mode::Probe, &task, &self.config.yt_dlp_path, self.timeouts)?;
         if !run.status.success() {
             return Err(map_failure(&run));
