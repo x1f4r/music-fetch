@@ -29,5 +29,12 @@ realfft = "3.5"
 opus-decoder = "0.1.1"
 # media
 libc = "0.2"
+# shazam, providers
+crc32fast = "1.5"
+base64 = "0.23"
+sha2 = "0.11"
+sha1 = "0.11"
+hmac = "0.13"
+percent-encoding = "2.3"
 
 [dev-dependencies]

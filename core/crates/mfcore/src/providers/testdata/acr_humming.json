@@ -1,0 +1,75 @@
+{
+  "metadata": {
+    "humming": [
+      {
+        "external_ids": {},
+        "title": "As Long As You Love Me",
+        "artists": [{"name": "Backstreet Boys"}],
+        "acrid": "2167d4c8d51d2944881be2fc128372f6",
+        "external_metadata": {
+          "deezer": {
+            "album": {"id": "76662", "name": "Beautiful"},
+            "artists": [{"name": "Backstreet Boys", "id": "330"}],
+            "track": {"name": "As Long As You Love Me", "id": "602351"}
+          },
+          "spotify": {
+            "album": {"id": "1c7PDfu5CEUWE5M79pSHeD", "name": "Race For Life The Official Soundtrack 2011"},
+            "artists": [{"name": "Backstreet Boys", "id": "5rSXSAkZ67PYJSvpUpkOr7"}],
+            "track": {"name": "As Long as You Love Me", "id": "11Oj3hu53ZVOqzcw35elvh"}
+          },
+          "youtube": {"vid": "0Gl2QnHNpkA"}
+        },
+        "album": {"name": "Beautiful"},
+        "score": "0.88"
+      },
+      {
+        "external_ids": {},
+        "external_metadata": {},
+        "score": "0.87",
+        "title": "As Long As You Love Me",
+        "duration_ms": "213093",
+        "genres": [{"name": "Pop"}],
+        "acrid": "d4c6ff541580d20c7f35ef4a390eac41",
+        "album": {"name": "Beautiful"},
+        "artists": [{"name": "Backstreet Boys"}]
+      },
+      {
+        "external_ids": {},
+        "title": "If You Love Me",
+        "artists": [{"name": "Kys"}],
+        "external_metadata": {},
+        "acrid": "103fc2e9df3712151bb9601189fe3751",
+        "album": {"name": ""},
+        "score": "0.67"
+      },
+      {
+        "external_ids": {},
+        "external_metadata": {},
+        "score": "0.64",
+        "title": "Hurt (Album Version)",
+        "duration_ms": "243626",
+        "genres": [{"name": "Pop"}],
+        "acrid": "2c7939c273ac5b83922b0d7be45d0743",
+        "album": {"name": "Hurt"},
+        "artists": [{"name": "Christina Aguilera"}]
+      },
+      {
+        "external_ids": {},
+        "title": "打开爱",
+        "artists": [{"name": "Vee"}],
+        "external_metadata": {},
+        "acrid": "7c23c2f6b9d7c8eb5cc0b877e1782691",
+        "album": {"name": ""},
+        "score": "0.62"
+      },
+      {
+        "external_ids": {},
+        "title": "Sixth Candidate",
+        "artists": [{"name": "Nobody"}],
+        "acrid": "ffffffffffffffffffffffffffffffff",
+        "score": "0.31"
+      }
+    ]
+  },
+  "status": {"msg": "Success", "version": "1.0", "code": 0}
+}

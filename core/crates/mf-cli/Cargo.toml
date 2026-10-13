@@ -17,3 +17,5 @@ anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 # media
 ctrlc = "3.4"
+# shazam
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
