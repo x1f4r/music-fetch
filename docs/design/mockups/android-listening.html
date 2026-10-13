@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — Android — Listening</title>
+<link rel="stylesheet" href="android.css">
+<script src="mock.js"></script>
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+<style>
+  .listen .halo { opacity: .4; transform: scale(1.1); }
+  .sources { opacity: .45; }
+</style>
+</head>
+<body>
+<div class="statusbar"><span>14:32</span><span class="cam"></span><span class="right"><span class="ic ic-wifi s18"></span><span class="sigbars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:12px"></i></span><span class="battery"></span></span></div>
+
+<div class="searchbar"><span class="ic ic-link"></span><span class="ph">Paste a link</span><span class="ic ic-attach"></span></div>
+
+<div class="stage">
+  <div class="listen">
+    <div class="halo"></div>
+    <svg class="shape" viewBox="0 0 160 160"><path id="shape" fill="var(--primary)"/></svg>
+    <svg class="mark" width="76" height="44" viewBox="0 0 64 40" fill="none" stroke="var(--on-primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <path id="wave"/>
+    </svg>
+  </div>
+  <div class="state active">Listening</div>
+  <div class="sources">
+    <div class="bgroup">
+      <div class="tglbtn on"><span class="ic ic-mic s20"></span>Microphone</div>
+      <div class="tglbtn"><span class="ic ic-phone s20"></span>Phone</div>
+      <div class="tglbtn"><span class="ic ic-hum s20"></span>Hum</div>
+    </div>
+  </div>
+  <div class="recent">
+    <div class="art art-56 cv-houdini"></div>
+    <div class="text">
+      <div class="title-m truncate">Houdini</div>
+      <div class="body-m variant truncate">Dua Lipa · 14:32</div>
+    </div>
+    <span class="ic ic-chev-right variant"></span>
+  </div>
+</div>
+
+<nav class="navbar">
+  <div class="navitem on"><div class="pill"><span class="ic ic-listen"></span></div>Listen</div>
+  <div class="navitem"><div class="pill"><span class="ic ic-library-o"></span></div>Library</div>
+</nav>
+<div class="navhandle"></div>
+<script>
+  document.getElementById('shape').setAttribute('d', Mock.scallopPath(80, 80, 72, 8, .12, .35));
+  document.getElementById('wave').setAttribute('d', Mock.wavePath(64, 40, .7, 3));
+</script>
+</body>
+</html>

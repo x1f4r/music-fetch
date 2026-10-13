@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — Android — Share sheet</title>
+<link rel="stylesheet" href="android.css">
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+<style>
+  /* The app behind the sheet (a video app) */
+  body { background: #0f0f0f; }
+  .host { position: absolute; inset: 0; color: #fff; }
+  .host .video { position: absolute; top: 52px; left: 0; right: 0; height: 232px; background: linear-gradient(160deg, #26353f, #0b0f12); }
+  .host .video::after { content: ""; position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; border-radius: 50%; background: rgba(255,255,255,.18); transform: translate(-50%, -50%); }
+  .host .line { position: absolute; left: 16px; height: 14px; border-radius: 7px; background: rgba(255,255,255,.14); }
+  .sheet .src { display: flex; align-items: center; gap: 10px; padding: 0 8px; color: var(--on-surface-variant); }
+  .sheet .result { display: flex; align-items: center; gap: 14px; padding: 16px 8px 8px; }
+  .sheet .result .text { flex: 1; min-width: 0; }
+  .sheet .cta { display: flex; justify-content: center; margin-top: 12px; }
+  .sheet .foot { display: flex; justify-content: center; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="host">
+  <div class="video"></div>
+  <div class="line" style="top:300px; width:300px"></div>
+  <div class="line" style="top:324px; width:200px; height:10px"></div>
+  <div class="line" style="top:372px; width:120px; height:36px; border-radius:18px"></div>
+  <div class="line" style="top:372px; left:148px; width:120px; height:36px; border-radius:18px"></div>
+</div>
+<div class="statusbar" style="color:#fff"><span>14:32</span><span class="cam"></span><span class="right"><span class="ic ic-wifi s18"></span><span class="sigbars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:12px"></i></span><span class="battery"></span></span></div>
+<div class="scrim"></div>
+
+<div class="sheet">
+  <div class="handle"></div>
+  <div class="src"><span class="ic ic-link s20"></span><span class="body-m truncate">youtube.com/shorts/x9Zk3pQ7lTw</span></div>
+  <div class="result">
+    <div class="art art-64 cv-espresso"></div>
+    <div class="text">
+      <div class="title-l em truncate">Espresso</div>
+      <div class="body-l variant truncate">Sabrina Carpenter</div>
+      <div class="body-m variant truncate">Short n' Sweet · 2024</div>
+    </div>
+  </div>
+  <div class="cta">
+    <div class="splitbtn xl">
+      <div class="btn filled lead">Open in Spotify</div>
+      <div class="btn filled trail"><span class="ic ic-chev-down"></span></div>
+    </div>
+  </div>
+  <div class="foot"><div class="btn text">Open in Music Fetch</div></div>
+</div>
+<div class="navhandle" style="background:#fff"></div>
+</body>
+</html>

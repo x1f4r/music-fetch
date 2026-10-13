@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — Android — Library</title>
+<link rel="stylesheet" href="android.css">
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+<style>
+  .chips { position: absolute; top: 128px; left: 16px; right: 16px; display: flex; gap: 8px; }
+  .lib { position: absolute; top: 164px; left: 0; right: 0; bottom: 88px; overflow: hidden; }
+  .listitem .sub { display: inline-flex; align-items: center; gap: 6px; }
+  .listitem .sub .ic { color: var(--outline); }
+</style>
+</head>
+<body>
+<div class="statusbar"><span>14:32</span><span class="cam"></span><span class="right"><span class="ic ic-wifi s18"></span><span class="sigbars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:12px"></i></span><span class="battery"></span></span></div>
+
+<div class="searchbar"><span class="ic ic-search"></span><span class="ph">Search</span></div>
+
+<div class="chips">
+  <span class="chip on">All</span><span class="chip">Heard</span><span class="chip">Hummed</span><span class="chip">Links</span><span class="chip">Mixes</span>
+</div>
+
+<div class="lib">
+  <div class="dayhead">Today</div>
+  <div class="listitem"><div class="art art-56 cv-houdini"></div><div class="text"><div class="body-l truncate">Houdini</div><div class="body-m variant sub"><span class="ic ic-mic s18"></span>Dua Lipa</div></div><div class="trail"><span class="label-m tnum">14:32</span></div></div>
+  <div class="listitem"><div class="art art-56 cv-boiler"></div><div class="text"><div class="body-l truncate">Fred again.. | Boiler Room: London</div><div class="body-m variant sub"><span class="ic ic-mix s18"></span>8 tracks so far</div></div><div class="trail"><span class="label-m tnum">13:05</span><span class="ic ic-pin s18"></span></div></div>
+  <div class="listitem"><div class="art art-56 cv-takeonme"></div><div class="text"><div class="body-l truncate">Take On Me</div><div class="body-m variant sub"><span class="ic ic-hum s18"></span>a-ha · 4 candidates</div></div><div class="trail"><span class="label-m tnum">11:48</span></div></div>
+
+  <div class="dayhead">Yesterday</div>
+  <div class="listitem"><div class="art art-56 cv-espresso"></div><div class="text"><div class="body-l truncate">Espresso</div><div class="body-m variant sub"><span class="ic ic-link s18"></span>Sabrina Carpenter · tiktok.com</div></div><div class="trail"><span class="label-m tnum">21:10</span></div></div>
+  <div class="listitem"><div class="art art-56 cv-nights"></div><div class="text"><div class="body-l truncate">Nights</div><div class="body-m variant sub"><span class="ic ic-phone s18"></span>Frank Ocean</div></div><div class="trail"><span class="label-m tnum">18:22</span><span class="ic ic-pin s18"></span></div></div>
+
+  <div class="dayhead">Sunday, October 11</div>
+  <div class="listitem"><div class="art art-56 cv-blinding"></div><div class="text"><div class="body-l truncate">Blinding Lights</div><div class="body-m variant sub"><span class="ic ic-mic s18"></span>The Weeknd</div></div><div class="trail"><span class="label-m tnum">16:40</span></div></div>
+  <div class="listitem"><div class="art art-56 cv-shortnsweet"></div><div class="text"><div class="body-l truncate">Short n' Sweet</div><div class="body-m variant sub"><span class="ic ic-link s18"></span>Sabrina Carpenter · 12 tracks</div></div><div class="trail"><span class="label-m tnum">09:15</span></div></div>
+  <div class="listitem"><div class="art art-56 cv-levitating"></div><div class="text"><div class="body-l truncate">Levitating</div><div class="body-m variant sub"><span class="ic ic-doc s18"></span>Dua Lipa · levitating.m4a</div></div><div class="trail"><span class="label-m tnum">08:02</span></div></div>
+</div>
+
+<nav class="navbar">
+  <div class="navitem"><div class="pill"><span class="ic ic-listen"></span></div>Listen</div>
+  <div class="navitem on"><div class="pill"><span class="ic ic-library"></span></div>Library</div>
+</nav>
+<div class="navhandle"></div>
+</body>
+</html>

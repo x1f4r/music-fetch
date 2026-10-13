@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — macOS — Hum candidates with contour overlay</title>
+<link rel="stylesheet" href="mac.css">
+<script src="mock.js"></script>
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+<style>
+  .overlay { width: 268px; height: 120px; display: block; overflow: visible; }
+</style>
+</head>
+<body>
+<div class="window">
+  <aside class="panel sidebar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="sb-toggle"><span class="ic ic-sidebar"></span></div>
+    <div class="sb-item selected"><span class="ic ic-hum"></span>Listen</div>
+    <div class="sb-item"><span class="ic ic-stack"></span>Library</div>
+    <div class="sb-section">Pinned</div>
+    <div class="sb-item"><span class="ic ic-mix"></span><span class="truncate">Fred again.. | Boiler Room: London</span></div>
+    <div class="sb-item"><span class="ic ic-note"></span><span class="truncate">Nights</span></div>
+  </aside>
+
+  <main class="content with-inspector">
+    <div class="toolbar">
+      <div class="tb-left"><span class="wtitle">Listen</span></div>
+      <div class="tb-field"><span class="ic ic-link s14"></span>Paste a link</div>
+      <div class="tb-right">
+        <div class="tb-group"><div class="tb-btn prominent"><span class="ic ic-hum s14"></span>Listen</div></div>
+        <div class="tb-group"><div class="tb-btn"><span class="ic ic-sidebar"></span></div></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="cand-head">
+        <div class="trace"><svg id="hum" viewBox="0 0 400 56" preserveAspectRatio="none"></svg></div>
+        <span class="lbl">Your hum · 11 s</span>
+        <div class="btn"><span class="ic ic-hum s12"></span>Hum again</div>
+      </div>
+
+      <div class="cand selected">
+        <div class="art art-48 cv-takeonme"></div>
+        <div class="text">
+          <div class="headline truncate">Take On Me</div>
+          <div class="callout secondary truncate">a-ha</div>
+        </div>
+        <div class="trail">
+          <span class="capsule accent">Strong</span>
+          <div class="btn icon"><span class="ic ic-play s12"></span></div>
+          <div class="btn prominent">This is it</div>
+        </div>
+      </div>
+      <div class="cand">
+        <div class="art art-48 cv-dancingqueen"></div>
+        <div class="text">
+          <div class="headline truncate">Dancing Queen</div>
+          <div class="callout secondary truncate">ABBA</div>
+        </div>
+        <div class="trail">
+          <span class="capsule filled">Possible</span>
+          <div class="btn icon"><span class="ic ic-play s12"></span></div>
+          <div class="btn">This is it</div>
+        </div>
+      </div>
+      <div class="cand">
+        <div class="art art-48 cv-africa"></div>
+        <div class="text">
+          <div class="headline truncate">Africa</div>
+          <div class="callout secondary truncate">Toto</div>
+        </div>
+        <div class="trail">
+          <span class="capsule filled">Possible</span>
+          <div class="btn icon"><span class="ic ic-play s12"></span></div>
+          <div class="btn">This is it</div>
+        </div>
+      </div>
+      <div class="cand">
+        <div class="art art-48 cv-dontstop"></div>
+        <div class="text">
+          <div class="headline truncate">Don't Stop Me Now</div>
+          <div class="callout secondary truncate">Queen</div>
+        </div>
+        <div class="trail">
+          <span class="capsule outlined">Long shot</span>
+          <div class="btn icon"><span class="ic ic-play s12"></span></div>
+          <div class="btn">This is it</div>
+        </div>
+      </div>
+      <div style="padding: 18px 30px 0; display:flex; gap:8px; align-items:center" class="callout secondary">
+        Not here?
+        <span class="btn"><span class="ic ic-text s12"></span>Type a lyric</span>
+      </div>
+    </div>
+  </main>
+
+  <aside class="panel inspector">
+    <div class="ins-section" style="margin-top:0">
+      <div class="ins-head">Your hum vs. Take On Me</div>
+      <svg class="overlay" id="overlay" viewBox="0 0 268 120"></svg>
+      <div class="legend" style="margin-top:8px"><span><i style="background:var(--accent)"></i>You</span><span><i style="background:var(--label3)"></i>Take On Me</span></div>
+    </div>
+    <div class="ins-section">
+      <div class="kv"><span class="k">Album</span><span class="v">Hunting High and Low</span></div>
+      <div class="kv"><span class="k">Released</span><span class="v">1985</span></div>
+      <div class="kv"><span class="k">Matched by</span><span class="v">Melody</span></div>
+      <div class="kv"><span class="k">Where</span><span class="v">Chorus, bar 1</span></div>
+    </div>
+  </aside>
+</div>
+<script>
+  const L = Mock.melodyLength(Mock.MELODY);
+  Mock.drawTrace(document.getElementById('hum'), Mock.MELODY, { w: 400, h: 56, t1: 0, t2: L, width: 2.5, seed: 11, range: 12 });
+  // reference contour (song) then the hum, DTW-aligned in the mockup by sharing the time base
+  Mock.drawTrace(document.getElementById('overlay'), Mock.MELODY, { w: 268, h: 120, t1: 0, t2: L, width: 4, seed: 1, jitter: 0, vibrato: 0, slide: .02, stroke: 'rgba(128,128,128,.45)', flat: true });
+  Mock.drawTrace(document.getElementById('overlay'), Mock.MELODY, { w: 268, h: 120, t1: 0, t2: L, width: 2.5, seed: 11, jitter: .5, vibrato: .15, stroke: 'var(--accent)' });
+</script>
+</body>
+</html>
