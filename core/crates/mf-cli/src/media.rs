@@ -76,7 +76,14 @@ impl Tools {
 pub fn run(command: Command) -> Result<()> {
     let cancel = CancelToken::new();
     let on_interrupt = cancel.clone();
-    ctrlc::set_handler(move || on_interrupt.cancel()).context("installing the Ctrl-C handler")?;
+    // First Ctrl-C cancels cleanly; a second one exits at once.
+    ctrlc::set_handler(move || {
+        if on_interrupt.is_canceled() {
+            std::process::exit(130);
+        }
+        on_interrupt.cancel();
+    })
+    .context("installing the Ctrl-C handler")?;
     match command {
         Command::Probe { url, json, tools } => probe(&url, json, &tools, &cancel),
         Command::Decode { file, out } => decode(&file, &out, &cancel),

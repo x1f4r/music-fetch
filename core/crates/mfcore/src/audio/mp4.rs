@@ -46,11 +46,12 @@ fn scale(value: u64, to: u32, from: u32) -> u64 {
     ((value as u128 * to as u128 + from as u128 / 2) / from.max(1) as u128) as u64
 }
 
-/// The edit of the first sound track of an MP4/MOV file, if it trims anything.
-pub(crate) fn sound_track_edit(path: &Path) -> Option<Mp4Edit> {
+/// The edit of sound track `track_id` (`tkhd` id; else the first sound track)
+/// of an MP4/MOV file, if it trims anything.
+pub(crate) fn sound_track_edit(path: &Path, track_id: Option<u32>) -> Option<Mp4Edit> {
     let mut file = File::open(path).ok()?;
     let moov = read_moov(&mut file)?;
-    parse_moov(&moov)
+    parse_moov(&moov, track_id)
 }
 
 fn read_moov(file: &mut File) -> Option<Vec<u8>> {
@@ -131,11 +132,18 @@ fn timescale(full_box: &[u8]) -> Option<u32> {
     be_u32(full_box, at).filter(|&t| t > 0)
 }
 
-fn parse_moov(moov: &[u8]) -> Option<Mp4Edit> {
+/// `tkhd` track id (version 0 or 1).
+fn track_id(trak: &[u8]) -> Option<u32> {
+    let tkhd = child(trak, b"tkhd")?;
+    be_u32(tkhd, if *tkhd.first()? == 1 { 20 } else { 12 })
+}
+
+fn parse_moov(moov: &[u8], wanted: Option<u32>) -> Option<Mp4Edit> {
     let movie_timescale = timescale(child(moov, b"mvhd")?)?;
-    let trak = boxes(moov).filter(|(k, _)| k == b"trak").map(|(_, b)| b).find(|trak| {
-        child(trak, b"mdia").and_then(|m| child(m, b"hdlr")).and_then(|h| h.get(8..12)) == Some(b"soun")
-    })?;
+    let is_sound =
+        |trak: &&[u8]| child(trak, b"mdia").and_then(|m| child(m, b"hdlr")).and_then(|h| h.get(8..12)) == Some(b"soun");
+    let sound: Vec<&[u8]> = boxes(moov).filter(|(k, _)| k == b"trak").map(|(_, b)| b).filter(is_sound).collect();
+    let trak = sound.iter().find(|t| wanted.is_some() && track_id(t) == wanted).or(sound.first())?;
     let media_timescale = timescale(child(child(trak, b"mdia")?, b"mdhd")?)?;
     let elst = child(child(trak, b"edts")?, b"elst")?;
 
@@ -180,11 +188,17 @@ mod tests {
     }
 
     fn trak(handler: &[u8; 4], media_timescale: u32, elst: Option<Vec<u8>>) -> Vec<u8> {
+        trak_with_id(0, handler, media_timescale, elst)
+    }
+
+    fn trak_with_id(id: u32, handler: &[u8; 4], media_timescale: u32, elst: Option<Vec<u8>>) -> Vec<u8> {
         let mut hdlr = vec![0u8; 8];
         hdlr.extend_from_slice(handler);
         hdlr.extend_from_slice(&[0u8; 12]);
         let mdia = [mp4_box(b"mdhd", &full_box_v0(media_timescale)), mp4_box(b"hdlr", &hdlr)].concat();
-        let mut body = mp4_box(b"tkhd", &[0u8; 84]);
+        let mut tkhd = [0u8; 84];
+        tkhd[12..16].copy_from_slice(&id.to_be_bytes());
+        let mut body = mp4_box(b"tkhd", &tkhd);
         if let Some(elst) = elst {
             body.extend(mp4_box(b"edts", &mp4_box(b"elst", &elst)));
         }
@@ -216,26 +230,39 @@ mod tests {
         let video = trak(b"vide", 12_800, Some(elst_v0(&[(130_520, 0)])));
         // 130.299 s movie time, 1024 samples of priming at 44.1 kHz.
         let sound = trak(b"soun", 44_100, Some(elst_v0(&[(130_299, 1024)])));
-        let edit = parse_moov(&moov(&[video, sound])).unwrap();
+        let edit = parse_moov(&moov(&[video, sound]), None).unwrap();
         assert_eq!(edit, Mp4Edit { timescale: 44_100, skip: 1024, duration: Some(5_746_186) });
         assert_eq!(edit.skip_samples(16_000), 372);
         assert_eq!(edit.duration_samples(16_000), Some(2_084_784));
+        assert_eq!(edit.with_less_skip(962).skip, 62);
+        assert_eq!(edit.with_less_skip(5000).skip, 0);
+    }
+
+    #[test]
+    fn picks_the_requested_sound_track() {
+        let first = trak_with_id(1, b"soun", 44_100, Some(elst_v0(&[(1000, 1024)])));
+        let second = trak_with_id(2, b"soun", 48_000, Some(elst_v0(&[(1000, 2112)])));
+        let m = moov(&[first, second]);
+        assert_eq!(parse_moov(&m, Some(2)).map(|e| e.skip), Some(2112));
+        assert_eq!(parse_moov(&m, Some(1)).map(|e| e.skip), Some(1024));
+        // Unknown ids fall back to the first sound track.
+        assert_eq!(parse_moov(&m, Some(9)).map(|e| e.skip), Some(1024));
     }
 
     #[test]
     fn empty_edits_and_missing_lists() {
         // Leading empty edit, then the real one.
         let sound = trak(b"soun", 48_000, Some(elst_v0(&[(500, -1), (10_000, 2112)])));
-        assert_eq!(parse_moov(&moov(&[sound])).unwrap().skip, 2112);
+        assert_eq!(parse_moov(&moov(&[sound]), None).unwrap().skip, 2112);
         let sound = trak(b"soun", 48_000, None);
-        assert_eq!(parse_moov(&moov(&[sound])), None);
-        assert_eq!(parse_moov(&moov(&[trak(b"vide", 1000, Some(elst_v0(&[(1, 5)])))])), None);
+        assert_eq!(parse_moov(&moov(&[sound]), None), None);
+        assert_eq!(parse_moov(&moov(&[trak(b"vide", 1000, Some(elst_v0(&[(1, 5)])))]), None), None);
         // Truncated or garbage data never panics.
         let good = moov(&[trak(b"soun", 44_100, Some(elst_v0(&[(1000, 1024)])))]);
         for cut in 0..good.len() {
-            let _ = parse_moov(&good[..cut]);
+            let _ = parse_moov(&good[..cut], None);
         }
-        assert_eq!(parse_moov(&[0xff; 64]), None);
+        assert_eq!(parse_moov(&[0xff; 64], None), None);
     }
 
     #[test]
@@ -247,8 +274,8 @@ mod tests {
             [mp4_box(b"ftyp", b"M4A \0\0\0\0"), mp4_box(b"mdat", &[0u8; 5000]), mp4_box(b"moov", &moov(&[sound]))]
                 .concat();
         std::fs::write(&path, file).unwrap();
-        assert_eq!(sound_track_edit(&path).map(|e| e.skip), Some(1024));
+        assert_eq!(sound_track_edit(&path, None).map(|e| e.skip), Some(1024));
         std::fs::write(&path, b"not an mp4 file").unwrap();
-        assert_eq!(sound_track_edit(&path), None);
+        assert_eq!(sound_track_edit(&path, None), None);
     }
 }

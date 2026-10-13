@@ -12,10 +12,12 @@ use crate::error::{MfError, Result};
 /// Nesting depth followed when flattening playlists of playlists.
 const MAX_DEPTH: usize = 8;
 
+/// A chapter the site lists for the media (YouTube chapters), sorted by start.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Chapter {
     pub start_ms: u64,
     pub end_ms: Option<u64>,
+    /// May be empty.
     pub title: String,
 }
 
@@ -32,14 +34,19 @@ pub struct MediaEntry {
     pub duration_ms: Option<u64>,
 }
 
+/// What yt-dlp reported about a link: a single media item or a playlist.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MediaInfo {
     pub id: Option<String>,
     pub title: Option<String>,
+    /// Uploader or channel.
     pub uploader: Option<String>,
     pub duration_ms: Option<u64>,
+    /// Canonical page URL.
     pub webpage_url: Option<String>,
+    /// yt-dlp extractor key, e.g. "Youtube", "YoutubeTab", "SoundcloudSet".
     pub extractor: Option<String>,
+    /// Largest thumbnail.
     pub thumbnail: Option<String>,
     pub description: Option<String>,
     pub chapters: Vec<Chapter>,

@@ -183,13 +183,39 @@ fn codecs() -> &'static CodecRegistry {
     })
 }
 
-/// The track to decode: the container's default audio track.
-fn audio_track(format: &dyn FormatReader) -> Option<(u32, AudioCodecParameters, Track)> {
-    let track = format.default_track(TrackType::Audio).or_else(|| format.first_track(TrackType::Audio))?;
-    match &track.codec_params {
-        Some(CodecParameters::Audio(params)) => Some((track.id, params.clone(), track.clone())),
-        _ => None,
+/// The audio track being decoded.
+struct OpenTrack {
+    id: u32,
+    params: AudioCodecParameters,
+    track: Track,
+    decoder: Box<dyn AudioDecoder>,
+}
+
+/// The first audio track symphonia can decode, the container's default first.
+fn open_track(format: &dyn FormatReader, prefer: Prefer) -> std::result::Result<OpenTrack, Failure> {
+    let default_id = format.default_track(TrackType::Audio).map(|t| t.id);
+    let mut tracks: Vec<(u32, AudioCodecParameters, Track)> = format
+        .tracks()
+        .iter()
+        .filter_map(|t| match &t.codec_params {
+            Some(CodecParameters::Audio(params)) => Some((t.id, params.clone(), t.clone())),
+            _ => None,
+        })
+        .collect();
+    tracks.sort_by_key(|(id, ..)| Some(*id) != default_id);
+    let mut first_error = None;
+    for (id, params, track) in tracks {
+        if params.codec == CODEC_ID_OPUS && prefer == Prefer::Platform {
+            return Err(Failure::Deferred("Opus"));
+        }
+        match make_decoder(&params) {
+            Ok(decoder) => return Ok(OpenTrack { id, params, track, decoder }),
+            Err(e) => {
+                first_error.get_or_insert(e);
+            }
+        }
     }
+    Err(first_error.unwrap_or_else(|| Failure::Unsupported("the file has no audio track".into())))
 }
 
 fn unsupported_codec(id: AudioCodecId) -> String {
@@ -384,14 +410,11 @@ fn decode_with_symphonia(
             _ => Failure::Unsupported("unrecognized file format".into()),
         })?;
 
-    let (mut track_id, params, track) =
-        audio_track(format.as_ref()).ok_or_else(|| Failure::Unsupported("the file has no audio track".into()))?;
-    if params.codec == CODEC_ID_OPUS && prefer == Prefer::Platform {
-        return Err(Failure::Deferred("Opus"));
-    }
-    let mut decoder = make_decoder(&params)?;
+    let OpenTrack { id, params, track, mut decoder } = open_track(format.as_ref(), prefer)?;
+    let mut track_id = id;
     let mut timeline = Timeline::new(&track);
-    let edit = (format.format_info().format == FORMAT_ID_ISOMP4).then(|| mp4::sound_track_edit(input)).flatten();
+    let edit =
+        (format.format_info().format == FORMAT_ID_ISOMP4).then(|| mp4::sound_track_edit(input, Some(id))).flatten();
 
     let mut pipeline = Pipeline::new(PcmWriter::create(output)?, edit, &params);
     let mut planes: Vec<Vec<f32>> = Vec::new();
@@ -415,10 +438,10 @@ fn decode_with_symphonia(
                     break;
                 }
                 pipeline.flush()?;
-                let Some((id, params, track)) = audio_track(format.as_ref()) else { break };
-                track_id = id;
-                decoder = make_decoder(&params)?;
-                timeline = Timeline::new(&track);
+                let next = open_track(format.as_ref(), prefer)?;
+                track_id = next.id;
+                decoder = next.decoder;
+                timeline = Timeline::new(&next.track);
                 continue;
             }
             // A truncated or damaged tail: keep what was decoded.

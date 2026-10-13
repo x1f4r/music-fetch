@@ -69,7 +69,7 @@ fn download_args() {
     let args = strings(&backend.download_args("https://x.test/v", Path::new("/d/s"), Path::new("/t/1")));
     let joined = args.join(" ");
     for expected in [
-        "--no-playlist",
+        "--no-playlist --playlist-items 1",
         "--newline --progress --progress-template download:MFPROG %(progress)j",
         "-f bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best",
         "-P /d/s -P temp:/t/1",
@@ -172,30 +172,19 @@ fn classifies_real_yt_dlp_errors() {
 #[cfg(unix)]
 #[test]
 fn unknown_errors_keep_the_last_error_line() {
-    let run = RunOutput {
-        status: exit_status(1),
-        stdout: Vec::new(),
-        stdout_lines: Vec::new(),
-        stderr_tail: ["noise", "ERROR: [youtube] abc: First thing", "ERROR: [youtube] abc: Weird failure here", ""]
-            .map(String::from)
-            .into(),
+    let failed = |code: i32, stderr: &[&str]| RunOutput {
+        status: exit_status(code),
+        stderr_tail: stderr.iter().map(|s| s.to_string()).collect(),
+        ..RunOutput::new()
     };
+    let run =
+        failed(1, &["noise", "ERROR: [youtube] abc: First thing", "ERROR: [youtube] abc: Weird failure here", ""]);
     assert_eq!(map_failure(&run), PlatformError::Failed { message: "Weird failure here".into() });
 
-    let run = RunOutput {
-        status: exit_status(2),
-        stdout: Vec::new(),
-        stdout_lines: Vec::new(),
-        stderr_tail: ["yt-dlp: error: no such option: --bogus".to_string()].into(),
-    };
+    let run = failed(2, &["yt-dlp: error: no such option: --bogus"]);
     assert!(matches!(map_failure(&run), PlatformError::Failed { message } if message.contains("may need an update")));
 
-    let run = RunOutput {
-        status: exit_status(1),
-        stdout: Vec::new(),
-        stdout_lines: Vec::new(),
-        stderr_tail: VecDeque::new(),
-    };
+    let run = failed(1, &[]);
     assert_eq!(map_failure(&run), PlatformError::Failed { message: "yt-dlp failed (exit code 1).".into() });
 }
 
@@ -351,11 +340,34 @@ fn download_without_printed_path_finds_the_file() {
 fn download_without_file_fails() {
     let f = fake("exit 0");
     let dest = f.dir.path().join("out3");
+    // A file left in the folder by an earlier download is not mistaken for this one.
+    std::fs::create_dir_all(&dest).unwrap();
+    let old = std::fs::File::create(dest.join("earlier.m4a")).unwrap();
+    old.set_len(10).unwrap();
+    old.set_modified(SystemTime::now() - Duration::from_secs(3600)).unwrap();
     let (_, handle, _) = task();
     assert!(matches!(
         f.backend.download_audio("https://example.com/v".into(), dest.to_string_lossy().into(), handle),
         Err(PlatformError::Failed { .. })
     ));
+}
+
+#[cfg(unix)]
+#[test]
+fn progress_only_moves_forward() {
+    let f = fake(
+        r#"
+for n in 50 25 75 10; do
+  echo "MFPROG {\"downloaded_bytes\": $n, \"total_bytes\": 100}"
+done
+printf 'audio' > "$dest/p.m4a"
+echo "$dest/p.m4a"
+"#,
+    );
+    let dest = f.dir.path().join("mono");
+    let (_, handle, seen) = task();
+    f.backend.download_audio("  https://example.com/v  ".into(), dest.to_string_lossy().into(), handle).unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![0.5, 0.75, 1.0]);
 }
 
 #[cfg(unix)]

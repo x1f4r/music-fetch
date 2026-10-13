@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::config::MediaToolsConfig;
 use crate::error::PlatformError;
@@ -29,6 +29,7 @@ const KILL_GRACE: Duration = Duration::from_secs(3);
 /// Time to wait for output pipes after yt-dlp exited (children may hold them).
 const PIPE_GRACE: Duration = Duration::from_secs(2);
 const STDERR_TAIL: usize = 64;
+const MAX_STDOUT_LINES: usize = 256;
 /// Probe output cap; flat playlists with thousands of entries stay far below.
 const MAX_PROBE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_MESSAGE_CHARS: usize = 200;
@@ -106,6 +107,9 @@ impl YtDlpSubprocess {
         args.extend(
             [
                 "--no-playlist",
+                // A playlist URL that slipped through yields one file, not hundreds.
+                "--playlist-items",
+                "1",
                 "--newline",
                 "--progress",
                 "--progress-template",
@@ -162,9 +166,9 @@ impl YtDlpSubprocess {
 
 impl MediaBackend for YtDlpSubprocess {
     fn probe(&self, url: String, task: Arc<TaskHandle>) -> Result<String, PlatformError> {
-        check_url(&url)?;
+        let url = check_url(&url)?;
         let temp = self.private_temp()?;
-        let cmd = self.command(self.probe_args(&url), temp.path());
+        let cmd = self.command(self.probe_args(url), temp.path());
         let run = run(cmd, Mode::Probe, &task, &self.config.yt_dlp_path, self.timeouts)?;
         if !run.status.success() {
             return Err(map_failure(&run));
@@ -177,17 +181,18 @@ impl MediaBackend for YtDlpSubprocess {
     }
 
     fn download_audio(&self, url: String, dest_dir: String, task: Arc<TaskHandle>) -> Result<String, PlatformError> {
-        check_url(&url)?;
+        let url = check_url(&url)?;
         let dest = PathBuf::from(&dest_dir);
         std::fs::create_dir_all(&dest)
             .map_err(|e| PlatformError::Failed { message: format!("Cannot create the download folder: {e}") })?;
         let temp = self.private_temp()?;
-        let cmd = self.command(self.download_args(&url, &dest, temp.path()), temp.path());
+        let cmd = self.command(self.download_args(url, &dest, temp.path()), temp.path());
+        let started = SystemTime::now();
         let run = run(cmd, Mode::Download, &task, &self.config.yt_dlp_path, self.timeouts)?;
         if !run.status.success() {
             return Err(map_failure(&run));
         }
-        let path = downloaded_file(&run.stdout_lines, &dest).ok_or_else(|| PlatformError::Failed {
+        let path = downloaded_file(&run.stdout_lines, &dest, started).ok_or_else(|| PlatformError::Failed {
             message: "yt-dlp finished without producing an audio file.".into(),
         })?;
         task.report_progress(1.0);
@@ -196,27 +201,26 @@ impl MediaBackend for YtDlpSubprocess {
     }
 }
 
-fn check_url(url: &str) -> Result<(), PlatformError> {
-    let lower = url.trim().to_ascii_lowercase();
+/// The trimmed URL when it is an http(s) link.
+fn check_url(url: &str) -> Result<&str, PlatformError> {
+    let url = url.trim();
+    let lower = url.to_ascii_lowercase();
     if lower.starts_with("https://") || lower.starts_with("http://") {
-        Ok(())
+        Ok(url)
     } else {
         Err(PlatformError::Unavailable { message: "Only web links can be fetched.".into() })
     }
 }
 
 /// The file yt-dlp reported with `--print after_move:filepath`, else the newest
-/// finished file in `dest`.
-fn downloaded_file(stdout_lines: &[String], dest: &Path) -> Option<PathBuf> {
-    let printed = stdout_lines
-        .iter()
-        .rev()
-        .filter(|l| !l.starts_with(PROGRESS_PREFIX))
-        .map(|l| PathBuf::from(l.trim()))
-        .find(|p| p.is_absolute() && p.is_file());
+/// finished file written to `dest` since `started`.
+fn downloaded_file(stdout_lines: &[String], dest: &Path, started: SystemTime) -> Option<PathBuf> {
+    let printed = stdout_lines.iter().rev().map(|l| PathBuf::from(l.trim())).find(|p| p.is_absolute() && p.is_file());
     if printed.is_some() {
         return printed;
     }
+    // `--no-mtime` makes the modification time the download time.
+    let since = started.checked_sub(Duration::from_secs(2)).unwrap_or(started);
     let partial = ["part", "ytdl", "temp", "tmp"];
     std::fs::read_dir(dest)
         .ok()?
@@ -224,9 +228,10 @@ fn downloaded_file(stdout_lines: &[String], dest: &Path) -> Option<PathBuf> {
         .filter_map(|e| {
             let path = e.path();
             let meta = e.metadata().ok()?;
+            let modified = meta.modified().ok()?;
             let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase();
-            (meta.is_file() && meta.len() > 0 && !partial.contains(&ext.as_str()) && !ext.starts_with("part-"))
-                .then(|| (meta.modified().ok(), path))
+            let finished = !partial.contains(&ext.as_str()) && !ext.starts_with("part-");
+            (meta.is_file() && meta.len() > 0 && finished && modified >= since).then_some((modified, path))
         })
         .max_by_key(|(modified, _)| *modified)
         .map(|(_, path)| path)
@@ -259,8 +264,33 @@ enum Mode {
 struct RunOutput {
     status: ExitStatus,
     stdout: Vec<u8>,
+    /// Non-progress stdout lines (the printed file path).
     stdout_lines: Vec<String>,
     stderr_tail: VecDeque<String>,
+    /// Highest progress reported so far.
+    progress: f32,
+}
+
+impl RunOutput {
+    fn new() -> Self {
+        Self {
+            status: ExitStatus::default(),
+            stdout: Vec::new(),
+            stdout_lines: Vec::new(),
+            stderr_tail: VecDeque::new(),
+            progress: 0.0,
+        }
+    }
+
+    /// Forward progress that moved forward (retries restart yt-dlp's counter).
+    fn report(&mut self, task: &TaskHandle, fraction: Option<f32>) {
+        if let Some(f) = fraction
+            && f > self.progress
+        {
+            self.progress = f;
+            task.report_progress(f);
+        }
+    }
 }
 
 enum Event {
@@ -313,12 +343,7 @@ fn run(
     let mut exited_at: Option<Instant> = None;
     let mut status: Option<ExitStatus> = None;
     let mut open_streams = 2;
-    let mut out = RunOutput {
-        status: ExitStatus::default(),
-        stdout: Vec::new(),
-        stdout_lines: Vec::new(),
-        stderr_tail: VecDeque::new(),
-    };
+    let mut out = RunOutput::new();
 
     loop {
         match rx.recv_timeout(POLL) {
@@ -384,15 +409,16 @@ fn run(
 fn handle_event(event: Event, task: &TaskHandle, out: &mut RunOutput, open_streams: &mut usize) {
     match event {
         Event::StdoutLine(line) => {
-            if let Some(fraction) = parse_progress(&line) {
-                task.report_progress(fraction);
+            if line.starts_with(PROGRESS_PREFIX) {
+                out.report(task, parse_progress(&line));
+            } else if out.stdout_lines.len() < MAX_STDOUT_LINES {
+                out.stdout_lines.push(line);
             }
-            out.stdout_lines.push(line);
         }
         Event::StdoutAll(bytes) => out.stdout = bytes,
         Event::StderrLine(line) => {
-            if let Some(fraction) = parse_progress(&line) {
-                task.report_progress(fraction);
+            if line.starts_with(PROGRESS_PREFIX) {
+                out.report(task, parse_progress(&line));
             } else if !line.trim().is_empty() {
                 if out.stderr_tail.len() == STDERR_TAIL {
                     out.stderr_tail.pop_front();
