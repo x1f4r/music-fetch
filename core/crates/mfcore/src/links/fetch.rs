@@ -528,11 +528,16 @@ pub(crate) async fn expand_short_url(start: &Url, cancel: &CancelToken) -> Resul
             continue;
         }
         if response.status().is_success() {
-            let page = into_page(response, req.max_bytes, cancel, req.site).await?;
-            if let Some(target) = landing_page_target(&page) {
-                current = target;
-                hops += 1;
-                continue;
+            match into_page(response, req.max_bytes, cancel, req.site).await {
+                Ok(page) => {
+                    if let Some(target) = landing_page_target(&page) {
+                        current = target;
+                        hops += 1;
+                        continue;
+                    }
+                }
+                Err(MfError::Canceled) => return Err(MfError::Canceled),
+                Err(e) => tracing::debug!("short link page unreadable: {e}"),
             }
         }
         return Ok(current);
