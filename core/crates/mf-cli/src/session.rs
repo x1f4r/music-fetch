@@ -179,7 +179,7 @@ pub fn run(command: Command) -> Result<()> {
         Command::Listen(args) => listen(args),
         Command::Analyze(args) => analyze(args),
         Command::Session(args) => session(args),
-        Command::Index(command) => index(command),
+        Command::Index(command) => run_index(command),
     }
 }
 
@@ -602,7 +602,9 @@ fn session(args: SessionArgs) -> Result<()> {
     Ok(())
 }
 
-fn index(command: IndexCommand) -> Result<()> {
+/// Run an `mf index` subcommand (also callable from other command groups).
+pub fn run_index(command: IndexCommand) -> Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     match command {
         IndexCommand::Install(args) => {
             let engine = open_engine(&args, None, None)?;
