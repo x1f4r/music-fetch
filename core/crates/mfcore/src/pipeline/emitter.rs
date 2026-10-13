@@ -50,9 +50,11 @@ struct Inner {
 struct State {
     started: bool,
     terminal: bool,
-    last_level: Option<Instant>,
+    /// Earliest time for the next `Level` (paced on a fixed grid, so chunked
+    /// input does not lower the rate).
+    next_level: Option<Instant>,
     pitch: Vec<PitchFrame>,
-    last_pitch: Option<Instant>,
+    next_pitch: Option<Instant>,
     queue: VecDeque<SessionEvent>,
     delivering: bool,
 }
@@ -106,9 +108,9 @@ impl Emitter {
                 state: Mutex::new(State {
                     started: false,
                     terminal: false,
-                    last_level: None,
+                    next_level: None,
                     pitch: Vec::new(),
-                    last_pitch: None,
+                    next_pitch: None,
                     queue: VecDeque::new(),
                     delivering: false,
                 }),
@@ -220,10 +222,9 @@ impl Emitter {
                 return;
             }
             let now = Instant::now();
-            if state.last_level.is_some_and(|t| now.duration_since(t) < LEVEL_INTERVAL) {
+            if !pace(&mut state.next_level, now, LEVEL_INTERVAL) {
                 return;
             }
-            state.last_level = Some(now);
             let level = |x: f32| if x.is_finite() { x.clamp(0.0, 1.0) } else { 0.0 };
             state.queue.push_back(SessionEvent::Level { rms: level(rms), peak: level(peak) });
         }
@@ -239,11 +240,9 @@ impl Emitter {
             }
             state.pitch.extend_from_slice(frames);
             let now = Instant::now();
-            let due = state.last_pitch.is_none_or(|t| now.duration_since(t) >= PITCH_INTERVAL);
-            if !due || state.pitch.is_empty() {
+            if state.pitch.is_empty() || !pace(&mut state.next_pitch, now, PITCH_INTERVAL) {
                 return;
             }
-            state.last_pitch = Some(now);
             let batch = std::mem::take(&mut state.pitch);
             state.queue.push_back(SessionEvent::Pitch { frames: batch });
         }
@@ -387,6 +386,23 @@ impl Emitter {
     }
 }
 
+/// Rate limiter on a fixed grid: true when an event may go out at `now`. At most
+/// one event per `interval` on average; late events do not push the grid back.
+fn pace(next: &mut Option<Instant>, now: Instant, interval: Duration) -> bool {
+    match *next {
+        Some(due) if now < due => false,
+        Some(due) => {
+            let following = due + interval;
+            *next = Some(if following <= now { now + interval } else { following });
+            true
+        }
+        None => {
+            *next = Some(now + interval);
+            true
+        }
+    }
+}
+
 fn fill_identity(track: &mut Track) {
     if track.identity_key.is_empty() {
         track.identity_key = identity::identity_key(track);
@@ -506,6 +522,19 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert_eq!(events[1], SessionEvent::Notice { notice: Notice::KeepGoing });
         *echo.0.lock() = None;
+    }
+
+    #[test]
+    fn pacing_keeps_the_rate_with_jittery_calls() {
+        let start = Instant::now();
+        let mut next = None;
+        // Calls every 10 ms for one second: about 30 events at a 33 ms grid.
+        let sent = (0..100).filter(|i| pace(&mut next, start + Duration::from_millis(i * 10), LEVEL_INTERVAL)).count();
+        assert!((29..=31).contains(&sent), "{sent}");
+        // After a pause the grid restarts instead of bursting.
+        let later = start + Duration::from_secs(5);
+        assert!(pace(&mut next, later, LEVEL_INTERVAL));
+        assert!(!pace(&mut next, later + Duration::from_millis(10), LEVEL_INTERVAL));
     }
 
     #[test]
