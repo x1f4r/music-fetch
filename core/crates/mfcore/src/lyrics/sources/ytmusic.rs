@@ -168,8 +168,8 @@ fn parse_duration(text: &str) -> Option<u64> {
     if !(2..=3).contains(&parts.len()) || parts.iter().any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit())) {
         return None;
     }
-    let seconds = parts.iter().try_fold(0u64, |acc, p| p.parse::<u64>().ok().map(|v| acc * 60 + v))?;
-    Some(seconds * 1000)
+    let seconds = parts.iter().try_fold(0u64, |acc, p| acc.checked_mul(60)?.checked_add(p.parse::<u64>().ok()?))?;
+    seconds.checked_mul(1000)
 }
 
 /// "120M plays", "1.2K plays", "79 plays".
@@ -287,6 +287,8 @@ mod tests {
         assert_eq!(parse_duration("1:02:03"), Some(3_723_000));
         assert_eq!(parse_duration("Elton John"), None);
         assert_eq!(parse_duration("3:"), None);
+        assert_eq!(parse_duration("99999999999999999999:00"), None);
+        assert_eq!(parse_duration("999999999999999999:00"), None);
         assert_eq!(parse_plays("1.2K plays"), Some(1200));
         assert_eq!(parse_plays("1.4B plays"), Some(1_400_000_000));
         assert_eq!(parse_plays("79 plays"), Some(79));

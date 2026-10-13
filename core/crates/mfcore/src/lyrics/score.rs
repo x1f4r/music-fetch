@@ -38,6 +38,8 @@ pub(crate) struct Features {
     pub popularity: f32,
     /// Seen on a music catalog, not only on Genius.
     pub in_catalog: bool,
+    /// Every content word of the title was heard in the transcript.
+    pub title_heard: bool,
     /// Karaoke, instrumental or tribute release.
     pub noise: bool,
     pub lyrics: LyricEvidence,
@@ -50,12 +52,14 @@ const RUN_SATURATION: f32 = 6.0;
 pub(crate) fn fuse(f: &Features) -> f32 {
     let rrf = f.rrf / (f.rrf + 1.0);
     let agreement = (f.backends.saturating_sub(1) as f32 / 3.0).min(1.0);
-    let retrieval = 1.5 * rrf + 0.5 * agreement + 0.8 * f.popularity;
-    // An excerpt exists because Genius matched the words: its exactness adds nothing then.
+    let title = if f.title_heard { 0.5 } else { 0.0 };
+    let retrieval = 1.5 * rrf + 0.5 * agreement + 0.8 * f.popularity + title;
+    // Genius's word match only matters without lyrics: an alignment measures the
+    // same thing, and Genius indexes one version of a song more or less at random.
     let exact = 0.6 * f.genius_exact;
     let penalty = if f.noise { 1.5 } else { 0.0 } + if f.in_catalog { 0.0 } else { 1.0 };
     let z = match &f.lyrics {
-        LyricEvidence::Full(a) => -4.3 + verified(a) + retrieval + exact - penalty,
+        LyricEvidence::Full(a) => -4.3 + verified(a) + retrieval - penalty,
         // Excerpts are the passage the backend matched, so they always align well.
         LyricEvidence::Excerpt(a) => -4.6 + 0.75 * verified(a) + retrieval - penalty,
         LyricEvidence::Unknown => -2.8 + 1.6 * (retrieval + exact) - penalty,
@@ -77,7 +81,16 @@ mod tests {
     use super::*;
 
     fn features(lyrics: LyricEvidence, rrf: f32, backends: usize) -> Features {
-        Features { backends, rrf, genius_exact: 0.0, popularity: 0.5, in_catalog: true, noise: false, lyrics }
+        Features {
+            backends,
+            rrf,
+            genius_exact: 0.0,
+            popularity: 0.5,
+            in_catalog: true,
+            title_heard: false,
+            noise: false,
+            lyrics,
+        }
     }
 
     fn aligned(coverage: f32, longest_run: usize) -> Alignment {

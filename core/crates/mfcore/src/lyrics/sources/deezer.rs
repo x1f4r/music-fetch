@@ -76,7 +76,7 @@ pub(crate) fn parse(body: &str) -> Result<Vec<Hit>, ParseError> {
                 title: item.title.unwrap_or_default(),
                 artist: item.artist.and_then(|a| a.name).unwrap_or_default(),
                 album: non_empty(album.title),
-                duration_ms: item.duration.filter(|&s| s > 0).map(|s| s * 1000),
+                duration_ms: item.duration.filter(|&s| s > 0).and_then(|s| s.checked_mul(1000)),
                 isrc: non_empty(item.isrc),
                 artwork_url: non_empty(album.cover_xl).or_else(|| non_empty(album.cover_big)),
                 preview_url: non_empty(item.preview),

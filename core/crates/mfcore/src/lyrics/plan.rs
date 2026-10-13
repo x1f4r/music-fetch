@@ -6,8 +6,11 @@ use std::collections::HashSet;
 use super::Backend;
 use super::text;
 
-/// Transcripts up to this many words are also searched whole.
+/// Transcripts up to this many words are also searched whole on every backend.
 const FULL_TEXT_MAX_WORDS: usize = 16;
+/// iTunes and YouTube Music rank well even on long, noisy text: they also get the
+/// whole transcript up to this length.
+const TOLERANT_FULL_TEXT_MAX_WORDS: usize = 64;
 /// Shorter transcripts are only searched whole.
 const MIN_WORDS_FOR_WINDOWS: usize = 8;
 /// Window length for long transcripts.
@@ -84,7 +87,13 @@ pub(crate) fn plan(hypotheses: &[String], backends: &[Backend], max_requests: us
         .iter()
         .map(|&b| {
             let source = if b == Backend::Deezer { &deezer } else { &general };
-            (b, source.iter().take(backend_cap(b)).cloned().collect::<Vec<_>>().into_iter())
+            let max_words = match b {
+                Backend::ITunes | Backend::YouTubeMusic => TOLERANT_FULL_TEXT_MAX_WORDS,
+                Backend::Genius | Backend::Deezer => FULL_TEXT_MAX_WORDS,
+            };
+            let queue: Vec<Vec<String>> =
+                source.iter().filter(|q| q.len() <= max_words).take(backend_cap(b)).cloned().collect();
+            (b, queue.into_iter())
         })
         .collect();
     let mut requests = Vec::new();
@@ -111,12 +120,12 @@ pub(crate) fn plan(hypotheses: &[String], backends: &[Backend], max_requests: us
     Plan { requests, transcripts, best_words: best.len() }
 }
 
-/// Queries for one hypothesis, most useful first: the whole text when short, then
-/// 6–10-word windows.
+/// Queries for one hypothesis, most useful first: the whole text, then 6–10-word
+/// windows.
 fn hypothesis_queries(words: &[String]) -> Vec<Vec<String>> {
     let n = words.len();
     let mut out = Vec::new();
-    if n <= FULL_TEXT_MAX_WORDS {
+    if n <= TOLERANT_FULL_TEXT_MAX_WORDS {
         out.push(words.to_vec());
     }
     if n < MIN_WORDS_FOR_WINDOWS {
@@ -208,7 +217,11 @@ mod tests {
         assert_eq!(plan.requests.len(), 12);
         let itunes = queries(&plan, Backend::ITunes);
         assert_eq!(itunes.len(), 4);
-        assert!(itunes.iter().all(|q| q.split(' ').count() == LONG_WINDOW));
+        assert_eq!(itunes[0].split(' ').count(), 39);
+        assert!(itunes[1..].iter().all(|q| q.split(' ').count() == LONG_WINDOW));
+        let genius = queries(&plan, Backend::Genius);
+        assert_eq!(genius.len(), 3);
+        assert!(genius.iter().all(|q| q.split(' ').count() == LONG_WINDOW));
         assert_eq!(queries(&plan, Backend::Deezer).len(), 2);
     }
 

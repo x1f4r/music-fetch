@@ -60,7 +60,7 @@ pub(crate) async fn lyrics(
 ) -> Result<Option<Found>, FetchError> {
     let title = text::base_title(title);
     let primary = text::artist_names(artist).into_iter().next().unwrap_or_else(|| artist.to_string());
-    let seconds = duration_ms.map(|ms| (ms + 500) / 1000).filter(|&s| s > 0);
+    let seconds = duration_ms.map(|ms| ms.saturating_add(500) / 1000).filter(|&s| s > 0);
 
     let mut params = vec![("track_name", title.clone()), ("artist_name", artist.to_string())];
     if let Some(s) = seconds {

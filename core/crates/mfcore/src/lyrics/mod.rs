@@ -1,7 +1,7 @@
 //! Find songs from sung (transcribed) or typed lyrics.
 //!
 //! 1. Plan: normalize the hypotheses and cut them into 6–10-word windows within a
-//!    request budget that favours the best hypothesis ([`plan`]).
+//!    request budget that favours the best hypothesis.
 //! 2. Search iTunes, Genius lyric search, YouTube Music and Deezer in parallel;
 //!    each backend is rate-limited and a failing backend only drops out.
 //! 3. Merge hits by normalized title and overlapping artists.
@@ -51,6 +51,7 @@ const VERIFY_CONCURRENCY: usize = 4;
 /// Time budget for the lyric check; candidates still pending are scored without it.
 const VERIFY_DEADLINE: Duration = Duration::from_secs(12);
 
+/// A song found by lyric search.
 #[derive(Debug, Clone)]
 pub struct LyricMatch {
     pub track: Track,
@@ -70,6 +71,7 @@ pub enum Backend {
 }
 
 impl Backend {
+    /// Every backend.
     pub const ALL: [Backend; 4] = [Backend::ITunes, Backend::Genius, Backend::YouTubeMusic, Backend::Deezer];
 
     /// Short lowercase name, e.g. "itunes".
@@ -117,6 +119,7 @@ impl Default for SearchOptions {
 /// Matches plus diagnostics.
 #[derive(Debug, Clone, Default)]
 pub struct SearchReport {
+    /// What [`search`] returns.
     pub matches: Vec<LyricMatch>,
     /// Requests sent (or answered from the cache), in plan order.
     pub queries: Vec<(Backend, String)>,
@@ -139,14 +142,18 @@ pub struct SearchReport {
 pub struct Ranked {
     pub title: String,
     pub artist: String,
+    /// Final score, as in [`LyricMatch::score`].
     pub score: f32,
     /// Ranking before the lyric check.
     pub prior: f32,
     pub backends: Vec<Backend>,
     /// "lyrics", "excerpt", "instrumental" or "none".
     pub evidence: &'static str,
+    /// Weighted share of transcript words aligned to the lyrics, 0..=1.
     pub coverage: f32,
+    /// Longest run of consecutive aligned transcript words.
     pub longest_run: usize,
+    /// Popularity hint, 0..=1.
     pub popularity: f32,
 }
 
@@ -251,25 +258,40 @@ async fn run(
 
     let queries: Vec<align::Query> = plan.transcripts.iter().map(|t| align::Query::new(t)).collect();
     let selected = select_for_check(&candidates, options.verify_top);
-    let mut evidence = check_lyrics(&fetcher, &candidates, &selected, &queries).await?;
+    let evidence = check_lyrics(&fetcher, &candidates, &selected, &queries).await?;
     report.verified = evidence.values().filter(|e| matches!(e, LyricEvidence::Full(_))).count();
 
+    let ranked = rank(&candidates, evidence, &queries);
+    report.ranked = ranked.iter().take(DIAGNOSTIC_RESULTS).map(|(_, r)| r.clone()).collect();
+    report.matches =
+        ranked.into_iter().filter(|(m, _)| m.score >= MIN_SCORE).take(MAX_RESULTS).map(|(m, _)| m).collect();
+    report.requests = stats.requests.load(std::sync::atomic::Ordering::Relaxed);
+    report.cache_hits = stats.cache_hits.load(std::sync::atomic::Ordering::Relaxed);
+    Ok(report)
+}
+
+/// Score every candidate, best first. Each further version of a title (covers,
+/// live takes) is discounted: lyrics cannot tell versions apart, and the
+/// best-ranked one is the likelier meaning.
+fn rank(
+    candidates: &[Candidate],
+    mut evidence: HashMap<usize, LyricEvidence>,
+    queries: &[align::Query],
+) -> Vec<(LyricMatch, Ranked)> {
     let mut scored: Vec<(LyricMatch, Ranked, &str)> = candidates
         .iter()
         .enumerate()
         .map(|(index, candidate)| {
             let full = evidence.remove(&index).unwrap_or(LyricEvidence::Unknown);
-            let (score, lyrics) = best_evidence(candidate, full, &queries);
+            let (score, lyrics) = best_evidence(candidate, full, queries);
             let alignment = lyrics.alignment();
             let track = candidate.track();
-            let mut backends: Vec<Backend> = Backend::ALL.into_iter().filter(|b| candidate.seen_on(*b)).collect();
-            backends.dedup();
             let ranked = Ranked {
                 title: track.title.clone(),
                 artist: track.artist.clone(),
                 score,
                 prior: prior(candidate),
-                backends,
+                backends: Backend::ALL.into_iter().filter(|b| candidate.seen_on(*b)).collect(),
                 evidence: match lyrics {
                     LyricEvidence::Full(_) => "lyrics",
                     LyricEvidence::Excerpt(_) => "excerpt",
@@ -289,8 +311,6 @@ async fn run(
         b.1.score.total_cmp(&a.1.score).then(b.1.prior.total_cmp(&a.1.prior))
     };
     scored.sort_by(by_score);
-    // Lyrics cannot tell a song's versions apart: each further version of a
-    // title is less likely to be the one meant than the best-ranked one.
     let mut versions: HashMap<&str, i32> = HashMap::new();
     for (m, ranked, title) in scored.iter_mut() {
         let earlier = versions.entry(title).or_default();
@@ -299,12 +319,7 @@ async fn run(
         *earlier += 1;
     }
     scored.sort_by(by_score);
-    report.ranked = scored.iter().take(DIAGNOSTIC_RESULTS).map(|(_, r, _)| r.clone()).collect();
-    report.matches =
-        scored.into_iter().filter(|(m, _, _)| m.score >= MIN_SCORE).take(MAX_RESULTS).map(|(m, _, _)| m).collect();
-    report.requests = stats.requests.load(std::sync::atomic::Ordering::Relaxed);
-    report.cache_hits = stats.cache_hits.load(std::sync::atomic::Ordering::Relaxed);
-    Ok(report)
+    scored.into_iter().map(|(m, r, _)| (m, r)).collect()
 }
 
 /// Query one backend and parse its answer.
@@ -417,7 +432,7 @@ async fn check_one(
     queries: &[align::Query],
 ) -> std::result::Result<LyricEvidence, FetchError> {
     let Some(hit) = candidate.primary() else { return Ok(LyricEvidence::Unknown) };
-    let duration = candidate.track().duration_ms;
+    let duration = hit.duration_ms;
     Ok(match lrclib::lyrics(fetcher, &hit.title, &hit.artist, duration).await? {
         Some(lrclib::Found::Lyrics(raw)) => {
             let lyrics = align::Lyrics::new(&raw);
@@ -441,12 +456,16 @@ fn best_alignment(queries: &[align::Query], lyrics: &align::Lyrics) -> Option<al
 
 /// Score with the full-lyrics evidence or the backend excerpts, whichever is stronger.
 fn best_evidence(candidate: &Candidate, full: LyricEvidence, queries: &[align::Query]) -> (f32, LyricEvidence) {
+    let title = candidate.primary().map(|h| h.title.as_str()).unwrap_or_default();
+    // Partial title matches ("now" in "And Now My Lifesong Sings") are noise.
+    let title_heard = queries.iter().any(|q| align::title_coverage(title, q) >= 1.0);
     let features = |lyrics: LyricEvidence| Features {
         backends: candidate.backends(),
         rrf: candidate.rrf(),
         genius_exact: candidate.genius_exactness(),
         popularity: candidate.popularity(),
         in_catalog: candidate.in_catalog(),
+        title_heard,
         noise: candidate.is_noise(),
         lyrics,
     };

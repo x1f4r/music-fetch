@@ -19,6 +19,9 @@ const FILLER: &[&str] = &[
 /// Hesitations and humming that speech recognizers write out; dropped even alone.
 const HESITATION: &[&str] = &["erm", "hm", "hmm", "mhm", "mm", "mmm", "uh", "uhm", "um"];
 
+/// Longer "words" are pasted junk (URLs, hashes), not lyrics.
+const MAX_WORD_CHARS: usize = 40;
+
 /// Frequent function words (English and German) that weigh less in alignment and
 /// query selection.
 static STOPWORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
@@ -151,7 +154,7 @@ fn clean_words(text: &str) -> Vec<String> {
     if !current.is_empty() {
         words.push(shorten_elongation(&current));
     }
-    words.retain(|w| !HESITATION.contains(&w.as_str()));
+    words.retain(|w| !HESITATION.contains(&w.as_str()) && w.chars().count() <= MAX_WORD_CHARS);
     drop_filler_runs(words)
 }
 
@@ -391,6 +394,12 @@ mod tests {
         assert_eq!(words("thank you thank you thank you thank you").join(" "), "thank you thank you");
         assert_eq!(words("hop hop hop the world so high").join(" "), "hop hop the world so high");
         assert_eq!(words("twinkle twinkle little star").join(" "), "twinkle twinkle little star");
+    }
+
+    #[test]
+    fn junk_words_are_dropped() {
+        let junk = "abcdefghij".repeat(5);
+        assert_eq!(words(&format!("hello {junk} world")).join(" "), "hello world");
     }
 
     #[test]

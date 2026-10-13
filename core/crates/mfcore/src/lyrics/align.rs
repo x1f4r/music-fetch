@@ -25,6 +25,8 @@ const MERGE_SIM: f32 = 0.75;
 const MIN_PIECE_SCORE: f32 = 2.0;
 /// Alignment pieces per transcript (best piece plus the parts before and after it).
 const MAX_PIECES: usize = 3;
+/// Token similarity from which a title word counts as heard.
+const TITLE_SIM: f32 = 0.8;
 
 /// A transcript prepared for alignment.
 #[derive(Debug, Clone)]
@@ -158,6 +160,25 @@ pub(crate) fn align(query: &Query, lyrics: &Lyrics) -> Alignment {
         matched: pieces.iter().map(|p| p.matched).sum(),
         best_line,
     }
+}
+
+/// Share of a title's words (its content words, when it has any) that occur in
+/// the transcript, 0..=1. Sung snippets often contain the title.
+pub(crate) fn title_coverage(title: &str, query: &Query) -> f32 {
+    let words = text::lyric_tokens(&text::base_title(title));
+    let content: Vec<&String> = words.iter().filter(|w| !text::is_stopword(w)).collect();
+    let words: Vec<&String> = if content.is_empty() { words.iter().collect() } else { content };
+    if words.is_empty() || query.is_empty() {
+        return 0.0;
+    }
+    let heard = words
+        .iter()
+        .filter(|w| {
+            let token = Token::new(w);
+            query.tokens.iter().any(|q| similarity(&token, q) >= TITLE_SIM)
+        })
+        .count();
+    heard as f32 / words.len() as f32
 }
 
 /// Smith–Waterman over `query[start..end]` against all lyrics.
@@ -427,6 +448,17 @@ mod tests {
         assert_eq!(strip_timestamps("[Chorus]"), "[Chorus]");
         let lyrics = Lyrics::new("[Chorus]\n[00:01.00] Hello world\n\n");
         assert_eq!(lyrics.lines, ["Hello world"]);
+    }
+
+    #[test]
+    fn title_words_heard_in_the_transcript() {
+        let query = Query::new(&text::transcript_tokens("amazing grace how sweet is now"));
+        assert_eq!(title_coverage("Amazing Grace (My Chains Are Gone)", &query), 1.0);
+        assert_eq!(title_coverage("Broken Vessels (Amazing Grace) [Live]", &query), 0.0);
+        let query = Query::new(&text::transcript_tokens("hold me closer tony danza"));
+        assert_eq!(title_coverage("Tiny Dancer", &query), 0.5);
+        assert_eq!(title_coverage("Hold Me Closer", &query), 1.0);
+        assert_eq!(title_coverage("", &query), 0.0);
     }
 
     #[test]

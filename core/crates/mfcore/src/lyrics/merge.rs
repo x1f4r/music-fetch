@@ -105,9 +105,13 @@ impl Candidate {
         out
     }
 
-    /// The hit whose metadata represents the song (catalog services first, best rank).
+    /// The hit whose metadata represents the song: catalog services first, plain
+    /// titles before remasters, mixes and live versions, then the best rank.
     pub fn primary(&self) -> Option<&Hit> {
-        self.preferred(|_| true)
+        self.sightings
+            .iter()
+            .min_by_key(|s| (backend_priority(s.backend), is_decorated(&s.hit.title), s.rank))
+            .map(|s| &s.hit)
     }
 
     /// True when every hit looks like karaoke, an instrumental or a tribute.
@@ -115,40 +119,56 @@ impl Candidate {
         self.sightings.iter().all(|s| text::is_noise_release(&s.hit.title, &s.hit.artist, s.hit.album.as_deref()))
     }
 
-    fn preferred(&self, has: impl Fn(&Hit) -> bool) -> Option<&Hit> {
+    /// The first hit with `has`, preferring the primary's version of the song.
+    fn preferred(&self, primary: &Hit, has: impl Fn(&Hit) -> bool) -> Option<&Hit> {
+        let version = text::fold(&primary.title);
         self.sightings
             .iter()
             .filter(|s| has(&s.hit))
-            .min_by_key(|s| (backend_priority(s.backend), s.rank))
+            .min_by_key(|s| (text::fold(&s.hit.title) != version, backend_priority(s.backend), s.rank))
             .map(|s| &s.hit)
     }
 
-    fn best_from(&self, backend: Backend) -> Option<&Hit> {
-        self.sightings.iter().filter(|s| s.backend == backend).min_by_key(|s| s.rank).map(|s| &s.hit)
+    /// A hit with `has` of exactly the primary's version, if any.
+    fn same_version(&self, primary: &Hit, has: impl Fn(&Hit) -> bool) -> Option<&Hit> {
+        let version = text::fold(&primary.title);
+        self.preferred(primary, has).filter(|h| text::fold(&h.title) == version)
+    }
+
+    /// `backend`'s hit for this song, preferring the primary's version.
+    fn best_from(&self, primary: &Hit, backend: Backend) -> Option<&Hit> {
+        let version = text::fold(&primary.title);
+        self.sightings
+            .iter()
+            .filter(|s| s.backend == backend)
+            .min_by_key(|s| (text::fold(&s.hit.title) != version, s.rank))
+            .map(|s| &s.hit)
     }
 
     /// The candidate as a `Track` (identity key left for the engine).
     pub fn track(&self) -> Track {
         let Some(primary) = self.primary() else { return Track::default() };
         let artists = self
-            .preferred(|h| !h.artists.is_empty())
+            .preferred(primary, |h| !h.artists.is_empty())
             .map(|h| h.artists.clone())
             .unwrap_or_else(|| text::artist_names(&primary.artist));
+        // Recording-specific fields only come from the same version; artwork, year
+        // and genre may come from any.
         let mut track = Track {
             title: primary.title.clone(),
             artist: primary.artist.clone(),
             artists,
-            album: self.preferred(|h| h.album.is_some()).and_then(|h| h.album.clone()),
-            isrc: self.preferred(|h| h.isrc.is_some()).and_then(|h| h.isrc.clone()),
-            duration_ms: self.preferred(|h| h.duration_ms.is_some()).and_then(|h| h.duration_ms),
-            release_year: self.preferred(|h| h.release_year.is_some()).and_then(|h| h.release_year),
-            genre: self.preferred(|h| h.genre.is_some()).and_then(|h| h.genre.clone()),
-            artwork_url: self.preferred(|h| h.artwork_url.is_some()).and_then(|h| h.artwork_url.clone()),
-            preview_url: self.preferred(|h| h.preview_url.is_some()).and_then(|h| h.preview_url.clone()),
+            album: self.same_version(primary, |h| h.album.is_some()).and_then(|h| h.album.clone()),
+            isrc: self.same_version(primary, |h| h.isrc.is_some()).and_then(|h| h.isrc.clone()),
+            duration_ms: self.same_version(primary, |h| h.duration_ms.is_some()).and_then(|h| h.duration_ms),
+            release_year: self.preferred(primary, |h| h.release_year.is_some()).and_then(|h| h.release_year),
+            genre: self.preferred(primary, |h| h.genre.is_some()).and_then(|h| h.genre.clone()),
+            artwork_url: self.preferred(primary, |h| h.artwork_url.is_some()).and_then(|h| h.artwork_url.clone()),
+            preview_url: self.same_version(primary, |h| h.preview_url.is_some()).and_then(|h| h.preview_url.clone()),
             ..Track::default()
         };
         for backend in Backend::ALL {
-            let Some(hit) = self.best_from(backend) else { continue };
+            let Some(hit) = self.best_from(primary, backend) else { continue };
             let (id_key, service) = match backend {
                 Backend::ITunes => ("apple", Service::AppleMusic),
                 Backend::Deezer => ("deezer", Service::Deezer),
@@ -195,6 +215,11 @@ pub(crate) fn merge(sightings: Vec<Sighting>) -> Vec<Candidate> {
         }
     }
     candidates
+}
+
+/// True for titles with version decorations ("(Live Aid)", "- 2011 Remaster").
+fn is_decorated(title: &str) -> bool {
+    text::base_title(title) != title.trim()
 }
 
 /// Relative trust in a backend's ranking for lyric queries.
@@ -282,6 +307,26 @@ mod tests {
         assert_eq!(track.links.len(), 2);
         assert!(track.identity_key.is_empty());
         assert!(candidates[0].popularity() > 0.8);
+    }
+
+    #[test]
+    fn track_prefers_the_plain_version_and_keeps_its_recording_fields() {
+        let mut live = sighting(Backend::ITunes, 0, 0, "We Are The Champions (Live Aid)", "Queen");
+        live.hit.duration_ms = Some(237_000);
+        live.hit.id = Some("1".into());
+        let mut studio = sighting(Backend::ITunes, 1, 2, "We Are the Champions", "Queen");
+        studio.hit.duration_ms = Some(179_000);
+        studio.hit.id = Some("2".into());
+        let mut deezer = sighting(Backend::Deezer, 2, 0, "We Are The Champions (Live Aid)", "Queen");
+        deezer.hit.isrc = Some("GBUM71900001".into());
+        let candidates = merge(vec![live, studio, deezer]);
+        assert_eq!(candidates.len(), 1);
+        let track = candidates[0].track();
+        assert_eq!(track.title, "We Are the Champions");
+        assert_eq!(track.duration_ms, Some(179_000));
+        assert_eq!(track.ids.get("apple").map(String::as_str), Some("2"));
+        // The only ISRC belongs to the live recording.
+        assert_eq!(track.isrc, None);
     }
 
     #[test]
