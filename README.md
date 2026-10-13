@@ -1,127 +1,91 @@
 # Music Fetch
 
-Music Fetch is a local-first music recognition tool for noisy web video, playlists, and local media files. It exposes the same engine through:
+Find out what's playing — or what's stuck in your head — on macOS and Android.
 
-- `music-fetch analyze` for direct CLI analysis
-- `music-fetch serve` for a local HTTP API
-- `music-fetch tui` for an interactive Textual terminal UI
-- `Music Fetch.app` for a native SwiftUI macOS interface
+- **Listen.** Identify a song playing nearby (microphone) or on the device itself (system
+  audio on the Mac, app audio on Android).
+- **Hum, whistle or sing.** No recording needed: Music Fetch matches the melody and any
+  words you sing, and shows its best guesses with an honest match label and a "your hum
+  vs. the song" overlay.
+- **Paste any link.** YouTube, Spotify, Apple Music, Deezer, Tidal, Amazon Music,
+  SoundCloud, TikTok, Instagram, Mixcloud, Bandcamp and most other pages with audio or
+  video. Streaming links resolve instantly; videos are analysed.
+- **Mixes and playlists.** DJ sets, radio shows and compilations become a tracklist with
+  timestamps, linked to every service. Playlists are identified entry by entry.
+- **Open anywhere.** Every result links to Spotify, Apple Music, YouTube Music, YouTube,
+  Deezer, Tidal, Amazon Music and SoundCloud; on Android your chosen app opens directly.
 
-It is built for macOS first and assumes `ffmpeg` and `yt-dlp` are available. Input ingestion is platform-agnostic and follows whatever sites `yt-dlp` supports, which typically includes YouTube, Instagram, TikTok, Vimeo, and many other public video hosts. Optional helpers improve accuracy:
-
-- `vibra` for free-first unofficial Shazam matching
-- `audio-separator` for vocal/instrumental source separation
-- `fpcalc` from Chromaprint for local catalog matching
-- AudD and ACRCloud credentials for official hosted recognition
+Everything runs on your device. There are no accounts, no analytics and no tracking.
 
 ## Install
 
-```bash
-uv sync
-music-fetch doctor
+Downloads are on the [Releases](https://github.com/x1f4r/music-fetch/releases) page.
+
+### macOS (Apple silicon, macOS 26 or later)
+
+1. Download `MusicFetch-<version>-macOS-arm64.zip`, open it and move **Music Fetch** to
+   Applications.
+2. The app is not notarized. The first time you open it, macOS says it cannot verify
+   the developer. Open **System Settings → Privacy & Security**, scroll down and click
+   **Open Anyway**, then confirm.
+3. Music Fetch asks for the microphone when you first listen, and for **System Audio
+   Recording** when you first use *This Mac*.
+
+### Android (Android 10 or later)
+
+1. Download `MusicFetch-<version>-android.apk` on your phone and open it.
+2. Allow installing apps from your browser or file manager when Android asks.
+3. Optional: add the **Identify song** and **Identify phone audio** tiles to Quick
+   Settings (swipe down twice → edit).
+
+## Humming needs the melody library
+
+Recognising a hummed tune uses a melody library of popular songs (about 50 MB). The app
+offers to download it the first time you hum, and you can manage it in Settings.
+
+## Optional services
+
+Recognition works without any account. If you have keys for
+[AudD](https://audd.io) or [ACRCloud](https://www.acrcloud.com) (including an ACRCloud
+project with humming recognition), add them in Settings → Services to widen coverage.
+Keys are stored in the macOS Keychain / Android Keystore and never leave your device
+except in requests to that service.
+
+## How it works
+
+One engine written in Rust powers both apps through UniFFI:
+
+- recordings are matched with Shazam-compatible audio fingerprints;
+- hummed melodies are pitch-tracked on device and matched against the melody library;
+  sung words are transcribed on device and searched as lyrics;
+- links are resolved from page metadata where possible and otherwise downloaded with
+  [yt-dlp](https://github.com/yt-dlp/yt-dlp), which ships inside the apps;
+- mixes are segmented locally, and tracklists in descriptions or comments are verified
+  against the audio, so only a few recognition requests are needed per hour of audio.
+
+Architecture and design notes are in [`docs/`](docs).
+
+## Build from source
+
+Requirements: macOS with Xcode 26, [rustup](https://rustup.rs), XcodeGen; for Android
+also JDK 21, the Android SDK with NDK r29, `cargo-ndk` and Python 3.13.
+
+```sh
+scripts/build-macos-app.sh        # dist/Music Fetch.app and a zip
+scripts/build-android-app.sh      # dist/MusicFetch-<version>-android.apk
+cd core && cargo test --workspace # engine tests
 ```
 
-For optional helpers:
+## Privacy
 
-```bash
-./scripts/bootstrap_macos.sh
-```
+- Audio is processed on your device. Short audio fingerprints (not audio) are sent to the
+  recognition service; links you paste are fetched from their sites; song titles are
+  looked up in public catalogues (Deezer, iTunes, LRCLIB) to add artwork, links and
+  lyrics.
+- Requests carry a neutral `MusicFetch/<version>` user agent and no identifiers.
+- Your history stays in a local database. Delete sessions from the Library at any time.
 
-Build the native macOS app bundle:
+## License
 
-```bash
-./scripts/build_macos_app.sh
-open "dist/Music Fetch.app"
-```
-
-The packaged app uses the portable backend command `music-fetch` by default. To bake in a specific backend path for local-only builds, set `MUSIC_FETCH_BACKEND_COMMAND` before running the build script.
-
-Install or refresh the app in `/Applications`:
-
-```bash
-./scripts/build_macos_app.sh --install
-open "/Applications/Music Fetch.app"
-```
-
-## Usage
-
-Analyze a URL or local file:
-
-```bash
-music-fetch analyze "https://youtube.com/shorts/-OvmHgojXLw"
-music-fetch analyze ~/Downloads/example.mp4 --json
-```
-
-Run a detached job, then inspect or follow it:
-
-```bash
-music-fetch submit "https://youtube.com/shorts/-OvmHgojXLw"
-music-fetch jobs
-music-fetch job <job-id> --human
-music-fetch watch <job-id>
-music-fetch metrics <job-id>
-music-fetch metrics <job-id> --json
-music-fetch metrics <job-id> --provider audd --outcome provider_error --summary-only --json
-```
-
-`music-fetch job <job-id>` remains JSON by default for scripts. `watch` exits `0`
-for `succeeded` and `partial_failed`, `1` for `failed` or `canceled`, and `2`
-on timeout. `music-fetch metrics <job-id>` summarizes provider calls, cache hits,
-budget exhaustion, and recognition outcomes; use filters such as `--provider`,
-`--outcome`, `--metric-type`, `--source-item-id`, `--matched/--unmatched`,
-`--cache-hit/--cache-miss`, and `--summary-only` for smaller JSON output or
-focused debugging. Repeated values for one filter are ORed; different filter
-types are ANDed. Filtered summaries are computed after filtering, and
-`--summary-only` omits the raw `metrics` array. If a detached worker dies and
-leaves an old job stuck in
-`queued`/`running`, preview recovery with
-`music-fetch recover-jobs`, then mark matching stale jobs failed with
-`music-fetch recover-jobs --apply`.
-
-Run the local API:
-
-```bash
-music-fetch serve --host 127.0.0.1 --port 7766
-```
-
-Launch the TUI:
-
-```bash
-music-fetch tui
-```
-
-Launch the macOS app:
-
-```bash
-open "dist/Music Fetch.app"
-```
-
-Or, after installation:
-
-```bash
-open "/Applications/Music Fetch.app"
-```
-
-Import a local catalog:
-
-```bash
-music-fetch catalog import ~/Music
-```
-
-## Provider order
-
-The default provider chain is:
-
-1. `local_catalog` if configured and `fpcalc` is available
-2. `vibra` if installed
-3. `audd` if token configured
-4. `acrcloud` if host/key/secret configured
-
-The engine scans overlapping windows from the original mix and, when available, the instrumental stem. Short single-track items use aggressive early-stop logic, while long videos and mixes switch to a clustered long-mix mode with larger request budgets, excerpt caching, and repeated-hit fusion into timeline segments.
-
-## Notes
-
-- The native app bundle is built from the SwiftUI sources in `macos/` and shells out to the local `music-fetch` backend in `.venv/bin/music-fetch`.
-- Local catalog fingerprinting needs clips long enough for Chromaprint to produce a fingerprint; very short clips such as one-second tones are expected to fail import.
-- `yt-dlp` is used for YouTube, Shorts, playlists, Instagram, TikTok, Vimeo, and other supported streaming sites. If a provider changes extractor behavior, update `yt-dlp` first.
-- `deno` is installed alongside `yt-dlp` so the JS challenge helpers used by some sites, especially YouTube, are available.
+MIT. Third-party components and their licenses are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
