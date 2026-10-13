@@ -300,7 +300,8 @@ pub enum SessionEvent {
     Phase { phase: Phase, fraction: Option<f32> },
     /// Analysis progress through a link or file.
     Progress { analyzed_ms: u64, total_ms: u64, eta_ms: Option<u64> },
-    /// Live input level, about 30 per second. Values are linear 0..=1.
+    /// Live input level, about 30 per second. Perceptual 0..=1: −60 dBFS maps to
+    /// 0 and 0 dBFS to 1 (linear in dB in between).
     Level { rms: f32, peak: f32 },
     /// Batched live pitch frames, about 10 batches per second.
     Pitch { frames: Vec<PitchFrame> },
@@ -410,4 +411,18 @@ pub struct StorageUsage {
     pub database_bytes: u64,
     pub cache_bytes: u64,
     pub melody_index_bytes: u64,
+}
+
+/// Lyrics for a track (from LRCLIB).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct Lyrics {
+    pub plain: String,
+    /// Time-synced lines when available; empty otherwise.
+    pub synced: Vec<LyricLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct LyricLine {
+    pub t_ms: u64,
+    pub text: String,
 }

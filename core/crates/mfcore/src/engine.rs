@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::config::{Credentials, EngineConfig};
 use crate::error::{MfError, Result};
 use crate::model::{
-    AnalyzeMode, CaptureSource, ExportFormat, LibraryEntry, LibraryQuery, ListenMode, MelodyIndexStatus, Segment,
+    AnalyzeMode, CaptureSource, ExportFormat, LibraryEntry, Lyrics, LibraryQuery, ListenMode, MelodyIndexStatus, Segment,
     SessionDetail, StorageUsage, Track,
 };
 use crate::platform::{MediaBackend, PlatformDecoder, SessionObserver, SpeechToText};
@@ -121,9 +121,16 @@ impl Engine {
         Err(MfError::internal("not implemented"))
     }
 
-    /// Fill links, artwork and previews for a track (best effort).
+    /// Fill links, artwork and previews for a track (best effort). Also refreshes
+    /// expired preview URLs.
     pub async fn enrich_track(&self, track: Track) -> Track {
         track
+    }
+
+    /// Lyrics for a track, if any are known.
+    pub async fn fetch_lyrics(&self, track: Track) -> Option<Lyrics> {
+        let _ = track;
+        None
     }
 }
 
