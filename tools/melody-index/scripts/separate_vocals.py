@@ -20,8 +20,9 @@ def main() -> int:
     in_dir, out_dir = Path(sys.argv[1]), Path(sys.argv[2])
     model = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_MODEL
     out_dir.mkdir(parents=True, exist_ok=True)
-    overlap = int(os.environ.get("MFIDX_SEP_OVERLAP", "2"))
-    batch = int(os.environ.get("MFIDX_SEP_BATCH", "4"))
+    # Unset means the model's own inference settings (overlap 8 for the RoFormers).
+    overlap = os.environ.get("MFIDX_SEP_OVERLAP")
+    batch = os.environ.get("MFIDX_SEP_BATCH")
     sep = Separator(
         output_dir=str(out_dir),
         output_format="WAV",
@@ -30,8 +31,8 @@ def main() -> int:
         mdxc_params={
             "segment_size": 256,
             "override_model_segment_size": False,
-            "batch_size": batch,
-            "overlap": overlap,
+            "batch_size": int(batch) if batch else None,
+            "overlap": int(overlap) if overlap else None,
             "pitch_shift": 0,
         },
     )
