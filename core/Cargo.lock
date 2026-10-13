@@ -1241,7 +1241,9 @@ dependencies = [
  "clap",
  "ctrlc",
  "mfcore",
+ "parking_lot",
  "rustls",
+ "serde",
  "serde_json",
  "tokio",
 ]

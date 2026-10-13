@@ -21,6 +21,18 @@ pub struct Chapter {
     pub title: String,
 }
 
+/// A top-level comment (yt-dlp `--write-comments`), used to find tracklists.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Comment {
+    pub author: Option<String>,
+    /// Pinned by the uploader.
+    pub is_pinned: bool,
+    /// Written by the uploader's own channel.
+    pub author_is_uploader: bool,
+    pub text: String,
+    pub like_count: u64,
+}
+
 /// One playable item of a playlist.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MediaEntry {
@@ -60,6 +72,9 @@ pub struct MediaInfo {
     pub is_live: bool,
     /// Non-empty for playlists.
     pub entries: Vec<MediaEntry>,
+    /// Top-level comments when the probe asked for them: pinned first, then the
+    /// uploader's, then by likes.
+    pub comments: Vec<Comment>,
 }
 
 /// Parse probe JSON. Fails only when the text is not a JSON object.
@@ -101,6 +116,7 @@ pub fn parse_probe(json: &str) -> Result<MediaInfo> {
         is_live: obj.get("is_live").and_then(Value::as_bool).unwrap_or(false)
             || text(obj, "live_status").as_deref() == Some("is_live"),
         entries,
+        comments: comments(obj),
     })
 }
 
@@ -299,6 +315,44 @@ fn chapters(obj: &Map<String, Value>) -> Vec<Chapter> {
         .collect();
     out.sort_by_key(|c| c.start_ms);
     out
+}
+
+/// Most comments kept; tracklists sit among the top few.
+const MAX_COMMENTS: usize = 60;
+
+/// Top-level comments (replies dropped), pinned first, then the uploader's,
+/// then by likes; ties keep yt-dlp's order (its "top" sort).
+fn comments(obj: &Map<String, Value>) -> Vec<Comment> {
+    let Some(list) = obj.get("comments").and_then(Value::as_array) else { return Vec::new() };
+    let mut out: Vec<Comment> = list
+        .iter()
+        .filter_map(Value::as_object)
+        .filter(|c| text(c, "parent").is_none_or(|p| p == "root"))
+        .filter_map(|c| {
+            let body = c.get("text").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty())?;
+            Some(Comment {
+                author: text(c, "author"),
+                is_pinned: c.get("is_pinned").and_then(Value::as_bool).unwrap_or(false),
+                author_is_uploader: c.get("author_is_uploader").and_then(Value::as_bool).unwrap_or(false),
+                text: body.to_string(),
+                like_count: count(c.get("like_count")),
+            })
+        })
+        .collect();
+    out.sort_by_key(|c| (!c.is_pinned, !c.author_is_uploader, std::cmp::Reverse(c.like_count)));
+    out.truncate(MAX_COMMENTS);
+    out
+}
+
+/// A non-negative count given as a number or a numeric string.
+fn count(value: Option<&Value>) -> u64 {
+    match value {
+        Some(Value::Number(n)) => {
+            n.as_u64().or_else(|| n.as_f64().filter(|f| *f >= 0.0).map(|f| f as u64)).unwrap_or(0)
+        }
+        Some(Value::String(s)) => s.trim().parse().unwrap_or(0),
+        _ => 0,
+    }
 }
 
 fn thumbnail(obj: &Map<String, Value>) -> Option<String> {

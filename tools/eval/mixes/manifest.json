@@ -1,0 +1,1630 @@
+{
+ "cases": [
+  {
+   "id": "ateez-outlaw-ep",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=VrJUZI-U2lg",
+   "note": "K-pop EP full stream, 6 tracks, hard cuts; tracklist in chapters",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "ATEEZ",
+     "title": "This World"
+    },
+    {
+     "t": "3:32",
+     "artist": "ATEEZ",
+     "title": "Dune"
+    },
+    {
+     "t": "6:47",
+     "artist": "ATEEZ",
+     "title": "BOUNCY (K-HOT CHILLI PEPPERS)"
+    },
+    {
+     "t": "9:53",
+     "artist": "ATEEZ",
+     "title": "DJANGO"
+    },
+    {
+     "t": "13:04",
+     "artist": "ATEEZ",
+     "title": "Wake Up"
+    },
+    {
+     "t": "16:09",
+     "artist": "ATEEZ",
+     "title": "Outlaw"
+    }
+   ]
+  },
+  {
+   "id": "asot-2026-mix1-pulse",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=HzRgy-OsQbg",
+   "note": "A State of Trance 2026 Mix 1, DJ-mixed (beatmatched), 14 tracks; tracklist in description",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "Omnia",
+     "title": "As We Become One (Intro Mix)"
+    },
+    {
+     "t": "3:53",
+     "artist": "Max Styler x Three Drives",
+     "title": "Greece 2000 (Max Styler Rework)"
+    },
+    {
+     "t": "6:38",
+     "artist": "Sultan + Shepard",
+     "title": "The Way (Ginchy Remix)"
+    },
+    {
+     "t": "9:38",
+     "artist": "Ruben de Ronde & Amber Revival",
+     "title": "River In Me"
+    },
+    {
+     "t": "13:30",
+     "artist": "Armin van Buuren",
+     "title": "Fathers & Sons (OTTAGON Remix)"
+    },
+    {
+     "t": "16:50",
+     "artist": "Mesh x Dan Stone",
+     "title": "Purple Haze"
+    },
+    {
+     "t": "20:16",
+     "artist": "GAIA",
+     "title": "Tuvan (BLR Remix)"
+    },
+    {
+     "t": "23:21",
+     "artist": "Armin van Buuren & ARGY feat. Marlo Rex",
+     "title": "Like A Child"
+    },
+    {
+     "t": "26:18",
+     "artist": "Joris Voorn x Ferry Corsten x Moonman",
+     "title": "Don't Be Afraid"
+    },
+    {
+     "t": "28:16",
+     "artist": "OTTAGON & Giuseppe Ottaviani",
+     "title": "Linking People"
+    },
+    {
+     "t": "31:14",
+     "artist": "ReOrder pres. Crowd+Ctrl",
+     "title": "Move To The Rhythm"
+    },
+    {
+     "t": "33:56",
+     "artist": "Armin van Buuren & Skytech",
+     "title": "She A Freak"
+    },
+    {
+     "t": "36:42",
+     "artist": "Sevek",
+     "title": "Dark Love"
+    },
+    {
+     "t": "40:27",
+     "artist": "Armin van Buuren & Andrew Bayer",
+     "title": "Serendipity"
+    }
+   ]
+  },
+  {
+   "id": "space-techno-podcast-003",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=iDx8rrgkvmU",
+   "note": "Techno DJ mix 140-150 BPM (pitched), 16 tracks; tracklist written 'Title (Mix) - Artist'",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "Rohar",
+     "title": "Nerves (Viers Remix)"
+    },
+    {
+     "t": "2:48",
+     "artist": "Charlotte De Witte",
+     "title": "RPM (Original Mix)"
+    },
+    {
+     "t": "6:45",
+     "artist": "Thomas Schumacher",
+     "title": "Interlinked (Original Mix)"
+    },
+    {
+     "t": "10:35",
+     "artist": "Andrew Nitts",
+     "title": "Rug Puill (Original Mix)"
+    },
+    {
+     "t": "14:35",
+     "artist": "Carl Shorts",
+     "title": "Let's R@ve (Original Mix)"
+    },
+    {
+     "t": "18:50",
+     "artist": "I-K-O",
+     "title": "Notcturne (Original Mix)"
+    },
+    {
+     "t": "23:20",
+     "artist": "K.O.",
+     "title": "One Way Acid (Original Mix)"
+    },
+    {
+     "t": "27:20",
+     "artist": "Land Of Fire (SWART Remix)",
+     "title": "Charlie Sparks (UK)"
+    },
+    {
+     "t": "31:00",
+     "artist": "Divine Spirit (Original Mix)",
+     "title": "Charlie Sparks (UK)"
+    },
+    {
+     "t": "35:12",
+     "artist": "Hast",
+     "title": "Earth's Mind (Lemane Remix)"
+    },
+    {
+     "t": "39:00",
+     "artist": "SveTec",
+     "title": "In Your Soul (Original Mix)"
+    },
+    {
+     "t": "43:00",
+     "artist": "Jan Vercauteren",
+     "title": "Roll 'N Rock (Original Mix)"
+    },
+    {
+     "t": "47:30",
+     "artist": "Doruksen",
+     "title": "Crave (Original Mix)"
+    },
+    {
+     "t": "51:00",
+     "artist": "Dica, Teokad",
+     "title": "Hard Frequency (Original Mix)"
+    },
+    {
+     "t": "55:40",
+     "artist": "Sara Landry",
+     "title": "Thirst Trap (Original Mix)"
+    },
+    {
+     "t": "59:30",
+     "artist": "Jacidorex",
+     "title": "Trave (Original Mix)"
+    }
+   ]
+  },
+  {
+   "id": "chillhop-essentials-spring-2021",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=lve6KTZTKDw",
+   "note": "Chill/lofi compilation, 26 tracks, short crossfades",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "Ruck P",
+     "title": "Sunrise Hike"
+    },
+    {
+     "t": "2:20",
+     "artist": "Blue Wednesday, Magnus Klausen",
+     "title": "Runaway"
+    },
+    {
+     "t": "4:34",
+     "artist": "Anbuu",
+     "title": "Traveling"
+    },
+    {
+     "t": "7:03",
+     "artist": "iamalex, azula, Dayle",
+     "title": "Meadow"
+    },
+    {
+     "t": "9:05",
+     "artist": "Mama Aiuto",
+     "title": "Mt. Elsewhere"
+    },
+    {
+     "t": "11:12",
+     "artist": "Stan Forebee",
+     "title": "Along the Yarra"
+    },
+    {
+     "t": "14:01",
+     "artist": "Sleepy Fish",
+     "title": "Parksong"
+    },
+    {
+     "t": "16:44",
+     "artist": "Birocratic, Brock Berrigan, iamalex, Philanthrope",
+     "title": "Brockoli"
+    },
+    {
+     "t": "19:25",
+     "artist": "Misha, Screen Jazzmaster",
+     "title": "Memories"
+    },
+    {
+     "t": "22:27",
+     "artist": "Hanz, Makzo",
+     "title": "Tall"
+    },
+    {
+     "t": "24:28",
+     "artist": "Enzalla",
+     "title": "Sailing on a Flying Boat"
+    },
+    {
+     "t": "27:18",
+     "artist": "Flawed Mangoes",
+     "title": "Point in Space and Time"
+    },
+    {
+     "t": "30:59",
+     "artist": "ØDYSSEE",
+     "title": "Rêverie"
+    },
+    {
+     "t": "34:26",
+     "artist": "Philanthrope, G Mills",
+     "title": "Sand Castles"
+    },
+    {
+     "t": "36:32",
+     "artist": "Gustav Gustav",
+     "title": "Feels"
+    },
+    {
+     "t": "38:24",
+     "artist": "C Y G N",
+     "title": "Leitmotiv"
+    },
+    {
+     "t": "41:51",
+     "artist": "chromonicci",
+     "title": "Peace."
+    },
+    {
+     "t": "44:29",
+     "artist": "Aviino",
+     "title": "Bloom"
+    },
+    {
+     "t": "48:00",
+     "artist": "Arbour",
+     "title": "Daffodil"
+    },
+    {
+     "t": "50:50",
+     "artist": "Oatmello, Guavas",
+     "title": "Libra"
+    },
+    {
+     "t": "52:35",
+     "artist": "SwuM, Delayde",
+     "title": "Motions"
+    },
+    {
+     "t": "54:49",
+     "artist": "Loop Schrauber",
+     "title": "Bud"
+    },
+    {
+     "t": "57:10",
+     "artist": "Comodo",
+     "title": "Lone Wolf"
+    },
+    {
+     "t": "59:18",
+     "artist": "illiterate, Josh Wells",
+     "title": "Leafy"
+    },
+    {
+     "t": "1:02:21",
+     "artist": "Psalm Trees, Guillaume Muschalle",
+     "title": "Days Go By ft. Julien Brunard"
+    },
+    {
+     "t": "1:05:54",
+     "artist": "HM Surf",
+     "title": "Sunshine"
+    }
+   ]
+  },
+  {
+   "id": "argy-cercle-jungfraujoch",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=sL16rh73r-M",
+   "note": "Cercle DJ set (beatmatched), 22 tracks incl. unreleased IDs, then ~23 min of interviews (speech)",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "Argy, Son of Son",
+     "title": "Faust"
+    },
+    {
+     "t": "3:31",
+     "artist": "Son of Son",
+     "title": "Du Ska Inte"
+    },
+    {
+     "t": "7:04",
+     "artist": "Argy, Baset",
+     "title": "Sierra (Cercle Records)"
+    },
+    {
+     "t": "10:38",
+     "artist": "Argy, Weekend Heroes",
+     "title": "No Ones Coming"
+    },
+    {
+     "t": "14:35",
+     "artist": "Omnya",
+     "title": "Reflections (unreleased)",
+     "id": true
+    },
+    {
+     "t": "18:29",
+     "artist": "Argy, Cay",
+     "title": "ID (unreleased)",
+     "id": true
+    },
+    {
+     "t": "21:45",
+     "artist": "Nick Matthew, Valano",
+     "title": "Celestial Pulse (unreleased)",
+     "id": true
+    },
+    {
+     "t": "25:39",
+     "artist": "Jenia Tarsol & Jinga",
+     "title": "Takadoom (Argy Edit)"
+    },
+    {
+     "t": "30:25",
+     "artist": "Argy",
+     "title": "All Day Long"
+    },
+    {
+     "t": "33:50",
+     "artist": "Son of Son",
+     "title": "Lost Control"
+    },
+    {
+     "t": "37:44",
+     "artist": "Argy",
+     "title": "Guru"
+    },
+    {
+     "t": "41:35",
+     "artist": "Shinedoe",
+     "title": "Phunk (Steve Angello Re-Edit)"
+    },
+    {
+     "t": "45:40",
+     "artist": "Enai",
+     "title": "Horus"
+    },
+    {
+     "t": "49:59",
+     "artist": "Argy",
+     "title": "Wilderness"
+    },
+    {
+     "t": "54:00",
+     "artist": "Argy, Omnya",
+     "title": "Aria"
+    },
+    {
+     "t": "58:48",
+     "artist": "Monolink",
+     "title": "Laura (Argy & Omnya Remix)"
+    },
+    {
+     "t": "1:03:35",
+     "artist": "Argy",
+     "title": "Dreamstates"
+    },
+    {
+     "t": "1:08:26",
+     "artist": "Rabbit in the Moon",
+     "title": "Deeper"
+    },
+    {
+     "t": "1:12:38",
+     "artist": "Anyma, Argy, Magnus",
+     "title": "Higher Power"
+    },
+    {
+     "t": "1:16:35",
+     "artist": "Son of Son",
+     "title": "Succession (unreleased)",
+     "id": true
+    },
+    {
+     "t": "1:19:49",
+     "artist": "Argy",
+     "title": "Collision"
+    },
+    {
+     "t": "1:23:51",
+     "artist": "Safri Duo",
+     "title": "Played-A-Live"
+    },
+    {
+     "t": "1:29:38",
+     "artist": "",
+     "title": "Interview with Argy",
+     "speech": true
+    },
+    {
+     "t": "1:52:51",
+     "artist": "",
+     "title": "The Best Of Cercle Interviews",
+     "speech": true
+    }
+   ]
+  },
+  {
+   "id": "defected-radio-sam-divine",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=hHVUrJld5zo",
+   "note": "Defected Radio Show, house DJ mix with host, 26 tracks incl. one ID",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "Sam Divine",
+     "title": "Paradise"
+    },
+    {
+     "t": "6:00",
+     "artist": "LOSTBOYJAY feat. Joi Cardwell",
+     "title": "Love Somebody Else"
+    },
+    {
+     "t": "9:30",
+     "artist": "Kerri Chandler & Dennis Quin",
+     "title": "You’re In My System (Phillip George Remix)"
+    },
+    {
+     "t": "14:26",
+     "artist": "Midas Field",
+     "title": "That’s Right"
+    },
+    {
+     "t": "18:52",
+     "artist": "Joey Daniell",
+     "title": "Need I Say More"
+    },
+    {
+     "t": "23:30",
+     "artist": "Rooléh, Sam Curran & Harry Unsworth",
+     "title": "Faith In Motion"
+    },
+    {
+     "t": "27:33",
+     "artist": "BLOND:ISH",
+     "title": "Why Why"
+    },
+    {
+     "t": "31:50",
+     "artist": "Tiger Stripes",
+     "title": "Twelve"
+    },
+    {
+     "t": "34:53",
+     "artist": "MAD-J",
+     "title": "After Hours"
+    },
+    {
+     "t": "38:34",
+     "artist": "MOST RATED: Oden & Fatzo & THEOS",
+     "title": "Someone Like You"
+    },
+    {
+     "t": "43:47",
+     "artist": "Julian Fijma",
+     "title": "Broken Love"
+    },
+    {
+     "t": "47:58",
+     "artist": "ID",
+     "title": "ID",
+     "id": true
+    },
+    {
+     "t": "51:52",
+     "artist": "Rae Sada",
+     "title": "Make It Hot!"
+    },
+    {
+     "t": "55:36",
+     "artist": "Mason Collective & VLAD VS Route 94",
+     "title": "Tell You Why"
+    },
+    {
+     "t": "1:00:04",
+     "artist": "Toman & Makez",
+     "title": "Reverse Things"
+    },
+    {
+     "t": "1:05:00",
+     "artist": "RSquared",
+     "title": "Ooo La La"
+    },
+    {
+     "t": "1:09:47",
+     "artist": "Obskur",
+     "title": "Speechless"
+    },
+    {
+     "t": "1:15:00",
+     "artist": "Franky Rizardo",
+     "title": "Marido Dance"
+    },
+    {
+     "t": "1:18:18",
+     "artist": "Scarlett O’Malley",
+     "title": "La Orquestra"
+    },
+    {
+     "t": "1:23:19",
+     "artist": "Mighty Dub Katz",
+     "title": "Let The Drums Speak (Butch Remix)"
+    },
+    {
+     "t": "1:28:17",
+     "artist": "George Reid",
+     "title": "More Than I Can Handle"
+    },
+    {
+     "t": "1:32:02",
+     "artist": "Daniel Steinberg",
+     "title": "Class Room"
+    },
+    {
+     "t": "1:35:19",
+     "artist": "Malikk",
+     "title": "Across The Room"
+    },
+    {
+     "t": "1:39:20",
+     "artist": "Adam Ten & Yamagucci",
+     "title": "Keep Workin"
+    },
+    {
+     "t": "1:43:43",
+     "artist": "NiCe7",
+     "title": "Time To Get Physical"
+    },
+    {
+     "t": "1:49:01",
+     "artist": "Dr SIBI",
+     "title": "Searchin’ (Roy Aired)"
+    }
+   ]
+  },
+  {
+   "id": "80s-greatest-hits-mix",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=jk70HYNWlUU",
+   "note": "Best-of-the-80s compilation, 33 songs (edits), cuts and short crossfades",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "Toto",
+     "title": "Africa"
+    },
+    {
+     "t": "3:59",
+     "artist": "Madonna",
+     "title": "La Isla Bonita"
+    },
+    {
+     "t": "7:14",
+     "artist": "Lionel Richie",
+     "title": "All Night Long"
+    },
+    {
+     "t": "12:32",
+     "artist": "Men At Work",
+     "title": "Down Under"
+    },
+    {
+     "t": "15:10",
+     "artist": "Tears For Fears",
+     "title": "Everybody Wants To Rule The World"
+    },
+    {
+     "t": "18:22",
+     "artist": "Michael Jackson",
+     "title": "The Way You Make Me Feel"
+    },
+    {
+     "t": "21:38",
+     "artist": "Modern Talking",
+     "title": "Brother Louie"
+    },
+    {
+     "t": "23:51",
+     "artist": "Madonna",
+     "title": "Like a Prayer"
+    },
+    {
+     "t": "28:41",
+     "artist": "INXS",
+     "title": "Need You Tonight"
+    },
+    {
+     "t": "30:50",
+     "artist": "Queen",
+     "title": "Another One Bites The Dust"
+    },
+    {
+     "t": "32:52",
+     "artist": "Michael Jackson",
+     "title": "Bad"
+    },
+    {
+     "t": "36:01",
+     "artist": "Rod Stewart",
+     "title": "Do Ya Think I'm Sexy"
+    },
+    {
+     "t": "39:31",
+     "artist": "Frankie Goes To Hollywood",
+     "title": "Relax"
+    },
+    {
+     "t": "42:00",
+     "artist": "The Human League",
+     "title": "Don't You Want Me"
+    },
+    {
+     "t": "45:24",
+     "artist": "Ray Parker Jr.",
+     "title": "Ghostbusters"
+    },
+    {
+     "t": "48:05",
+     "artist": "Blondie",
+     "title": "Heart Of Glass"
+    },
+    {
+     "t": "50:44",
+     "artist": "Modern Talking",
+     "title": "You're My Heart, You're My Soul"
+    },
+    {
+     "t": "52:20",
+     "artist": "Michael Jackson",
+     "title": "Thriller"
+    },
+    {
+     "t": "56:34",
+     "artist": "Journey",
+     "title": "Don't Stop Believin'"
+    },
+    {
+     "t": "59:32",
+     "artist": "Guns N Roses",
+     "title": "Sweet Child O Mine"
+    },
+    {
+     "t": "1:03:39",
+     "artist": "Queen",
+     "title": "A Kind of Magic"
+    },
+    {
+     "t": "1:06:24",
+     "artist": "Depeche Mode",
+     "title": "Personal Jesus"
+    },
+    {
+     "t": "1:08:49",
+     "artist": "Billy Idol",
+     "title": "Mony Mony"
+    },
+    {
+     "t": "1:11:34",
+     "artist": "Michael Jackson",
+     "title": "Beat It"
+    },
+    {
+     "t": "1:14:50",
+     "artist": "Madonna",
+     "title": "Material Girl"
+    },
+    {
+     "t": "1:16:54",
+     "artist": "The Hollies",
+     "title": "Long Cool Woman"
+    },
+    {
+     "t": "1:19:42",
+     "artist": "Lipps Inc",
+     "title": "Designer Music"
+    },
+    {
+     "t": "1:21:58",
+     "artist": "Rod Stewart",
+     "title": "Young Turks"
+    },
+    {
+     "t": "1:24:32",
+     "artist": "Queen",
+     "title": "Crazy Little Thing Called Love"
+    },
+    {
+     "t": "1:26:38",
+     "artist": "Wham",
+     "title": "Wake Me Up Before You Go Go"
+    },
+    {
+     "t": "1:29:20",
+     "artist": "Dire Straits",
+     "title": "Walk Of Life"
+    },
+    {
+     "t": "1:31:48",
+     "artist": "Billy Idol",
+     "title": "Dancing With Myself"
+    },
+    {
+     "t": "1:34:34",
+     "artist": "The Cure",
+     "title": "Boys Don't Cry"
+    }
+   ]
+  },
+  {
+   "id": "90s-trance-classics",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=ZWiV-t3VuBo",
+   "note": "90s trance classics, 30 tracks, many named remixes (version-aware test)",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "Faithless",
+     "title": "Insomnia"
+    },
+    {
+     "t": "5:12",
+     "artist": "ATB",
+     "title": "9 PM (Till I Come)"
+    },
+    {
+     "t": "7:18",
+     "artist": "Ayla",
+     "title": "Liebe"
+    },
+    {
+     "t": "9:51",
+     "artist": "Kai Tracid",
+     "title": "Your Own Reality"
+    },
+    {
+     "t": "15:47",
+     "artist": "Paul Van Dyk",
+     "title": "For An Angel"
+    },
+    {
+     "t": "19:11",
+     "artist": "ATB",
+     "title": "Don't Stop"
+    },
+    {
+     "t": "21:30",
+     "artist": "Kai Tracid",
+     "title": "Dance For Eternity"
+    },
+    {
+     "t": "26:02",
+     "artist": "DJ Quicksilver",
+     "title": "Bellissima"
+    },
+    {
+     "t": "29:28",
+     "artist": "Miss Jane",
+     "title": "It's a Fine Day (ATB Remix)"
+    },
+    {
+     "t": "33:56",
+     "artist": "Sunbeam",
+     "title": "Outside World"
+    },
+    {
+     "t": "36:26",
+     "artist": "Push",
+     "title": "Universal Nation"
+    },
+    {
+     "t": "41:52",
+     "artist": "DJ Sakin & Friends",
+     "title": "Nomansland (David's Song) (Polaris Mix)"
+    },
+    {
+     "t": "47:14",
+     "artist": "Dance 2 Trance",
+     "title": "Power Of American Natives '98 (DJ Quicksilver Mix)"
+    },
+    {
+     "t": "52:21",
+     "artist": "Dr. Motte & Westbam",
+     "title": "Sunshine (Love Parade 1997)"
+    },
+    {
+     "t": "57:26",
+     "artist": "DJ Quicksilver",
+     "title": "Planet Love"
+    },
+    {
+     "t": "59:41",
+     "artist": "Dr.Motte & Westbam",
+     "title": "Love Parade 1998 (One World One Future)"
+    },
+    {
+     "t": "1:04:45",
+     "artist": "Westbam",
+     "title": "Hard Times"
+    },
+    {
+     "t": "1:09:50",
+     "artist": "Binary Finary",
+     "title": "1999 (Kay Cee Remix)"
+    },
+    {
+     "t": "1:15:18",
+     "artist": "Absolom",
+     "title": "Secret (Jimmy Goldschmitz Outline Mix)"
+    },
+    {
+     "t": "1:19:55",
+     "artist": "Da Hool",
+     "title": "Meet Her At The Love Parade (Nalin & Kane Remix)"
+    },
+    {
+     "t": "1:24:12",
+     "artist": "DJ Sakin & Friends",
+     "title": "Protect Your Mind (Braveheart) (Suspicious Remix)"
+    },
+    {
+     "t": "1:28:55",
+     "artist": "DJ Quicksilver",
+     "title": "I Have A Dream (DJ Quicksilver Mix)"
+    },
+    {
+     "t": "1:32:21",
+     "artist": "Kai Tracid",
+     "title": "Destiny's Path"
+    },
+    {
+     "t": "1:37:09",
+     "artist": "BBE",
+     "title": "Seven Days And One Week"
+    },
+    {
+     "t": "1:41:26",
+     "artist": "Natural Born Grooves",
+     "title": "The Groovebird"
+    },
+    {
+     "t": "1:44:35",
+     "artist": "Kai Tracid",
+     "title": "Liquid Skies"
+    },
+    {
+     "t": "1:49:20",
+     "artist": "Faithless",
+     "title": "God Is A DJ"
+    },
+    {
+     "t": "1:54:17",
+     "artist": "Humate",
+     "title": "Love Stimulation (Paul Van Dyk's Love Club Mix)"
+    },
+    {
+     "t": "1:59:36",
+     "artist": "Age Of Love",
+     "title": "The Age Of Love (Jam & Spoon Watch Out For Stella Club Mix)"
+    },
+    {
+     "t": "2:04:32",
+     "artist": "Jam & Spoon",
+     "title": "Follow Me"
+    }
+   ]
+  },
+  {
+   "id": "asot-1100-top50-2022",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=QUltEEznigw",
+   "note": "A State of Trance 1100 (Top 50 of 2022), 4 h, 51 tracks plus spoken intro/outro",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "Episode 1100 (Intro)",
+     "title": "A State of Trance",
+     "id": true
+    },
+    {
+     "t": "5:01",
+     "artist": "Bogdan Vix, Claudiu Adam & Ava Silver",
+     "title": "Do It All Again"
+    },
+    {
+     "t": "10:42",
+     "artist": "Aly & Fila, Billy Gillies",
+     "title": "Kings (FSOE750 Anthem)"
+    },
+    {
+     "t": "12:55",
+     "artist": "MaRLo & Avao",
+     "title": "Break Through The Ground"
+    },
+    {
+     "t": "16:27",
+     "artist": "Daxson & Numa",
+     "title": "The Only Way"
+    },
+    {
+     "t": "19:43",
+     "artist": "Will Atkinson & JES",
+     "title": "Long Way Home (Club Mix)"
+    },
+    {
+     "t": "25:34",
+     "artist": "Armin van Buuren & AVIRA vs Chicane",
+     "title": "Offshore"
+    },
+    {
+     "t": "29:25",
+     "artist": "Luminn & Natalie Gioia",
+     "title": "Shapeshifters (FSHO Remix)"
+    },
+    {
+     "t": "33:26",
+     "artist": "Dave Neven & Nicholas Gunn",
+     "title": "Love You More"
+    },
+    {
+     "t": "38:37",
+     "artist": "Ben Gold & Benjamin Duchenne",
+     "title": "Take Me Away"
+    },
+    {
+     "t": "43:24",
+     "artist": "HALIENE & Markus Schulz",
+     "title": "Butterfly x Metamorphosis"
+    },
+    {
+     "t": "48:52",
+     "artist": "Armin van Buuren",
+     "title": "Clap"
+    },
+    {
+     "t": "52:21",
+     "artist": "Cosmic Gate & Olivia Sebastianelli",
+     "title": "We Got The Fire"
+    },
+    {
+     "t": "58:26",
+     "artist": "Maarten de Jong & Frank Spector",
+     "title": "La Nuit (Frank Spector Mix)"
+    },
+    {
+     "t": "1:03:16",
+     "artist": "David Forbes feat. Susie Ledge",
+     "title": "Silent Waves (Factor B’s Dark Waters Remix)"
+    },
+    {
+     "t": "1:06:28",
+     "artist": "Stoneface & Terminal",
+     "title": "Moonraver"
+    },
+    {
+     "t": "1:09:41",
+     "artist": "Rub!k",
+     "title": "Orbit 37"
+    },
+    {
+     "t": "1:14:55",
+     "artist": "Armin van Buuren, Reinier Zonneveld & Roland Clark",
+     "title": "We Can Dance Again"
+    },
+    {
+     "t": "1:18:54",
+     "artist": "Aly & Fila and JES",
+     "title": "Sunrise (Rank 1 Remix)"
+    },
+    {
+     "t": "1:21:57",
+     "artist": "Craig Connelly & Numa",
+     "title": "Headed For The Sun"
+    },
+    {
+     "t": "1:28:10",
+     "artist": "Armin van Buuren",
+     "title": "Let You Down"
+    },
+    {
+     "t": "1:31:05",
+     "artist": "Cosmic Gate & Diana Miro",
+     "title": "Nothing To Hide"
+    },
+    {
+     "t": "1:34:55",
+     "artist": "Ruben de Ronde",
+     "title": "Lean On Me (Robbie Seed Remix)"
+    },
+    {
+     "t": "1:38:07",
+     "artist": "Giuseppe Ottaviani & Mila Josef",
+     "title": "Fade Away"
+    },
+    {
+     "t": "1:47:05",
+     "artist": "Ahmed Helmy",
+     "title": "Afterlife"
+    },
+    {
+     "t": "1:50:57",
+     "artist": "Armin van Buuren feat. Maia Wright",
+     "title": "One More Time"
+    },
+    {
+     "t": "1:54:07",
+     "artist": "Omar Sherif & Susie Ledge",
+     "title": "Here With Me"
+    },
+    {
+     "t": "1:59:55",
+     "artist": "Andrew Rayel & AIDYL",
+     "title": "Feels Like Home"
+    },
+    {
+     "t": "2:04:19",
+     "artist": "Ahmed Helmy",
+     "title": "R4VE 101"
+    },
+    {
+     "t": "2:10:24",
+     "artist": "Armin van Buuren & Shapov",
+     "title": "Welcome Home"
+    },
+    {
+     "t": "2:13:51",
+     "artist": "Paul van Dyk with Aly & Fila",
+     "title": "SHINE Ibiza Anthem 2022"
+    },
+    {
+     "t": "2:16:36",
+     "artist": "Craig Connelly feat. That Girl",
+     "title": "Little Mystery"
+    },
+    {
+     "t": "2:21:43",
+     "artist": "Armin van Buuren & Billen Ted feat. JC Stewart",
+     "title": "Come Around Again"
+    },
+    {
+     "t": "2:24:46",
+     "artist": "Craig Connelly feat. Tara Louise",
+     "title": "You Are Alive"
+    },
+    {
+     "t": "2:28:29",
+     "artist": "Armin van Buuren",
+     "title": "Computers Take Over The World"
+    },
+    {
+     "t": "2:36:51",
+     "artist": "Ciaran McAuley, Roger Shah & Hannah Brine",
+     "title": "You And I"
+    },
+    {
+     "t": "2:41:07",
+     "artist": "Armin van Buuren feat. Wrabel",
+     "title": "Feel Again"
+    },
+    {
+     "t": "2:45:39",
+     "artist": "Aly & Fila",
+     "title": "Euphony"
+    },
+    {
+     "t": "2:48:51",
+     "artist": "MaRLo & Roxanne Emery",
+     "title": "Borderline"
+    },
+    {
+     "t": "2:54:25",
+     "artist": "Richard Durand",
+     "title": "Ballad Of The Southern Sea"
+    },
+    {
+     "t": "2:57:18",
+     "artist": "Armin van Buuren & Gareth Emery feat. Owl City",
+     "title": "Forever & Always"
+    },
+    {
+     "t": "3:04:30",
+     "artist": "Above & Beyond",
+     "title": "Can't Sleep (Ruben de Ronde & Elevven Remix)"
+    },
+    {
+     "t": "3:10:20",
+     "artist": "Aly & Fila & FKN feat. Jahala",
+     "title": "How Long (Factor B’s In Loving Memory Of Ellie Gray Remix)"
+    },
+    {
+     "t": "3:14:29",
+     "artist": "Above & Beyond and Aname feat. Marty Longstaff",
+     "title": "Gratitude"
+    },
+    {
+     "t": "3:22:39",
+     "artist": "Bryan Kearney",
+     "title": "Kaia"
+    },
+    {
+     "t": "3:25:36",
+     "artist": "Armin van Buuren & Blasterjaxx feat. 24h",
+     "title": "Superman"
+    },
+    {
+     "t": "3:28:27",
+     "artist": "Sneijder feat. Victoriya",
+     "title": "Need You Here"
+    },
+    {
+     "t": "3:34:19",
+     "artist": "Ben Gold & Plumb",
+     "title": "Same Sky Same Stars"
+    },
+    {
+     "t": "3:40:31",
+     "artist": "Vintage & Morelli x Arielle Maren",
+     "title": "Other Side (Factor B's In Loving Memory Remix)"
+    },
+    {
+     "t": "3:47:36",
+     "artist": "Ben Gold",
+     "title": "Rest Of Our Lives"
+    },
+    {
+     "t": "3:55:52",
+     "artist": "Bryan Kearney & Out of the Dust feat. Plumb",
+     "title": "Take This"
+    },
+    {
+     "t": "4:00:53",
+     "artist": "Armin van Buuren & Cosmic Gate",
+     "title": "Reflexion (ASOT 2023 Anthem)"
+    },
+    {
+     "t": "4:03:05",
+     "artist": "Episode 1100 (Outro)",
+     "title": "A State of Trance",
+     "id": true
+    }
+   ]
+  },
+  {
+   "id": "thriller-official-video",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=sOnqjkJTMaA",
+   "note": "13-min short film: long spoken intro, skits, dance break",
+   "expect": {
+    "artist": "Michael Jackson",
+    "title": "Thriller"
+   }
+  },
+  {
+   "id": "black-or-white-official-video",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=pTFE8cirkdQ",
+   "note": "11-min video: spoken intro and a ~4-min coda without the song",
+   "expect": {
+    "artist": "Michael Jackson",
+    "title": "Black or White"
+   }
+  },
+  {
+   "id": "telephone-official-video",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=EVBsypHzF3U",
+   "note": "9.5-min video with spoken scenes and interludes",
+   "expect": {
+    "artist": "Lady Gaga",
+    "title": "Telephone (feat. Beyoncé)"
+   }
+  },
+  {
+   "id": "all-too-well-10-minute",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=BZ-rLBkUZf4",
+   "note": "10-min track; version matters",
+   "expect": {
+    "artist": "Taylor Swift",
+    "title": "All Too Well (10 Minute Version) (Taylor's Version)"
+   }
+  },
+  {
+   "id": "opus-album-version",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=iRA82xLsb_w",
+   "note": "9-min progressive house with a long build",
+   "expect": {
+    "artist": "Eric Prydz",
+    "title": "Opus"
+   }
+  },
+  {
+   "id": "november-rain-official-video",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=8SbUC-UaAxE",
+   "note": "9-min official video with storm and orchestral outro",
+   "expect": {
+    "artist": "Guns N' Roses",
+    "title": "November Rain"
+   }
+  },
+  {
+   "id": "shine-on-parts-1-5",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=cWGE9Gi0bB0",
+   "note": "13.5-min with a long instrumental intro",
+   "expect": {
+    "artist": "Pink Floyd",
+    "title": "Shine On You Crazy Diamond (Pts. 1-5)"
+   }
+  },
+  {
+   "id": "hotel-california-live-1977",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=09839DpTctU",
+   "note": "live performance",
+   "expect": {
+    "artist": "Eagles",
+    "title": "Hotel California (Live 1977)"
+   }
+  },
+  {
+   "id": "someone-like-you-brits-2011",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=qemWRToNYJY",
+   "note": "live performance",
+   "expect": {
+    "artist": "Adele",
+    "title": "Someone Like You (Live at the BRIT Awards 2011)"
+   }
+  },
+  {
+   "id": "innerbloom-official-video",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=Tx9zMFodNtA",
+   "note": "9.6-min extended track",
+   "expect": {
+    "artist": "RÜFÜS DU SOL",
+    "title": "Innerbloom"
+   }
+  },
+  {
+   "id": "innerbloom-live-hordern",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=us6HYdU1He4",
+   "note": "live performance, 8 min",
+   "expect": {
+    "artist": "RÜFÜS DU SOL",
+    "title": "Innerbloom (Live at The Hordern Pavilion, Sydney)"
+   }
+  },
+  {
+   "id": "sing-about-me",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=75wmW7xjyog",
+   "note": "12-min two-part song with a spoken ending",
+   "expect": {
+    "artist": "Kendrick Lamar",
+    "title": "Sing About Me, I'm Dying of Thirst"
+   }
+  },
+  {
+   "id": "pyramids",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=dMV31MWIjLE",
+   "note": "10-min two-part song",
+   "expect": {
+    "artist": "Frank Ocean",
+    "title": "Pyramids"
+   }
+  },
+  {
+   "id": "bohemian-rhapsody-official-video",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=fJ9rUzIMcZQ",
+   "note": "multi-section song",
+   "expect": {
+    "artist": "Queen",
+    "title": "Bohemian Rhapsody"
+   }
+  },
+  {
+   "id": "around-the-world-album",
+   "kind": "single",
+   "url": "https://www.youtube.com/watch?v=dwDns8x3Jb4",
+   "note": "7-min repetitive album version",
+   "expect": {
+    "artist": "Daft Punk",
+    "title": "Around the World"
+   }
+  },
+  {
+   "id": "daft-punk-ram-playlist",
+   "kind": "playlist",
+   "url": "https://www.youtube.com/playlist?list=PLSbDLF8wQ3oKcstd9ybCSv2lNm_8NTYkI",
+   "note": "official album playlist, 13 entries",
+   "entries": [
+    {
+     "artist": "Daft Punk",
+     "title": "Give Life Back to Music"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "The Game of Love"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Giorgio by Moroder"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Within"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Instant Crush (feat. Julian Casablancas)"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Lose Yourself to Dance (feat. Pharrell Williams)"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Touch (feat. Paul Williams)"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Get Lucky (feat. Pharrell Williams & Nile Rodgers)"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Beyond"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Motherboard"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Fragments of Time (feat. Todd Edwards)"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Doin' it Right (feat. Panda Bear)"
+    },
+    {
+     "artist": "Daft Punk",
+     "title": "Contact"
+    }
+   ]
+  },
+  {
+   "id": "coldplay-live-madrid-playlist",
+   "kind": "playlist",
+   "url": "https://www.youtube.com/playlist?list=PLsvoYlzBrLFBBe82GvEx6GQztG6m_Y2UD",
+   "note": "official live playlist: 10 live songs, 3 non-music clips",
+   "entries": [
+    {
+     "artist": "Coldplay",
+     "title": "The Scientist (Live in Madrid 2011)"
+    },
+    {
+     "artist": "Coldplay",
+     "title": "Viva La Vida (Live in Madrid 2011)"
+    },
+    {
+     "artist": "Coldplay",
+     "title": "Yellow (Live in Madrid 2011)"
+    },
+    {
+     "artist": "Coldplay",
+     "title": "Fix You (Live in Madrid 2011)"
+    },
+    {
+     "artist": "Coldplay",
+     "title": "Violet Hill (Live in Madrid 2011)"
+    },
+    {
+     "artist": "Coldplay",
+     "title": "Every Teardrop Is a Waterfall (Live in Madrid 2011)"
+    },
+    {
+     "artist": "Coldplay",
+     "title": "Charlie Brown (Live in Madrid 2011)"
+    },
+    {
+     "artist": "Coldplay",
+     "title": "Politik (Live in Madrid 2011)"
+    },
+    {
+     "artist": "Coldplay",
+     "title": "Lost! (Live in Madrid 2011)"
+    },
+    {
+     "artist": "Coldplay",
+     "title": "God Put a Smile upon Your Face (Live in Madrid 2011)"
+    },
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "id": "dua-lipa-future-nostalgia-playlist",
+   "kind": "playlist",
+   "url": "https://www.youtube.com/playlist?list=PLNrotoZZ8BaouNABcO_A9Xkn_Nkz0PT11",
+   "note": "official playlist with duplicates (lyric/animated videos), a workout video and a remix",
+   "entries": [
+    {
+     "artist": "Dua Lipa",
+     "title": "Levitating (feat. DaBaby)",
+     "aka": [
+      {
+       "artist": "Dua Lipa",
+       "title": "Levitating"
+      }
+     ]
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Don't Start Now"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Break My Heart"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Physical"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Love Again"
+    },
+    {
+     "artist": "Dua Lipa, Angèle",
+     "title": "Fever"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Levitating"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Hallucinate"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Love Again"
+    },
+    null,
+    {
+     "artist": "Dua Lipa",
+     "title": "Pretty Please"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Future Nostalgia"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Cool"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Good In Bed"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Levitating"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Boys Will Be Boys"
+    },
+    {
+     "artist": "Dua Lipa",
+     "title": "Levitating (feat. Madonna and Missy Elliott) (The Blessed Madonna Remix)"
+    }
+   ]
+  },
+  {
+   "id": "avicii-levels-remixes-playlist",
+   "kind": "playlist",
+   "url": "https://www.youtube.com/playlist?list=PLtbL1nVz0nOmwCE3d7s03HidJT_QxePqF",
+   "note": "user playlist of 15 Levels remixes and bootlegs (one unavailable): versions must not collapse to the original",
+   "entries": [
+    {
+     "artist": "Avicii",
+     "title": "Levels (Skrillex Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (Tristam Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (Clockwork Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (Kaan Pars Tribute Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (Outsiders Hard Tribute)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (Thrizzo Trap Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (George Monev Electro Remix)"
+    },
+    null,
+    {
+     "artist": "Avicii",
+     "title": "Levels (Jesse Bloch Bootleg)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (Drankenstein Trap Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (Levi & Suiss and Vita Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (iNexus Dubstep Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (NICKYP Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (JJD Remix)"
+    },
+    {
+     "artist": "Avicii",
+     "title": "Levels (VAVO Remix)"
+    }
+   ]
+  }
+ ]
+}

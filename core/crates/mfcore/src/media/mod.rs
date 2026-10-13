@@ -3,5 +3,5 @@
 pub mod probe;
 pub mod ytdlp;
 
-pub use probe::{Chapter, MediaEntry, MediaInfo, description_timestamps, parse_probe};
+pub use probe::{Chapter, Comment, MediaEntry, MediaInfo, description_timestamps, parse_probe};
 pub use ytdlp::YtDlpSubprocess;
