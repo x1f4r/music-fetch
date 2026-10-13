@@ -616,175 +616,238 @@
    ]
   },
   {
-   "id": "80s-greatest-hits-mix",
+   "id": "america-greatest-hits",
    "kind": "mix",
-   "url": "https://www.youtube.com/watch?v=jk70HYNWlUU",
-   "note": "Best-of-the-80s compilation, 33 songs (edits), cuts and short crossfades",
+   "url": "https://www.youtube.com/watch?v=Euqn3ZHVB44",
+   "note": "Greatest-hits album stream (History), 12 songs, hard cuts",
    "tracks": [
     {
      "t": "0:00",
-     "artist": "Toto",
-     "title": "Africa"
+     "artist": "America",
+     "title": "A Horse with No Name"
     },
     {
-     "t": "3:59",
-     "artist": "Madonna",
-     "title": "La Isla Bonita"
+     "t": "4:07",
+     "artist": "America",
+     "title": "I Need You"
     },
     {
-     "t": "7:14",
-     "artist": "Lionel Richie",
-     "title": "All Night Long"
+     "t": "7:05",
+     "artist": "America",
+     "title": "Sandman"
     },
     {
-     "t": "12:32",
-     "artist": "Men At Work",
-     "title": "Down Under"
+     "t": "11:08",
+     "artist": "America",
+     "title": "Ventura Highway"
     },
     {
-     "t": "15:10",
-     "artist": "Tears For Fears",
-     "title": "Everybody Wants To Rule The World"
+     "t": "14:35",
+     "artist": "America",
+     "title": "Don't Cross the River"
     },
     {
-     "t": "18:22",
-     "artist": "Michael Jackson",
-     "title": "The Way You Make Me Feel"
+     "t": "17:00",
+     "artist": "America",
+     "title": "Only in Your Heart"
     },
     {
-     "t": "21:38",
-     "artist": "Modern Talking",
-     "title": "Brother Louie"
+     "t": "20:12",
+     "artist": "America",
+     "title": "Muskrat Love"
     },
     {
-     "t": "23:51",
-     "artist": "Madonna",
-     "title": "Like a Prayer"
+     "t": "23:14",
+     "artist": "America",
+     "title": "Tin Man"
     },
     {
-     "t": "28:41",
-     "artist": "INXS",
-     "title": "Need You Tonight"
+     "t": "26:39",
+     "artist": "America",
+     "title": "Lonely People"
     },
     {
-     "t": "30:50",
-     "artist": "Queen",
-     "title": "Another One Bites The Dust"
+     "t": "29:04",
+     "artist": "America",
+     "title": "Sister Golden Hair"
     },
     {
-     "t": "32:52",
-     "artist": "Michael Jackson",
-     "title": "Bad"
+     "t": "32:19",
+     "artist": "America",
+     "title": "Daisy Jane"
     },
     {
-     "t": "36:01",
-     "artist": "Rod Stewart",
-     "title": "Do Ya Think I'm Sexy"
+     "t": "35:20",
+     "artist": "America",
+     "title": "Woman Tonight"
+    }
+   ]
+  },
+  {
+   "id": "best-pop-2000s-2010s",
+   "kind": "mix",
+   "url": "https://www.youtube.com/watch?v=HL_9LIiGgj0",
+   "note": "Best-of pop compilation, 32 songs, cuts and short crossfades",
+   "tracks": [
+    {
+     "t": "0:00",
+     "artist": "Katy Perry",
+     "title": "Teenage Dream"
     },
     {
-     "t": "39:31",
-     "artist": "Frankie Goes To Hollywood",
-     "title": "Relax"
+     "t": "3:47",
+     "artist": "Taylor Swift",
+     "title": "You Belong With Me"
     },
     {
-     "t": "42:00",
-     "artist": "The Human League",
-     "title": "Don't You Want Me"
+     "t": "7:35",
+     "artist": "Kesha",
+     "title": "Tik Tok"
     },
     {
-     "t": "45:24",
-     "artist": "Ray Parker Jr.",
-     "title": "Ghostbusters"
+     "t": "10:52",
+     "artist": "Miley Cyrus",
+     "title": "Party in the U.S.A."
     },
     {
-     "t": "48:05",
-     "artist": "Blondie",
-     "title": "Heart Of Glass"
+     "t": "14:16",
+     "artist": "Carly Rae Jepsen",
+     "title": "Call Me Maybe"
     },
     {
-     "t": "50:44",
-     "artist": "Modern Talking",
-     "title": "You're My Heart, You're My Soul"
+     "t": "17:29",
+     "artist": "Lady Gaga",
+     "title": "Just Dance"
     },
     {
-     "t": "52:20",
-     "artist": "Michael Jackson",
-     "title": "Thriller"
+     "t": "21:31",
+     "artist": "One Direction",
+     "title": "What Makes You Beautiful"
     },
     {
-     "t": "56:34",
-     "artist": "Journey",
-     "title": "Don't Stop Believin'"
+     "t": "24:51",
+     "artist": "Katy Perry",
+     "title": "California Gurls"
     },
     {
-     "t": "59:32",
-     "artist": "Guns N Roses",
-     "title": "Sweet Child O Mine"
+     "t": "28:30",
+     "artist": "Justin Bieber",
+     "title": "Sorry"
     },
     {
-     "t": "1:03:39",
-     "artist": "Queen",
-     "title": "A Kind of Magic"
+     "t": "31:49",
+     "artist": "Rihanna",
+     "title": "Only Girl (In The World)"
     },
     {
-     "t": "1:06:24",
-     "artist": "Depeche Mode",
-     "title": "Personal Jesus"
+     "t": "35:43",
+     "artist": "Jennifer Lopez, Pitbull",
+     "title": "On The Floor"
     },
     {
-     "t": "1:08:49",
-     "artist": "Billy Idol",
-     "title": "Mony Mony"
+     "t": "40:27",
+     "artist": "Avril Lavigne",
+     "title": "Girlfriend"
     },
     {
-     "t": "1:11:34",
-     "artist": "Michael Jackson",
-     "title": "Beat It"
+     "t": "44:03",
+     "artist": "Katy Perry",
+     "title": "Last Friday Night"
     },
     {
-     "t": "1:14:50",
-     "artist": "Madonna",
-     "title": "Material Girl"
+     "t": "47:54",
+     "artist": "Taylor Swift",
+     "title": "Shake It Off"
     },
     {
-     "t": "1:16:54",
-     "artist": "The Hollies",
-     "title": "Long Cool Woman"
+     "t": "51:43",
+     "artist": "Pitbull, Kesha",
+     "title": "Timber"
     },
     {
-     "t": "1:19:42",
-     "artist": "Lipps Inc",
-     "title": "Designer Music"
+     "t": "55:07",
+     "artist": "Britney Spears",
+     "title": "Toxic"
     },
     {
-     "t": "1:21:58",
-     "artist": "Rod Stewart",
-     "title": "Young Turks"
+     "t": "58:26",
+     "artist": "Clean Bandit",
+     "title": "Rather Be"
     },
     {
-     "t": "1:24:32",
-     "artist": "Queen",
-     "title": "Crazy Little Thing Called Love"
+     "t": "1:02:30",
+     "artist": "Ellie Goulding",
+     "title": "Lights"
     },
     {
-     "t": "1:26:38",
-     "artist": "Wham",
-     "title": "Wake Me Up Before You Go Go"
+     "t": "1:06:00",
+     "artist": "Ariana Grande",
+     "title": "thank u, next"
     },
     {
-     "t": "1:29:20",
-     "artist": "Dire Straits",
-     "title": "Walk Of Life"
+     "t": "1:09:28",
+     "artist": "Jessie J",
+     "title": "Domino"
     },
     {
-     "t": "1:31:48",
-     "artist": "Billy Idol",
-     "title": "Dancing With Myself"
+     "t": "1:13:19",
+     "artist": "Justin Bieber",
+     "title": "What Do You Mean?"
     },
     {
-     "t": "1:34:34",
-     "artist": "The Cure",
-     "title": "Boys Don't Cry"
+     "t": "1:16:42",
+     "artist": "Rihanna",
+     "title": "Diamonds"
+    },
+    {
+     "t": "1:20:25",
+     "artist": "Natasha Bedingfield",
+     "title": "Unwritten"
+    },
+    {
+     "t": "1:24:41",
+     "artist": "Clean Bandit",
+     "title": "Symphony"
+    },
+    {
+     "t": "1:28:14",
+     "artist": "Lady Gaga",
+     "title": "Poker Face"
+    },
+    {
+     "t": "1:32:11",
+     "artist": "Kesha",
+     "title": "Die Young"
+    },
+    {
+     "t": "1:35:42",
+     "artist": "Shakira",
+     "title": "Whenever, Wherever"
+    },
+    {
+     "t": "1:38:59",
+     "artist": "Spice Girls",
+     "title": "Wannabe"
+    },
+    {
+     "t": "1:41:47",
+     "artist": "Britney Spears",
+     "title": "Oops!… I Did It Again"
+    },
+    {
+     "t": "1:45:05",
+     "artist": "Ellie Goulding",
+     "title": "Love Me Like You Do"
+    },
+    {
+     "t": "1:49:15",
+     "artist": "Zara Larson",
+     "title": "Lush life"
+    },
+    {
+     "t": "1:52:34",
+     "artist": "DNCE",
+     "title": "Cake by the Ocean"
     }
    ]
   },

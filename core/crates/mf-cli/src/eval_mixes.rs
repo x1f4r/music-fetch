@@ -289,13 +289,17 @@ fn engine(args: &MixesArgs, paths: &Paths) -> anyhow::Result<Arc<EngineCtx>> {
     let version = mfcore::core_version();
     let http = mfcore::links::http_client(&version)?;
     let store = Arc::new(Store::open(&paths.cache_db)?);
-    let spacing = Duration::from_secs_f64(args.spacing.max(3.0));
+    // Never below 9 s between requests that reach the service; a cache-only
+    // run never reaches it, so it needs no pacing at all.
+    let spacing =
+        if args.cached_only { Duration::from_millis(1) } else { Duration::from_secs_f64(args.spacing.max(9.0)) };
     let mut shazam = ShazamClient::new(http.clone(), "US", "en-US").with_policy(QueuePolicy {
         interactive_spacing: spacing,
         batch_spacing: spacing,
-        jitter: Duration::from_secs(1),
+        jitter: if args.cached_only { Duration::ZERO } else { Duration::from_secs(1) },
         batch_max_wait: Duration::from_secs(30 * 60),
         interactive_max_wait: Duration::from_secs(30 * 60),
+        retry_delays: if args.cached_only { Vec::new() } else { QueuePolicy::default().retry_delays },
         ..QueuePolicy::default()
     });
     if args.cached_only {
@@ -318,7 +322,7 @@ fn engine(args: &MixesArgs, paths: &Paths) -> anyhow::Result<Arc<EngineCtx>> {
         http,
         store,
         shazam: Arc::new(shazam),
-        budget: CallBudget::new(4.0, spacing),
+        budget: if args.cached_only { CallBudget::new(1e9, spacing) } else { CallBudget::new(4.0, spacing) },
         credentials: parking_lot::RwLock::new(Credentials::default()),
         melody: parking_lot::RwLock::new(None),
         pitch: OnceLock::new(),
@@ -753,12 +757,9 @@ fn evaluate_playlist(case: &Case, report: &Report) -> Metrics {
             }
         }
     }
-    let audio: std::collections::HashSet<u32> = report
-        .segments
-        .iter()
-        .filter(|s| !s.evidence.iter().any(|e| e.source == mfcore::model::EvidenceSource::Metadata))
-        .map(|s| s.item_index)
-        .collect();
+    // Entries settled from their title alone have a single "-meta" segment.
+    let audio: std::collections::HashSet<u32> =
+        report.segments.iter().filter(|s| !s.id.ends_with("-meta")).map(|s| s.item_index).collect();
     m.entries_with_audio = audio.len();
     m
 }

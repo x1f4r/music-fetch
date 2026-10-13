@@ -315,7 +315,7 @@ Never decide by duration alone. A single song must never be split.
   VEVO channel as the artist) without risky qualifiers (live, cover, remix, sped up,
   slowed, nightcore, karaoke, instrumental, 8D, reverb, mashup, bootleg, acoustic,
   edit, VIP, flip, rework, tribute), matched by the version-aware catalog lookup with a
-  duration within ±8 s (±25 s for music videos) → segment `[0, duration]`, `Likely`
+  duration within ±8 s (±25 s for official videos, audio, lyric videos and visualizers) → segment `[0, duration]`, `Likely`
   0.9, evidence `Metadata`, no audio needed. "Live" counts only as a qualifier
   ("(Live …)", "Live at/in/from …"), not inside a title ("Live Forever").
 - Otherwise (or when the qualifier says it is a different version): download the
@@ -340,6 +340,11 @@ A manifest of real cases with ground truth, run with `mf eval mixes`:
 - Live recognizer traffic for evaluation runs from a non-primary IP with ≥ 9 s spacing;
   all responses are cached on disk keyed by signature hash, so algorithm iterations
   replay from the cache.
+- `mf eval mixes tools/eval/mixes/manifest.json [--mode blind|hinted|both] [--case id]
+  [--cache-db path]` (see `tools/eval/mixes/README.md`); `tools/eval/mixes/run-remote.sh`
+  runs it on `$MF_EVAL_HOST`. `mf eval mix-draft <url>` drafts a case's ground truth
+  from its tracklist. Reports (Markdown, HTML, JSON) go to `--report-dir`, never into
+  the repository.
 
 ## Caching
 

@@ -226,14 +226,23 @@ async fn metadata_match<S: Services>(services: &S, entry: &MediaEntry) -> Option
     }
     let (artist, song) = hints::parse_media_title(title, entry.uploader.as_deref())?;
     let found = services.find(&song, &artist, None).await?;
-    let tolerance = if hints::is_music_video_title(title) { VIDEO_TOLERANCE_MS } else { DURATION_TOLERANCE_MS };
+    // Official uploads (videos, audio, lyric videos) often add a few seconds of
+    // picture before or after the song.
+    let official = hints::is_music_video_title(title) || is_official_upload(title);
+    let tolerance = if official { VIDEO_TOLERANCE_MS } else { DURATION_TOLERANCE_MS };
     match (entry.duration_ms, found.duration_ms) {
         (Some(a), Some(b)) if a.abs_diff(b) <= tolerance => Some(found),
-        // A video that only adds an intro or outro.
-        (Some(a), Some(b)) if hints::is_music_video_title(title) && a > b && a - b <= 3 * VIDEO_TOLERANCE_MS => None,
         (None, _) => Some(found),
         _ => None,
     }
+}
+
+/// "(Official Audio)", "(Official Lyric Video)", "[Visualizer]": the artist's own upload.
+fn is_official_upload(title: &str) -> bool {
+    let lower = title.to_lowercase();
+    ["official audio", "official lyric", "lyric video", "visualizer", "visualiser", "official version"]
+        .iter()
+        .any(|w| lower.contains(w))
 }
 
 /// The title names a version other than the original.
