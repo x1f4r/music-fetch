@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Music Fetch</string>
+    <string name="engine_version">Engine %1$s</string>
+    <string name="probe_test_url">Probe test URL</string>
+    <string name="probe_took">%1$s · %2$.1f s</string>
+</resources>
