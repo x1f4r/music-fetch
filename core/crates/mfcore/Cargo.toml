@@ -22,5 +22,12 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "gzip", "brotli", "multipart", "http2", "charset", "query", "form"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
+# audio
+symphonia = { version = "0.6.1", default-features = false, features = ["isomp4", "aac", "mp3", "flac", "vorbis", "ogg", "wav", "mkv", "alac", "pcm", "caf", "aiff", "adpcm"] }
+rubato = "5.0.1"
+realfft = "3.5"
+opus-decoder = "0.1.1"
+# media
+libc = "0.2"
 
 [dev-dependencies]
