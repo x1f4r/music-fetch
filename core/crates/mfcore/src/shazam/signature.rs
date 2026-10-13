@@ -334,7 +334,9 @@ impl Fingerprinter {
             };
             self.peaks[band.index()].push(Peak {
                 frame: candidate as u32,
-                magnitude: mag as u16,
+                // Rounded, not truncated: equals Apple's value on ~83 % of shared
+                // peaks instead of ~33 % (measured with the oracle test).
+                magnitude: mag.round() as u16,
                 fbin: fbin as u16,
             });
         }

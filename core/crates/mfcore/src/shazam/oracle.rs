@@ -5,7 +5,7 @@
 //! (≥ 12 s each) to compare on real music; otherwise synthetic clips are used.
 //! Set `MF_SHAZAM_ORACLE_KEEP=1` to keep the clips and both signatures.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -18,6 +18,8 @@ struct Overlap {
     apple: usize,
     ours: usize,
     shared: usize,
+    /// Shared peaks whose magnitude is identical.
+    same_magnitude: usize,
 }
 
 impl Overlap {
@@ -40,12 +42,23 @@ impl Overlap {
 
 fn overlap(apple: &BandPeaks, ours: &BandPeaks) -> [Overlap; 4] {
     std::array::from_fn(|band| {
-        let a: HashSet<(u32, u16)> = apple[band].iter().map(|p| (p.frame, p.fbin)).collect();
-        let o: HashSet<(u32, u16)> = ours[band].iter().map(|p| (p.frame, p.fbin)).collect();
+        let a: HashMap<(u32, u16), u16> = apple[band]
+            .iter()
+            .map(|p| ((p.frame, p.fbin), p.magnitude))
+            .collect();
+        let o: HashMap<(u32, u16), u16> = ours[band]
+            .iter()
+            .map(|p| ((p.frame, p.fbin), p.magnitude))
+            .collect();
+        let shared: Vec<_> = a
+            .iter()
+            .filter_map(|(k, m)| Some((*m, *o.get(k)?)))
+            .collect();
         Overlap {
             apple: a.len(),
             ours: o.len(),
-            shared: a.intersection(&o).count(),
+            shared: shared.len(),
+            same_magnitude: shared.iter().filter(|(a, o)| a == o).count(),
         }
     })
 }
@@ -183,6 +196,12 @@ fn reproduces_apples_peaks() {
         ("padded (default)", Options::default()),
     ];
     let mut worst = [f64::MAX; 4];
+    let mut totals: [Overlap; 4] = std::array::from_fn(|_| Overlap {
+        apple: 0,
+        ours: 0,
+        shared: 0,
+        same_magnitude: 0,
+    });
     for (i, (name, samples)) in clips().into_iter().enumerate() {
         let wav = dir.join(format!("clip{i}.wav"));
         write_wav(&wav, &samples);
@@ -214,8 +233,12 @@ fn reproduces_apples_peaks() {
                 .collect();
             println!("  {variant:<20} {}", cells.join(" | "));
             if *options == Options::default() {
-                for (w, s) in worst.iter_mut().zip(&stats) {
+                for ((w, t), s) in worst.iter_mut().zip(totals.iter_mut()).zip(&stats) {
                     *w = w.min(s.recall());
+                    t.apple += s.apple;
+                    t.ours += s.ours;
+                    t.shared += s.shared;
+                    t.same_magnitude += s.same_magnitude;
                 }
             }
         }
@@ -225,8 +248,19 @@ fn reproduces_apples_peaks() {
     } else {
         let _ = std::fs::remove_dir_all(&dir);
     }
+    println!("\npooled, default variant:");
+    for (band, t) in totals.iter().enumerate() {
+        println!(
+            "  band {band}: {}/{} Apple peaks reproduced ({:.1}%), precision {:.1}%, identical magnitude {:.1}%",
+            t.shared,
+            t.apple,
+            t.recall() * 100.0,
+            t.precision() * 100.0,
+            t.same_magnitude as f64 * 100.0 / t.shared.max(1) as f64
+        );
+    }
     println!(
-        "\nworst per-band recall of Apple's peaks: {:?}",
+        "worst per-band recall of Apple's peaks: {:?}",
         worst.map(|r| (r * 1000.0).round() / 10.0)
     );
     for (band, recall) in worst.iter().enumerate() {
