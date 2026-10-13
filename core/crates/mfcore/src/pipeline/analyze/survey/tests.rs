@@ -83,6 +83,26 @@ async fn two_songs_in_a_row_are_a_mix() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_copy_in_the_recognizer_catalog_does_not_beat_the_page() {
+    // The recognizer keeps naming a re-upload; the page's song preview is in the audio.
+    let mut song = track("Artist", "Real Song", 240);
+    song.ids.insert("deezer".into(), "1".into());
+    let copy = track("Uploader", "Copy", 240);
+    let audio = noise(240, 17);
+    let media = TempPcm::new(&audio);
+    let mut services = FakeServices::new(audio, vec![play(0, 240, &song, 0)]).with_preview_of(&song, 60, 30);
+    services.overrides.push((0, 240_000, Some(copy)));
+    let prior = Prior { track: Some(song.clone()), strong: true };
+    let s = survey(&services, &media.pcm, &prior).await;
+    assert_eq!(title(&s.verdict), Some("Copy"));
+    let page = page_song_heard(&services, &media.pcm, &prior).await.unwrap().expect("preview found");
+    let verdict = prefer_page_song(s.verdict, page);
+    assert_eq!(title(&verdict), Some("Real Song"));
+    let Verdict::Single { alternates, .. } = &verdict else { unreachable!() };
+    assert_eq!(alternates[0].title, "Copy");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn nothing_heard_falls_back_to_the_page() {
     let audio = noise(200, 16);
     let media = TempPcm::new(&audio);

@@ -71,6 +71,10 @@ const EDGE_ABSORB_MS: u64 = 30_000;
 const SNAP_MS: u64 = 8_000;
 /// Paid provider calls per analysis.
 const MAX_PAID: u32 = 30;
+/// Largest DJ speed change searched by local matching (pitch faders go to ±8 %).
+const MAX_SPEED_CHANGE: f32 = 0.08;
+/// Speed step of that search.
+const SPEED_STEP: f32 = 0.005;
 /// Mix peaks are computed in chunks of this length (whole peak frames).
 const PEAK_CHUNK_MS: u64 = 60_000;
 
@@ -453,11 +457,23 @@ impl<S: Services> Mix<'_, S> {
         let found = tokio::task::spawn_blocking(move || {
             let mut index = Index::new();
             index.add(&reference);
-            index.search(&region, &fingerprint::warps(0.06, 0.005)).into_iter().next()
+            index.search(&region, &fingerprint::warps(MAX_SPEED_CHANGE, SPEED_STEP)).into_iter().next()
         })
         .await
         .map_err(|e| MfError::internal(format!("local match: {e}")))?;
-        Ok(found.filter(|m| m.is_confident(&MatchOptions::default())).map(|m| LocalHit::new(&m, from_ms)))
+        match found {
+            Some(m) if m.is_confident(&MatchOptions::default()) => Ok(Some(LocalHit::new(&m, from_ms))),
+            Some(m) => {
+                self.log(format!(
+                    "preview not found ({} hashes, {:.1} % of the preview, chance {:.1})",
+                    m.score,
+                    m.coverage * 100.0,
+                    m.noise
+                ));
+                Ok(None)
+            }
+            None => Ok(None),
+        }
     }
 
     /// Add the preview of `track` to the bank (once per identity).
@@ -490,7 +506,7 @@ impl<S: Services> Mix<'_, S> {
             return Ok(None);
         }
         let region = self.region_peaks(from, to).await?;
-        let found = self.bank.index.search(&region, &fingerprint::warps(0.06, 0.005));
+        let found = self.bank.index.search(&region, &fingerprint::warps(MAX_SPEED_CHANGE, SPEED_STEP));
         let Some(m) = found.into_iter().find(|m| m.reference == reference && m.is_confident(&MatchOptions::default()))
         else {
             return Ok(None);
@@ -544,7 +560,7 @@ impl<S: Services> Mix<'_, S> {
             return Ok(None);
         }
         let region = self.region_peaks(from_ms, to_ms).await?;
-        let found = self.bank.index.search(&region, &fingerprint::warps(0.06, 0.005));
+        let found = self.bank.index.search(&region, &fingerprint::warps(MAX_SPEED_CHANGE, SPEED_STEP));
         let Some(best) = found.into_iter().next().filter(|m| m.is_confident(&MatchOptions::default())) else {
             return Ok(None);
         };
@@ -639,12 +655,14 @@ impl<S: Services> Mix<'_, S> {
             if let Some(local) = verified {
                 self.report.verified_locally += 1;
                 self.log(format!(
-                    "hint {} {} – {}: preview at {} (speed {:+.1} %)",
+                    "hint {} {} – {}: preview at {} (speed {:+.1} %, {} hashes, {:.1} %)",
                     clock(start),
                     entry.artist,
                     entry.title,
                     clock(local.span.0),
-                    local.speed * 100.0
+                    local.speed * 100.0,
+                    local.score,
+                    local.coverage * 100.0
                 ));
                 piece.kind = SegmentKind::Track;
                 piece.track = Some(track);
@@ -1313,12 +1331,19 @@ struct LocalHit {
     /// Matched stretch in media time.
     span: (u64, u64),
     speed: f32,
+    score: u32,
+    coverage: f32,
 }
 
 impl LocalHit {
     fn new(m: &fingerprint::Match, region_start_ms: u64) -> Self {
         let to_ms = |f: u32| region_start_ms + (f as f64 * FRAME_MS) as u64;
-        LocalHit { span: (to_ms(m.span.0), to_ms(m.span.1)), speed: m.warp.speed_change() }
+        LocalHit {
+            span: (to_ms(m.span.0), to_ms(m.span.1)),
+            speed: m.warp.speed_change(),
+            score: m.score,
+            coverage: m.coverage,
+        }
     }
 }
 

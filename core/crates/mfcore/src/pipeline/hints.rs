@@ -111,9 +111,15 @@ pub fn collect(info: &MediaInfo, page_hints: &[Track], duration_ms: Option<u64>)
         lists.push(Tracklist { source: HintSource::Description, entries });
     }
     for comment in &info.comments {
-        if let Some(entries) = parse_tracklist(&comment.text, duration) {
-            lists.push(Tracklist { source: comment_source(comment), entries });
+        let source = comment_source(comment);
+        let Some(entries) = parse_tracklist(&comment.text, duration) else { continue };
+        // Anyone can comment "0:45 the dance, 3:10 her verse" under a music
+        // video: other people's lists count only when they name songs.
+        let named = entries.iter().filter(|e| !e.artist.is_empty() || e.is_id).count();
+        if source == HintSource::Comment && named * 10 < entries.len() * 6 {
+            continue;
         }
+        lists.push(Tracklist { source, entries });
     }
     // Most valid entries wins; ties go to the more trusted source.
     let mut tracklist =
@@ -217,8 +223,9 @@ static TIMESTAMP: LazyLock<Regex> =
     LazyLock::new(|| regex(r"(?:^|[^\d:])((?:(\d{1,2}):)?([0-5]?\d):([0-5]\d))(?:$|[^\d:])"));
 static LEADING_NUMBER: LazyLock<Regex> =
     LazyLock::new(|| regex(r"^(?:#?\d{1,3}\s*[\.\):|/]|#\d{1,3}\s+|\d{1,3}\s+[|/]|\d{1,3}\s+[-–—]\s+)\s*"));
-static TRACK_NUMBER: LazyLock<Regex> = LazyLock::new(|| regex(r"(?i)^(?:track|tr\.?|no\.?|#)\s*\d{1,3}$"));
-static SEPARATOR: LazyLock<Regex> = LazyLock::new(|| regex(r"\s+[-–—‒~]{1,2}\s+|\s+[-–—]\s*|\s*[–—]\s+"));
+static TRACK_NUMBER: LazyLock<Regex> =
+    LazyLock::new(|| regex(r"(?i)^(?:(?:track|tr\.?|no\.?|#)\s*\d{1,3}|0\d{1,2}|\d)$"));
+static SEPARATOR: LazyLock<Regex> = LazyLock::new(|| regex(r"\s+[-–—‒~●•·]{1,2}\s+|\s+[-–—]\s*|\s*[–—]\s+"));
 static BRACKET_GROUP: LazyLock<Regex> = LazyLock::new(|| regex(r"[\(\[\{]([^\(\)\[\]\{\}]*)[\)\]\}]"));
 static MASHUP: LazyLock<Regex> = LazyLock::new(|| regex(r"(?i)\s+(?:w/|with\s+/|vs\.?\s+.*\s+-\s+).*$"));
 static ARTIST_SPLIT: LazyLock<Regex> =
@@ -422,6 +429,12 @@ pub fn parse_entry(label: &str) -> Option<(String, String, bool)> {
         if stripped == text {
             break;
         }
+        // "1 - Artist - Title" is numbered; "112 - Peaches & Cream" is an artist.
+        let dash_number = text.chars().take_while(char::is_ascii_digit).count() > 0
+            && text.trim_start_matches(|c: char| c.is_ascii_digit()).trim_start().starts_with(['-', '–', '—']);
+        if dash_number && SEPARATOR.find(&stripped).is_none() {
+            break;
+        }
         text = clean_edges(&stripped);
     }
     // Labels in square brackets that are not version qualifiers: "[Armada]".
@@ -449,7 +462,14 @@ pub fn parse_entry(label: &str) -> Option<(String, String, bool)> {
     };
     // "Track 01 - Title": the number is not an artist.
     if TRACK_NUMBER.is_match(&artist) {
-        artist.clear();
+        // "01 • Artist - Title": the rest still holds artist and title.
+        match SEPARATOR.find(&title) {
+            Some(m) if m.start() > 0 && m.end() < title.len() => {
+                artist = title[..m.start()].trim().to_string();
+                title = title[m.end()..].trim().to_string();
+            }
+            _ => artist.clear(),
+        }
     }
     // "Title (Original Mix) - Artist": the version sits on the left.
     let bracket_version =
@@ -579,16 +599,25 @@ pub fn versions_compatible(a: &str, b: &str) -> bool {
     if a.is_empty() || b.is_empty() {
         return false;
     }
+    const GLUE: &[&str] = &["up", "a", "at", "from", "in", "on", "with", "by", "for", "of", "to", "and"];
     let split = |key: &str| -> (Vec<String>, Vec<String>) {
         key.split([' ', '|'])
-            .filter(|w| !w.is_empty())
+            .filter(|w| !w.is_empty() && !GLUE.contains(w))
             .map(str::to_string)
-            .partition(|w| DISTINCT.contains(&w.as_str()) || w == "up" || w == "a")
+            .partition(|w| DISTINCT.contains(&w.as_str()))
     };
     let (kinds_a, names_a) = split(a);
     let (kinds_b, names_b) = split(b);
-    let kinds_shared = kinds_a.iter().any(|k| k != "up" && k != "a" && kinds_b.contains(k));
-    let names_ok = names_a.is_empty() || names_b.is_empty() || names_a.iter().any(|n| names_b.contains(n));
+    let kinds_shared = kinds_a.iter().any(|k| kinds_b.contains(k));
+    // Names agree loosely: "brits" and "brit", "tiesto" and "tiësto" (already folded).
+    let close = |x: &str, y: &str| {
+        x == y
+            || (x.len() >= 4 && y.starts_with(x))
+            || (y.len() >= 4 && x.starts_with(y))
+            || strsim::normalized_levenshtein(x, y) >= 0.8
+    };
+    let names_ok =
+        names_a.is_empty() || names_b.is_empty() || names_a.iter().any(|n| names_b.iter().any(|m| close(n, m)));
     kinds_shared && names_ok
 }
 

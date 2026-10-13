@@ -51,6 +51,9 @@ pub struct MixesArgs {
     /// Only cases of this kind: mix, single, playlist.
     #[arg(long)]
     kind: Option<String>,
+    /// Kinds also run blind (repeatable; playlists without metadata are slow).
+    #[arg(long = "blind-kind", default_values_t = ["mix".to_string(), "single".to_string()])]
+    blind_kinds: Vec<String>,
     /// Persistent answer cache [default: $MF_EVAL_CACHE_DB or ./mix-eval/cache.sqlite3].
     #[arg(long)]
     cache_db: Option<PathBuf>,
@@ -403,6 +406,9 @@ pub async fn run(args: MixesArgs) -> anyhow::Result<()> {
         for mode in &modes {
             if cancel.is_canceled() {
                 break;
+            }
+            if *mode == Mode::Blind && !args.blind_kinds.contains(&kind) {
+                continue;
             }
             eprintln!("── {} [{}] {:?}", case.id, kind, mode);
             let run = run_case(&engine, &paths, &args, case, *mode, &cancel).await;

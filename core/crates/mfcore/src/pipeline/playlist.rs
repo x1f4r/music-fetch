@@ -264,6 +264,49 @@ pub fn has_risky_words(title: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::testutil::{FakeServices, track};
+
+    fn entry(title: &str, uploader: &str, duration_s: u64) -> MediaEntry {
+        MediaEntry {
+            index: 0,
+            url: "https://www.youtube.com/watch?v=x".into(),
+            id: None,
+            title: Some(title.into()),
+            uploader: Some(uploader.into()),
+            duration_ms: Some(duration_s * 1000),
+        }
+    }
+
+    #[tokio::test]
+    async fn metadata_first_for_plain_entries() {
+        let mut services = FakeServices::new(Vec::new(), Vec::new());
+        services.catalog = vec![
+            track("Daft Punk", "Get Lucky (feat. Pharrell Williams & Nile Rodgers)", 248),
+            track("Coldplay", "Yellow", 266),
+            track("Avicii", "Levels", 200),
+        ];
+        let found = metadata_match(
+            &services,
+            &entry("Daft Punk - Get Lucky (Official Audio) ft. Pharrell Williams", "Daft Punk", 249),
+        )
+        .await;
+        assert_eq!(found.map(|t| t.artist), Some("Daft Punk".to_string()));
+        // A Topic channel names the artist.
+        assert!(metadata_match(&services, &entry("Yellow", "Coldplay - Topic", 268)).await.is_some());
+        // Durations must agree (a music video may run 25 s longer).
+        assert!(metadata_match(&services, &entry("Coldplay - Yellow", "Coldplay", 290)).await.is_none());
+        assert!(
+            metadata_match(&services, &entry("Coldplay - Yellow (Official Video)", "Coldplay", 290)).await.is_some()
+        );
+        // A version the catalog track is not: listen instead.
+        assert!(
+            metadata_match(&services, &entry("Coldplay - Yellow (Live in Madrid 2011)", "Coldplay", 266))
+                .await
+                .is_none()
+        );
+        assert!(metadata_match(&services, &entry("Avicii - Levels (Skrillex Remix)", "Skrillex", 200)).await.is_none());
+        assert!(metadata_match(&services, &entry("Some upload", "Random Channel", 200)).await.is_none());
+    }
 
     #[test]
     fn risky_titles() {

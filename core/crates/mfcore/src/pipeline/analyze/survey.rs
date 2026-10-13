@@ -7,6 +7,7 @@
 
 use crate::audio::PcmFile;
 use crate::error::{MfError, Result};
+use crate::fingerprint;
 use crate::model::{Evidence, EvidenceSource, Track};
 use crate::pipeline::analyze::services::Services;
 use crate::pipeline::hints;
@@ -102,6 +103,50 @@ pub async fn run<S: Services>(services: &S, pcm: &PcmFile, prior: &Prior, priori
         state.log.push("disagreeing probes outvoted: single".into());
     }
     Ok(state.finish(verdict))
+}
+
+/// The page's song when the recognizer named something else: its catalog
+/// preview found in the audio settles it (re-uploads, sped-up copies and
+/// "type beats" of a song are often in the recognizer's catalog too).
+pub async fn page_song_heard<S: Services>(services: &S, pcm: &PcmFile, prior: &Prior) -> Result<Option<Track>> {
+    let Some(track) = prior.track.as_ref().filter(|t| t.ids.contains_key("deezer") || t.ids.contains_key("apple"))
+    else {
+        return Ok(None);
+    };
+    let Some(preview) = services.preview(track).await else { return Ok(None) };
+    let media = pcm.clone();
+    let cancel = services.cancel().clone();
+    let found = tokio::task::spawn_blocking(move || -> Result<bool> {
+        let peaks = fingerprint::peaks_in(&media, 0, media.duration_ms(), &cancel)?;
+        let mut index = fingerprint::Index::new();
+        index.add(&fingerprint::peaks(&preview));
+        let best = index.search(&peaks, &fingerprint::warps(0.03, 0.01)).into_iter().next();
+        Ok(best.is_some_and(|m| m.is_confident(&fingerprint::MatchOptions::default())))
+    })
+    .await
+    .map_err(|e| MfError::internal(format!("local match: {e}")))??;
+    Ok(found.then(|| track.clone()))
+}
+
+/// Overrule a verdict that missed the page's song when the song's preview is
+/// found in the audio. Mixes stay mixes (the song is then one of several).
+pub fn prefer_page_song(verdict: Verdict, page: Track) -> Verdict {
+    let page_evidence = Evidence {
+        source: EvidenceSource::Metadata,
+        at_ms: 0,
+        score: VERIFIED_HINT,
+        detail: Some("the page names this song and its preview matches the audio".into()),
+    };
+    match verdict {
+        Verdict::Single { track, evidence: _, mut alternates } if !hints::same_song(&track, &page) => {
+            alternates.insert(0, track);
+            Verdict::Single { track: page, evidence: vec![page_evidence], alternates }
+        }
+        Verdict::Nothing { .. } => {
+            Verdict::Single { track: page, evidence: vec![page_evidence], alternates: Vec::new() }
+        }
+        other => other,
+    }
 }
 
 struct State<'a, S: Services> {
@@ -310,7 +355,7 @@ fn single(probes: &[Probe], prior: Option<&Prior>) -> Verdict {
             detail: Some("the page names this song".into()),
         });
     }
-    let alternates: Vec<Track> = hits
+    let mut alternates: Vec<Track> = hits
         .iter()
         .filter(|(_, h)| !hints::same_recording(&h.track, &best.track))
         .map(|(_, h)| h.track.clone())
@@ -320,6 +365,17 @@ fn single(probes: &[Probe], prior: Option<&Prior>) -> Verdict {
             }
             acc
         });
+    // The page names a version (a live performance, a remix) of the song the
+    // recognizer only knows in its original: show the page's version, keep the
+    // original as the first alternate.
+    if let Some(page) = prior_track
+        && hints::same_song(page, &best.track)
+        && !hints::version_key(&page.title).is_empty()
+        && hints::version_key(&best.track.title).is_empty()
+    {
+        alternates.insert(0, best.track);
+        return Verdict::Single { track: page.clone(), evidence, alternates };
+    }
     Verdict::Single { track: best.track, evidence, alternates }
 }
 

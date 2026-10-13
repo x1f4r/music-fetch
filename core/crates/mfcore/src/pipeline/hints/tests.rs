@@ -34,6 +34,9 @@ fn entry_formats() {
     );
     assert!(parse_entry(" - | • ").is_none());
     assert_eq!(entry("Track 01 - This World"), (String::new(), "This World".into(), false));
+    assert_eq!(entry("01 • Artist - Title"), ("Artist".into(), "Title".into(), false));
+    assert_eq!(entry("112 - Peaches & Cream"), ("112".into(), "Peaches & Cream".into(), false));
+    assert_eq!(entry("RÜFÜS DU SOL ●● Innerbloom"), ("RÜFÜS DU SOL".into(), "Innerbloom".into(), false));
     // "Title (Mix) - Artist" lists are turned around.
     assert_eq!(entry("Nerves (Viers Remix) - Rohar"), ("Rohar".into(), "Nerves (Viers Remix)".into(), false));
     assert_eq!(
@@ -250,6 +253,12 @@ fn version_keys() {
     assert_eq!(version_key("Song (VIP Mix)"), "vip");
     assert!(versions_compatible("live", "live at wembley stadium 1986"));
     assert!(!versions_compatible("tiesto remix", "afrojack remix"));
+    assert!(versions_compatible("live from brits", "live at brit awards 2011"));
+    assert!(versions_compatible(
+        &version_key("Song (Live from the BRITs)"),
+        &version_key("Song (Live at the BRIT Awards 2011)")
+    ));
+    assert!(!versions_compatible("live at wembley", "live in madrid 2011"));
     assert!(!versions_compatible("", "tiesto remix"));
     assert!(versions_compatible("tiesto remix", "tiesto remix"));
 }

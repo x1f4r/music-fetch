@@ -503,7 +503,11 @@ pub(crate) async fn analyze_pcm<S: Services>(
     let force_mix = mode == AnalyzeMode::Mix;
     let long = duration >= MIX_MIN_MS;
     let long_single = long && prior.strong && !mix_prior && prior.track.as_ref().and_then(|t| t.duration_ms).is_some();
-    let go_mix = force_mix || (long && !long_single) || (mix_prior && !(prior.strong && tracklist.is_none()));
+    // A strong single prior outweighs mix words and a list someone else posted;
+    // only a tracklist from the uploader (chapters, description, pinned or own
+    // comment) makes a mix of media the catalog knows as one song.
+    let uploader_list = tracklist.as_ref().is_some_and(|l| l.source != hints::HintSource::Comment);
+    let go_mix = force_mix || (long && !long_single) || (mix_prior && (!prior.strong || uploader_list));
     let mut survey_probes = Vec::new();
     let mut probes = 0;
     let mut paid = 0;
@@ -520,7 +524,17 @@ pub(crate) async fn analyze_pcm<S: Services>(
         probes += survey.probes;
         paid += survey.paid;
         log.extend(survey.log);
-        match survey.verdict {
+        let mut verdict = survey.verdict;
+        let missed_page_song = match (&verdict, &prior.track) {
+            (Verdict::Single { track, .. }, Some(page)) => !hints::same_song(track, page),
+            (Verdict::Nothing { .. }, Some(_)) => true,
+            _ => false,
+        };
+        if missed_page_song && let Some(page) = survey::page_song_heard(services, pcm, &prior).await? {
+            log.push(format!("the page's song {} – {} plays here (preview found)", page.artist, page.title));
+            verdict = survey::prefer_page_song(verdict, page);
+        }
+        match verdict {
             Verdict::Single { track, evidence, alternates } => {
                 let track = services.enrich(track).await;
                 let piece = Piece {
