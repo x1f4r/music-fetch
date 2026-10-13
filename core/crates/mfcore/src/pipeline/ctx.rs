@@ -9,6 +9,7 @@ use crate::config::{Credentials, EngineConfig};
 use crate::error::Result;
 use crate::melody::{MelodyIndex, PitchTracker};
 use crate::pipeline::emitter::Emitter;
+use crate::pipeline::recognize::CallBudget;
 use crate::platform::{MediaBackend, PlatformDecoder, SpeechToText};
 use crate::shazam::ShazamClient;
 use crate::store::Store;
@@ -21,6 +22,8 @@ pub struct EngineCtx {
     pub store: Arc<Store>,
     /// One serial Shazam queue per engine (rate limits are per install/IP).
     pub shazam: Arc<ShazamClient>,
+    /// Engine-wide recognizer call budget shared by all sessions.
+    pub budget: CallBudget,
     pub credentials: RwLock<Credentials>,
     pub melody: RwLock<Option<Arc<MelodyIndex>>>,
     pub pitch: OnceLock<Arc<PitchTracker>>,

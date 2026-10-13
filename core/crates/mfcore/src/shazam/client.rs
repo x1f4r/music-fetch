@@ -105,7 +105,7 @@ impl QueuePolicy {
 }
 
 /// A recognized recording and how the query aligns with it.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ShazamMatch {
     /// Title, artist, album, isrc, artwork, links and ids filled from the response.
     /// `duration_ms` and `identity_key` are left for enrichment.
