@@ -59,6 +59,49 @@ Rules:
   session; silent capture → "This app blocks audio capture. Use the microphone instead."
 - Notifications (Android 13+): requested the first time a background analysis starts.
 
+## Android Quick Settings tiles
+
+Two tiles, so the user adds whichever they want to the quick settings shade:
+
+- **Identify song** (microphone, `ListenMode::Auto`: plays, hums, whistles and singing).
+- **Identify phone audio** (`CaptureSource::SystemAudio`).
+
+A tap goes through an invisible trampoline activity (`startActivityAndCollapse(PendingIntent)`),
+which starts the capture foreground service (`microphone` or, after the per-session
+MediaProjection consent, `mediaProjection`) and finishes immediately. The tile shows
+`STATE_ACTIVE` while capturing; tapping it again stops. The ongoing notification says
+what is being captured ("Listening with the microphone" / "Listening to phone audio"),
+shows elapsed time and has a Stop action. When the session ends the notification is
+replaced by the result: matched track (actions "Open in <default service>", "Open"),
+best impression candidate ("Best guess: … · See all"), or the no-match reason with
+"Try again". Tapping it opens the session in the app.
+
+## Opening links
+
+`ServiceLinkOpener` (Android) / `LinkOpener` (macOS):
+
+1. Pick the link for the user's default service; else the first exact (non-search)
+   link; else the first search link.
+2. Android: if the service's app is installed (known package per service, resolved via
+   `PackageManager` with `<queries>` declared), launch `ACTION_VIEW` on the https URL
+   with `setPackage(...)` so it opens directly in that app; Spotify search links use the
+   `spotify:search:` URI. Otherwise open the https URL normally (browser / App Links).
+3. macOS: `NSWorkspace.open` (universal links hand off to installed apps such as Music
+   and Spotify); "Open in Music" uses the `music://` form of Apple Music links.
+4. Segment deep links (`Segment.source_url`, e.g. YouTube `&t=`) open at the timestamp.
+
+## Privacy
+
+The apps are distributed to testers and the repository is public:
+
+- No analytics, telemetry or crash upload. No accounts.
+- Network requests carry no personal data; the core uses a neutral user agent.
+- Credentials live only in Keychain / Keystore-encrypted storage, are never logged,
+  exported or included in diagnostics.
+- No personal identifiers, machine names, local paths, tokens or keys in the source,
+  scripts, docs, fixtures or build outputs. Release builds run a secret scan (gitleaks)
+  and a grep for personal strings before publishing.
+
 ## Builds
 
 - macOS: `scripts/build-macos-app.sh` (core → runtime → XcodeGen → xcodebuild → bundle

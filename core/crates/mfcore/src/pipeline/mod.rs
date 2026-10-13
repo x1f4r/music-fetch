@@ -2,6 +2,7 @@
 //! its observer and persists its results.
 
 pub mod analyze;
+pub mod ctx;
 pub mod emitter;
 pub mod hum;
 pub mod live;
