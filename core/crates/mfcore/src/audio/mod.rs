@@ -3,6 +3,7 @@
 
 pub mod decode;
 pub mod features;
+mod mp4;
 mod opus;
 pub mod pcm;
 pub mod resample;

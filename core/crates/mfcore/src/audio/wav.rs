@@ -234,8 +234,8 @@ impl WavReader {
         if whole < filled {
             self.odd = Some(self.bytes[whole]);
         }
-        for (dst, b) in out.iter_mut().zip(self.bytes[..whole].chunks_exact(2)) {
-            *dst = i16::from_le_bytes([b[0], b[1]]);
+        for (dst, b) in out.iter_mut().zip(self.bytes[..whole].as_chunks::<2>().0) {
+            *dst = i16::from_le_bytes(*b);
         }
         Ok(whole / 2)
     }

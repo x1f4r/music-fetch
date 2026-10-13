@@ -174,11 +174,7 @@ impl StreamResampler {
         }
         self.pending.extend(mono.iter().map(|s| sanitize(*s)));
         let mut pos = 0;
-        loop {
-            let need = match self.engine.resampler() {
-                Some(r) => r.input_frames_next(),
-                None => break,
-            };
+        while let Some(need) = self.engine.resampler().map(|r| r.input_frames_next()) {
             if need == 0 || self.pending.len() - pos < need {
                 break;
             }
@@ -363,7 +359,7 @@ pub fn downmix_into(data: &[f32], channels: usize, out: &mut Vec<f32>) {
     match channels {
         0 => {}
         1 => out.extend_from_slice(data),
-        2 => out.extend(data.chunks_exact(2).map(|f| (f[0] + f[1]) * 0.5)),
+        2 => out.extend(data.as_chunks::<2>().0.iter().map(|[l, r]| (l + r) * 0.5)),
         n => out.extend(data.chunks_exact(n).map(average)),
     }
 }

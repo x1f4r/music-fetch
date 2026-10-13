@@ -352,7 +352,7 @@ fn seconds_to_ms(value: Option<&Value>) -> Option<u64> {
         Value::String(s) => s.trim().parse::<f64>().ok()?,
         _ => return None,
     };
-    (secs.is_finite() && secs >= 0.0 && secs < 1e9).then(|| (secs * 1000.0).round() as u64)
+    (0.0..1e9).contains(&secs).then(|| (secs * 1000.0).round() as u64)
 }
 
 #[cfg(test)]

@@ -4,31 +4,39 @@
 //! The file is streamed packet by packet: decode → downmix → resample →
 //! `PcmWriter`, so memory stays flat for hours of audio. Packets that fail to
 //! decode are replaced by silence of the same length to keep the timeline
-//! aligned. When symphonia cannot open or decode a file (HE-AAC v2, AC-3, odd
-//! containers, surround Opus, or a decoder panic), the platform decoder writes a
-//! temporary WAV next to `output` that is converted instead.
+//! aligned, and MP4 edit lists (encoder priming and padding) are applied.
+//!
+//! When symphonia cannot open or decode a file (explicit HE-AAC, multichannel
+//! AAC, AC-3, odd containers, or a decoder panic), the platform decoder writes
+//! a temporary WAV next to `output` that is converted instead. When there is a
+//! platform decoder, Opus (the OS decoders are ~10x faster than the pure-Rust
+//! one) and implicitly signalled HE-AAC (symphonia decodes only the AAC core,
+//! without SBR) go to it first; the built-in decoders are the safety net.
 
 use std::fs::File;
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
 use symphonia::core::audio::{Audio, GenericAudioBufferRef};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::well_known::{
-    CODEC_ID_AC3, CODEC_ID_ATRAC3, CODEC_ID_DCA, CODEC_ID_EAC3, CODEC_ID_OPUS, CODEC_ID_WMA,
+    CODEC_ID_AAC, CODEC_ID_AC3, CODEC_ID_ATRAC3, CODEC_ID_DCA, CODEC_ID_EAC3, CODEC_ID_OPUS, CODEC_ID_WMA,
 };
 use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
 use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::well_known::FORMAT_ID_ISOMP4;
 use symphonia::core::formats::{FormatOptions, FormatReader, Track, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 
+use crate::audio::mp4;
 use crate::audio::opus::OpusAudioDecoder;
 use crate::audio::resample::{StreamResampler, downmix_into};
 use crate::audio::wav::WavReader;
@@ -45,6 +53,10 @@ const MAX_ERRORS_BEFORE_AUDIO: u32 = 16;
 const MAX_RESETS: u32 = 64;
 const PROGRESS_STEP: f32 = 0.005;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+/// Share of the progress bar for the platform decoder; the WAV conversion gets the rest.
+const PLATFORM_SHARE: f32 = 0.9;
+/// Output delay of an SBR (HE-AAC) decoder, in output samples (ISO/IEC 14496-3).
+const SBR_DECODER_DELAY: u64 = 962;
 
 /// Decode the first audio track of `input` to a 16 kHz mono PCM file at `output`.
 ///
@@ -74,44 +86,56 @@ pub fn decode_file(
     cancel.check()?;
 
     let reporter = Progress::new(progress);
-    let attempt = catch_unwind(AssertUnwindSafe(|| decode_with_symphonia(input, output, cancel, &reporter)));
-    let reason = match attempt {
-        Ok(Ok(pcm)) => {
+    let prefer = if fallback.is_some() { Prefer::Platform } else { Prefer::Builtin };
+    let (reason, deferred) = match run_symphonia(input, output, cancel, &reporter, prefer) {
+        Ok(pcm) => {
             reporter.finish();
             return Ok(pcm);
         }
-        Ok(Err(Failure::Canceled)) => {
-            remove_quietly(output);
-            return Err(MfError::Canceled);
-        }
-        Ok(Err(Failure::Fatal(e))) => {
-            remove_quietly(output);
-            return Err(e);
-        }
-        Ok(Err(Failure::Unsupported(reason))) => reason,
-        Err(_) => "the built-in decoder failed on this file".to_string(),
+        Err(Failure::Canceled) => return Err(MfError::Canceled),
+        Err(Failure::Fatal(e)) => return Err(e),
+        Err(Failure::Unsupported(reason)) => (reason, false),
+        Err(Failure::Deferred(what)) => (format!("{what} audio could not be decoded"), true),
     };
-    remove_quietly(output);
-    tracing::debug!(input = %input.display(), %reason, "symphonia could not decode; trying the platform decoder");
+    tracing::debug!(input = %input.display(), %reason, "trying the platform decoder");
 
     let Some(decoder) = fallback else {
         return Err(MfError::Decode { message: reason });
     };
-    match decode_with_platform(decoder, input, output, cancel, &reporter) {
+    let platform = decode_with_platform(decoder, input, output, cancel, &reporter);
+    if platform.is_err() {
+        remove_quietly(output);
+    }
+    match platform {
         Ok(pcm) => {
             reporter.finish();
             Ok(pcm)
         }
-        Err(e) => {
-            remove_quietly(output);
-            Err(match e {
-                PlatformFailure::Canceled => MfError::Canceled,
-                PlatformFailure::Fatal(e) => e,
-                PlatformFailure::Declined => MfError::Decode { message: reason },
-                PlatformFailure::Failed(message) => MfError::Decode { message: format!("{reason} ({message})") },
-            })
-        }
+        Err(PlatformFailure::Canceled) => Err(MfError::Canceled),
+        Err(PlatformFailure::Fatal(e)) => Err(e),
+        // The OS could not do it after all; the built-in decoder can.
+        Err(_) if deferred => match run_symphonia(input, output, cancel, &reporter, Prefer::Builtin) {
+            Ok(pcm) => {
+                reporter.finish();
+                Ok(pcm)
+            }
+            Err(Failure::Canceled) => Err(MfError::Canceled),
+            Err(Failure::Fatal(e)) => Err(e),
+            Err(Failure::Unsupported(reason)) => Err(MfError::Decode { message: reason }),
+            Err(Failure::Deferred(_)) => Err(MfError::Decode { message: reason }),
+        },
+        Err(PlatformFailure::Declined) => Err(MfError::Decode { message: reason }),
+        Err(PlatformFailure::Failed(message)) => Err(MfError::Decode { message: format!("{reason} ({message})") }),
     }
+}
+
+/// Which decoder gets codecs that both can handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Prefer {
+    Builtin,
+    /// Leave Opus (much faster natively) and HE-AAC (symphonia skips SBR) to the
+    /// platform decoder.
+    Platform,
 }
 
 enum Failure {
@@ -120,6 +144,8 @@ enum Failure {
     Fatal(MfError),
     /// symphonia cannot handle the file; another decoder might.
     Unsupported(String),
+    /// Left to the platform decoder (`Prefer::Platform`); names the codec.
+    Deferred(&'static str),
 }
 
 impl From<MfError> for Failure {
@@ -129,6 +155,22 @@ impl From<MfError> for Failure {
             e => Failure::Fatal(e),
         }
     }
+}
+
+/// symphonia decode guarded against panics; removes `output` on any failure.
+fn run_symphonia(
+    input: &Path,
+    output: &Path,
+    cancel: &CancelToken,
+    progress: &Progress<'_>,
+    prefer: Prefer,
+) -> std::result::Result<PcmFile, Failure> {
+    let result = catch_unwind(AssertUnwindSafe(|| decode_with_symphonia(input, output, cancel, progress, prefer)))
+        .unwrap_or_else(|_| Err(Failure::Unsupported("the built-in decoder failed on this file".into())));
+    if result.is_err() {
+        remove_quietly(output);
+    }
+    result
 }
 
 fn codecs() -> &'static CodecRegistry {
@@ -150,22 +192,24 @@ fn audio_track(format: &dyn FormatReader) -> Option<(u32, AudioCodecParameters, 
     }
 }
 
-fn codec_name(id: AudioCodecId) -> &'static str {
-    match id {
+fn unsupported_codec(id: AudioCodecId) -> String {
+    let name = match id {
+        CODEC_ID_AAC => "HE-AAC or multichannel AAC",
         CODEC_ID_AC3 => "AC-3",
         CODEC_ID_EAC3 => "E-AC-3",
         CODEC_ID_DCA => "DTS",
         CODEC_ID_WMA => "WMA",
         CODEC_ID_ATRAC3 => "ATRAC3",
         CODEC_ID_OPUS => "multichannel Opus",
-        _ => "this codec",
-    }
+        _ => return "unsupported audio codec".into(),
+    };
+    format!("unsupported audio codec ({name})")
 }
 
 fn make_decoder(params: &AudioCodecParameters) -> std::result::Result<Box<dyn AudioDecoder>, Failure> {
     codecs()
         .make_audio_decoder(params, &AudioDecoderOptions::default())
-        .map_err(|_| Failure::Unsupported(format!("unsupported audio codec ({})", codec_name(params.codec))))
+        .map_err(|_| Failure::Unsupported(unsupported_codec(params.codec)))
 }
 
 /// Where the current track's timeline stands, for progress and gap filling.
@@ -188,9 +232,129 @@ impl Timeline {
         Some((((pts - self.start_ts).max(0) as f64) / total).clamp(0.0, 1.0) as f32)
     }
 
-    /// Output samples (16 kHz) covering `ticks` of the track.
-    fn ticks_to_samples(&self, ticks: u64) -> usize {
-        self.tick_secs.map(|s| (ticks as f64 * s * SAMPLE_RATE as f64).round() as usize).unwrap_or(0)
+    /// Seconds covered by `ticks` of the track.
+    fn ticks_to_secs(&self, ticks: u64) -> f64 {
+        self.tick_secs.map(|s| ticks as f64 * s).unwrap_or(0.0)
+    }
+}
+
+/// Mono audio at the decoded rate → audible window → 16 kHz → PCM file.
+///
+/// The window (MP4 edit list: encoder priming and padding) is applied before
+/// resampling, so trimming is sample-exact at the source rate.
+struct Pipeline {
+    writer: PcmWriter,
+    resampler: Option<StreamResampler>,
+    edit: Option<mp4::Mp4Edit>,
+    /// Rate the window counters are expressed in (set by the first audio).
+    window_rate: Option<u32>,
+    skip: u64,
+    remaining: u64,
+    /// Rate for silence before any audio was decoded.
+    default_rate: Option<u32>,
+    /// The track is AAC (see `apply_window`).
+    aac: bool,
+    out: Vec<f32>,
+    zeros: Vec<f32>,
+}
+
+impl Pipeline {
+    fn new(writer: PcmWriter, edit: Option<mp4::Mp4Edit>, params: &AudioCodecParameters) -> Self {
+        Self {
+            writer,
+            resampler: None,
+            edit,
+            window_rate: None,
+            skip: 0,
+            remaining: u64::MAX,
+            default_rate: params.sample_rate,
+            aac: params.codec == CODEC_ID_AAC,
+            out: Vec::new(),
+            zeros: Vec::new(),
+        }
+    }
+
+    fn samples_written(&self) -> u64 {
+        self.writer.samples_written()
+    }
+
+    fn push(&mut self, mono: &mut Vec<f32>, rate: u32) -> std::result::Result<(), Failure> {
+        self.apply_window(mono, rate);
+        if mono.is_empty() {
+            return Ok(());
+        }
+        if self.resampler.as_ref().is_none_or(|r| r.input_rate() != rate) {
+            self.flush()?;
+            self.resampler = Some(
+                StreamResampler::offline(rate, 1)
+                    .map_err(|_| Failure::Unsupported(format!("unsupported sample rate ({rate} Hz)")))?,
+            );
+        }
+        if let Some(r) = self.resampler.as_mut() {
+            self.out.clear();
+            r.process_mono_into(mono, &mut self.out);
+            self.writer.push_f32(&self.out)?;
+        }
+        Ok(())
+    }
+
+    /// Silence for `secs` of lost audio, at the current rate.
+    fn push_silence(&mut self, secs: f64) -> std::result::Result<(), Failure> {
+        let rate = self.resampler.as_ref().map(|r| r.input_rate()).or(self.default_rate).unwrap_or(SAMPLE_RATE);
+        let frames = (secs.clamp(0.0, 10.0) * rate as f64).round() as usize;
+        let mut zeros = std::mem::take(&mut self.zeros);
+        zeros.clear();
+        zeros.resize(frames, 0.0);
+        let result = self.push(&mut zeros, rate);
+        self.zeros = zeros;
+        result
+    }
+
+    fn apply_window(&mut self, mono: &mut Vec<f32>, rate: u32) {
+        let Some(mut edit) = self.edit else { return };
+        match self.window_rate {
+            None => {
+                // AAC decoding at half the track rate is HE-AAC without SBR: the
+                // edit counts the SBR decoder's delay, which the core never adds.
+                if self.aac && rate.saturating_mul(2) == edit.timescale {
+                    edit = edit.with_less_skip(SBR_DECODER_DELAY);
+                }
+                self.skip = edit.skip_samples(rate);
+                self.remaining = edit.duration_samples(rate).unwrap_or(u64::MAX);
+            }
+            // The rate changed mid-stream: keep the window in time, not samples.
+            Some(old) if old != rate => {
+                let rescale = |v: u64| if v == u64::MAX { v } else { (v as u128 * rate as u128 / old as u128) as u64 };
+                self.skip = rescale(self.skip);
+                self.remaining = rescale(self.remaining);
+            }
+            Some(_) => {}
+        }
+        self.window_rate = Some(rate);
+        let drop = (self.skip.min(mono.len() as u64)) as usize;
+        if drop > 0 {
+            mono.drain(..drop);
+            self.skip -= drop as u64;
+        }
+        let keep = (self.remaining.min(mono.len() as u64)) as usize;
+        mono.truncate(keep);
+        if self.remaining != u64::MAX {
+            self.remaining -= keep as u64;
+        }
+    }
+
+    fn flush(&mut self) -> std::result::Result<(), Failure> {
+        if let Some(r) = self.resampler.as_mut() {
+            self.out.clear();
+            r.flush_into(&mut self.out);
+            self.writer.push_f32(&self.out)?;
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> std::result::Result<PcmFile, Failure> {
+        self.flush()?;
+        Ok(self.writer.finish()?)
     }
 }
 
@@ -199,6 +363,7 @@ fn decode_with_symphonia(
     output: &Path,
     cancel: &CancelToken,
     progress: &Progress<'_>,
+    prefer: Prefer,
 ) -> std::result::Result<PcmFile, Failure> {
     let file =
         File::open(input).map_err(|e| Failure::Fatal(MfError::invalid(format!("The file cannot be read: {e}"))))?;
@@ -221,17 +386,20 @@ fn decode_with_symphonia(
 
     let (mut track_id, params, track) =
         audio_track(format.as_ref()).ok_or_else(|| Failure::Unsupported("the file has no audio track".into()))?;
+    if params.codec == CODEC_ID_OPUS && prefer == Prefer::Platform {
+        return Err(Failure::Deferred("Opus"));
+    }
     let mut decoder = make_decoder(&params)?;
     let mut timeline = Timeline::new(&track);
+    let edit = (format.format_info().format == FORMAT_ID_ISOMP4).then(|| mp4::sound_track_edit(input)).flatten();
 
-    let mut writer = PcmWriter::create(output)?;
-    let mut resampler: Option<StreamResampler> = None;
+    let mut pipeline = Pipeline::new(PcmWriter::create(output)?, edit, &params);
     let mut planes: Vec<Vec<f32>> = Vec::new();
     let mut mono: Vec<f32> = Vec::new();
-    let mut out: Vec<f32> = Vec::new();
     let mut errors_in_row = 0u32;
     let mut errors_total = 0u32;
     let mut resets = 0u32;
+    let mut sbr_checked = false;
 
     loop {
         if cancel.is_canceled() {
@@ -246,7 +414,7 @@ fn decode_with_symphonia(
                 if resets > MAX_RESETS {
                     break;
                 }
-                flush_resampler(&mut resampler, &mut out, &mut writer)?;
+                pipeline.flush()?;
                 let Some((id, params, track)) = audio_track(format.as_ref()) else { break };
                 track_id = id;
                 decoder = make_decoder(&params)?;
@@ -254,7 +422,7 @@ fn decode_with_symphonia(
                 continue;
             }
             // A truncated or damaged tail: keep what was decoded.
-            Err(e) if writer.samples_written() > 0 => {
+            Err(e) if pipeline.samples_written() > 0 => {
                 tracing::debug!("stopping at demuxer error: {e}");
                 break;
             }
@@ -275,41 +443,37 @@ fn decode_with_symphonia(
         };
         match decoded {
             Ok(rate) => {
-                errors_in_row = 0;
-                if !mono.is_empty() {
-                    if resampler.as_ref().is_none_or(|r| r.input_rate() != rate) {
-                        flush_resampler(&mut resampler, &mut out, &mut writer)?;
-                        resampler = Some(
-                            StreamResampler::offline(rate, 1)
-                                .map_err(|_| Failure::Unsupported(format!("unsupported sample rate ({rate} Hz)")))?,
-                        );
-                    }
-                    if let Some(r) = resampler.as_mut() {
-                        out.clear();
-                        r.process_mono_into(&mono, &mut out);
-                        writer.push_f32(&out)?;
+                // AAC at half the track's rate is HE-AAC decoded without SBR.
+                if !sbr_checked {
+                    sbr_checked = true;
+                    let half_rate = |r: Option<u32>| r == Some(rate.saturating_mul(2));
+                    if params.codec == CODEC_ID_AAC
+                        && prefer == Prefer::Platform
+                        && (half_rate(params.sample_rate) || half_rate(edit.map(|e| e.timescale)))
+                    {
+                        return Err(Failure::Deferred("HE-AAC"));
                     }
                 }
+                errors_in_row = 0;
+                pipeline.push(&mut mono, rate)?;
             }
             Err(SymError::DecodeError(_)) | Err(SymError::IoError(_)) => {
                 errors_in_row += 1;
                 errors_total += 1;
                 if errors_in_row > MAX_ERRORS_IN_ROW
-                    || (writer.samples_written() == 0 && errors_total > MAX_ERRORS_BEFORE_AUDIO)
+                    || (pipeline.samples_written() == 0 && errors_total > MAX_ERRORS_BEFORE_AUDIO)
                 {
                     return Err(Failure::Unsupported("the audio stream is damaged".into()));
                 }
                 // Keep the timeline: silence for the lost packet.
-                flush_resampler(&mut resampler, &mut out, &mut writer)?;
-                let gap = timeline.ticks_to_samples(packet.dur.get()).min(SAMPLE_RATE as usize * 10);
-                writer.push(&vec![0i16; gap])?;
+                pipeline.push_silence(timeline.ticks_to_secs(packet.dur.get()))?;
             }
             Err(SymError::ResetRequired) => {
-                flush_resampler(&mut resampler, &mut out, &mut writer)?;
+                pipeline.flush()?;
                 decoder.reset();
             }
             Err(e) => {
-                if writer.samples_written() > 0 {
+                if pipeline.samples_written() > 0 {
                     tracing::debug!("stopping at decoder error: {e}");
                     break;
                 }
@@ -325,27 +489,14 @@ fn decode_with_symphonia(
         }
     }
 
-    flush_resampler(&mut resampler, &mut out, &mut writer)?;
     if errors_total > 0 {
         tracing::debug!(errors_total, "replaced undecodable packets with silence");
     }
-    if writer.samples_written() == 0 {
+    let pcm = pipeline.finish()?;
+    if pcm.len_samples() == 0 {
         return Err(Failure::Unsupported("no audio could be decoded".into()));
     }
-    Ok(writer.finish()?)
-}
-
-fn flush_resampler(
-    resampler: &mut Option<StreamResampler>,
-    out: &mut Vec<f32>,
-    writer: &mut PcmWriter,
-) -> std::result::Result<(), Failure> {
-    if let Some(r) = resampler.as_mut() {
-        out.clear();
-        r.flush_into(out);
-        writer.push_f32(out)?;
-    }
-    Ok(())
+    Ok(pcm)
 }
 
 /// Average all channels of a decoded buffer into `mono`.
@@ -424,15 +575,34 @@ fn decode_with_platform(
 ) -> std::result::Result<PcmFile, PlatformFailure> {
     let tmp = TempPath(sibling_path(output, "platform.wav"));
     remove_quietly(&tmp.0);
-    // The platform decoder covers the first 90%; the WAV conversion the rest.
-    let task = TaskHandle::new(cancel.clone());
+
+    // The platform reports progress on any thread; relay it from here.
+    let latest = Arc::new(AtomicU32::new(f32::to_bits(-1.0)));
+    let task = {
+        let latest = latest.clone();
+        TaskHandle::with_progress(cancel.clone(), move |f| latest.store(f.to_bits(), Ordering::Relaxed))
+    };
+    let done = AtomicBool::new(false);
     let started = Instant::now();
-    let result = decoder.decode_to_wav(
-        input.to_string_lossy().into_owned(),
-        tmp.0.to_string_lossy().into_owned(),
-        SAMPLE_RATE,
-        task,
-    );
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while !done.load(Ordering::Relaxed) {
+                let f = f32::from_bits(latest.load(Ordering::Relaxed));
+                if f >= 0.0 {
+                    progress.report(f * PLATFORM_SHARE);
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let result = decoder.decode_to_wav(
+            input.to_string_lossy().into_owned(),
+            tmp.0.to_string_lossy().into_owned(),
+            SAMPLE_RATE,
+            task,
+        );
+        done.store(true, Ordering::Relaxed);
+        result
+    });
     tracing::debug!(
         elapsed_ms = started.elapsed().as_millis() as u64,
         ok = result.is_ok(),
@@ -449,7 +619,7 @@ fn decode_with_platform(
     if cancel.is_canceled() {
         return Err(PlatformFailure::Canceled);
     }
-    progress.report(0.9);
+    progress.report(PLATFORM_SHARE);
     let pcm = wav_to_pcm(&tmp.0, output, cancel)?;
     if pcm.len_samples() == 0 {
         return Err(PlatformFailure::Failed("no audio could be decoded".into()));
@@ -474,11 +644,12 @@ fn wav_to_pcm(wav: &Path, output: &Path, cancel: &CancelToken) -> Result<PcmFile
         _ => {
             let noop = |_: f32| {};
             let progress = Progress::new(&noop);
-            return match decode_with_symphonia(wav, output, cancel, &progress) {
+            return match run_symphonia(wav, output, cancel, &progress, Prefer::Builtin) {
                 Ok(pcm) => Ok(pcm),
                 Err(Failure::Canceled) => Err(MfError::Canceled),
                 Err(Failure::Fatal(e)) => Err(e),
                 Err(Failure::Unsupported(reason)) => Err(MfError::Decode { message: reason }),
+                Err(Failure::Deferred(what)) => Err(MfError::Decode { message: format!("unexpected {what} data") }),
             };
         }
     };
@@ -532,33 +703,37 @@ fn remove_quietly(path: &Path) {
     }
 }
 
-/// Throttled, monotonic progress reporting.
+/// Throttled, monotonic progress reporting (thread-safe).
 struct Progress<'a> {
     sink: &'a (dyn Fn(f32) + Send + Sync),
-    state: std::cell::Cell<(f32, Option<Instant>)>,
+    state: Mutex<(f32, Option<Instant>)>,
 }
 
 impl<'a> Progress<'a> {
     fn new(sink: &'a (dyn Fn(f32) + Send + Sync)) -> Self {
-        Self { sink, state: std::cell::Cell::new((0.0, None)) }
+        Self { sink, state: Mutex::new((0.0, None)) }
     }
 
     fn report(&self, fraction: f32) {
-        let (last, at) = self.state.get();
-        let fraction = fraction.clamp(0.0, 1.0);
+        let fraction = if fraction.is_nan() { 0.0 } else { fraction.clamp(0.0, 1.0) };
+        let mut state = self.state.lock();
+        let (last, at) = *state;
         if fraction <= last {
             return;
         }
         let due = at.is_none_or(|t| t.elapsed() >= PROGRESS_INTERVAL);
         if fraction - last >= PROGRESS_STEP || due {
-            self.state.set((fraction, Some(Instant::now())));
+            *state = (fraction, Some(Instant::now()));
+            drop(state);
             (self.sink)(fraction);
         }
     }
 
     fn finish(&self) {
-        if self.state.get().0 < 1.0 {
-            self.state.set((1.0, Some(Instant::now())));
+        let mut state = self.state.lock();
+        if state.0 < 1.0 {
+            *state = (1.0, Some(Instant::now()));
+            drop(state);
             (self.sink)(1.0);
         }
     }
@@ -604,3 +779,6 @@ impl MediaSource for CountingSource {
         self.len
     }
 }
+
+#[cfg(test)]
+mod tests;
