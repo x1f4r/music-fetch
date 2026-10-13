@@ -1095,7 +1095,13 @@ fn utility(f: &Features) -> f32 {
 fn score_all(scored: &mut [Scored]) {
     let z: Vec<f32> = scored.iter().map(|s| utility(&s.features)).collect();
     let top = z.iter().copied().fold(MODEL_NONE, f32::max);
-    let total = (MODEL_NONE - top).exp() + z.iter().map(|z| (z - top).exp()).sum::<f32>();
+    // Songs compete, not placements: each song enters with its best placement.
+    let mut best: HashMap<u32, f32> = HashMap::with_capacity(scored.len());
+    for (s, &z) in scored.iter().zip(&z) {
+        let e = best.entry(s.song).or_insert(f32::NEG_INFINITY);
+        *e = e.max(z);
+    }
+    let total = (MODEL_NONE - top).exp() + best.values().map(|z| (z - top).exp()).sum::<f32>();
     for (s, z) in scored.iter_mut().zip(z) {
         let p = (z - top).exp() / total;
         s.score = 1.0 / (1.0 + (-(CALIBRATION.0 + CALIBRATION.1 * logit(p))).exp());

@@ -344,7 +344,7 @@ impl Model {
         } else {
             std::thread::scope(|s| {
                 for _ in 0..threads {
-                    s.spawn(&work);
+                    s.spawn(work);
                 }
             });
         }
