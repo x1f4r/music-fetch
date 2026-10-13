@@ -539,11 +539,15 @@ mod tests {
     /// A client whose every request fails at once: the services' hosts resolve to
     /// a closed local port.
     fn offline_client() -> reqwest::Client {
+        client_resolving_to(std::net::SocketAddr::from(([127, 0, 0, 1], 9)))
+    }
+
+    /// A client that sends every service's traffic to `addr`.
+    fn client_resolving_to(addr: std::net::SocketAddr) -> reqwest::Client {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let closed = std::net::SocketAddr::from(([127, 0, 0, 1], 9));
-        let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(2));
+        let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(20));
         for host in ["itunes.apple.com", "genius.com", "music.youtube.com", "api.deezer.com", "lrclib.net"] {
-            builder = builder.resolve(host, closed);
+            builder = builder.resolve(host, addr);
         }
         builder.build().unwrap_or_default()
     }
@@ -650,6 +654,30 @@ mod tests {
         let selected = select_for_check(&candidates, 3);
         assert_eq!(selected.len(), 3);
         assert!(selected.iter().any(|&i| candidates[i].title_key == "purplehaze"));
+    }
+
+    #[tokio::test]
+    async fn cancel_interrupts_requests_in_flight() {
+        // A server that accepts connections and never answers.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("address");
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept() {
+                held.push(socket);
+            }
+        });
+        let http = client_resolving_to(addr);
+        let cancel = CancelToken::new();
+        let trigger = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            trigger.cancel();
+        });
+        let started = std::time::Instant::now();
+        let result = search(&http, &["is this the real life".to_string()], "US", &cancel).await;
+        assert!(matches!(result, Err(MfError::Canceled)), "{result:?}");
+        assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
     }
 
     #[tokio::test]

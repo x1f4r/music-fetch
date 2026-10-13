@@ -167,7 +167,8 @@ impl Candidate {
             preview_url: self.same_version(primary, |h| h.preview_url.is_some()).and_then(|h| h.preview_url.clone()),
             ..Track::default()
         };
-        for backend in Backend::ALL {
+        // Streaming services first, the lyrics page last.
+        for backend in [Backend::ITunes, Backend::YouTubeMusic, Backend::Deezer, Backend::Genius] {
             let Some(hit) = self.best_from(primary, backend) else { continue };
             let (id_key, service) = match backend {
                 Backend::ITunes => ("apple", Service::AppleMusic),
