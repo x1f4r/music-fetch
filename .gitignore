@@ -21,3 +21,4 @@ android/core/src/main/kotlin/app/musicfetch/core/mfcore.kt
 *.iml
 *.jks
 *.keystore
+.claude/

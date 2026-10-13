@@ -1,0 +1,54 @@
+{
+ "uploader": "Forss",
+ "uploader_id": "183",
+ "uploader_url": "https://soundcloud.com/forss",
+ "timestamp": 1190472346,
+ "title": "Flickermood",
+ "track": "Flickermood",
+ "description": "From the Soulhack album,&nbsp;recently featured in this ad <a href=\"https://www.dswshoes.com/tv_commercial.jsp?m=october2007\">https://www.dswshoes.com/tv_commercial.jsp?m=october2007</a> ",
+ "duration": 213.886,
+ "webpage_url": "https://soundcloud.com/forss/flickermood",
+ "license": "all-rights-reserved",
+ "view_count": 970620,
+ "like_count": 2616,
+ "comment_count": 399,
+ "repost_count": 413,
+ "release_timestamp": 1054512000,
+ "modified_timestamp": 1657536958,
+ "genres": [
+  "Electronic"
+ ],
+ "tags": [
+  "downtempo"
+ ],
+ "artists": [
+  "Forss"
+ ],
+ "id": "293",
+ "original_url": "https://soundcloud.com/forss/flickermood",
+ "webpage_url_basename": "flickermood",
+ "webpage_url_domain": "soundcloud.com",
+ "extractor": "soundcloud",
+ "extractor_key": "Soundcloud",
+ "playlist": null,
+ "playlist_index": null,
+ "thumbnail": "https://i1.sndcdn.com/artworks-000067273316-smsiqx-original.jpg",
+ "display_id": "293",
+ "fulltitle": "Flickermood",
+ "duration_string": "3:33",
+ "upload_date": "20070922",
+ "release_date": "20030602",
+ "modified_date": "20220711",
+ "release_year": 2003,
+ "artist": "Forss",
+ "genre": "Electronic",
+ "_has_drm": null,
+ "epoch": 1791923444,
+ "_type": "video",
+ "_version": {
+  "version": "2026.08.19",
+  "current_git_head": null,
+  "release_git_head": "594bd50c2c78ac432f81600d309fdc4e0a92d82c",
+  "repository": "yt-dlp/yt-dlp"
+ }
+}

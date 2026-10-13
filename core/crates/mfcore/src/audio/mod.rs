@@ -3,9 +3,14 @@
 
 pub mod decode;
 pub mod features;
+mod mp4;
+mod opus;
 pub mod pcm;
 pub mod resample;
 pub mod wav;
+
+#[cfg(test)]
+pub(crate) mod testutil;
 
 /// Analysis sample rate used everywhere in the engine.
 pub const SAMPLE_RATE: u32 = 16_000;
