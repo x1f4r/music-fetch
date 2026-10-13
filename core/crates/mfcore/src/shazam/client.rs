@@ -72,9 +72,11 @@ pub struct QueuePolicy {
     pub batch_max_wait: Duration,
     /// First breaker cool-down; doubles with every further throttle.
     pub breaker_base: Duration,
+    /// Longest breaker cool-down (a longer `Retry-After` still wins).
     pub breaker_max: Duration,
     /// Delays before retrying a 5xx or failed request (never closer than the spacing).
     pub retry_delays: Vec<Duration>,
+    /// Timeout of one HTTP exchange.
     pub request_timeout: Duration,
 }
 
@@ -103,6 +105,7 @@ impl QueuePolicy {
     }
 }
 
+/// A recognized recording and how the query aligns with it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ShazamMatch {
     /// Title, artist, album, isrc, artwork, links and ids filled from the response.
@@ -116,6 +119,7 @@ pub struct ShazamMatch {
     pub frequency_skew: f32,
 }
 
+/// Client for Shazam's `discovery/v5` tag endpoint. Share one per install.
 pub struct ShazamClient {
     http: reqwest::Client,
     base_url: String,
@@ -240,7 +244,7 @@ impl ShazamClient {
             if priority == Priority::Batch
                 && let Some(ready) = queue
                     .last_sent
-                    .map(|t| t + self.policy.batch_spacing + batch_jitter)
+                    .map(|t| later(t, self.policy.batch_spacing.saturating_add(batch_jitter)))
                 && ready > Instant::now()
             {
                 drop(queue);
@@ -268,7 +272,7 @@ impl ShazamClient {
                             retry_after,
                         )
                         .await;
-                    *self.breaker_until.lock() = Some(Instant::now() + wait);
+                    *self.breaker_until.lock() = Some(later(Instant::now(), wait));
                     tracing::warn!(
                         cooldown_s = wait.as_secs(),
                         "shazam throttled; circuit breaker open"
@@ -412,6 +416,12 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
         .parse::<u64>()
         .ok()?;
     Some(Duration::from_secs(seconds))
+}
+
+/// `t + d` without overflow (waits are capped at a year).
+fn later(t: Instant, d: Duration) -> Instant {
+    t.checked_add(d.min(Duration::from_secs(365 * 24 * 60 * 60)))
+        .unwrap_or(t)
 }
 
 fn random_up_to(max: Duration) -> Duration {
