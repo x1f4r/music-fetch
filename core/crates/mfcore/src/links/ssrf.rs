@@ -73,13 +73,7 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
 /// Rejects host names that never denote a public site.
 fn check_host_name(host: &str) -> Result<()> {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
-    let local_suffixes = [
-        ".localhost",
-        ".local",
-        ".internal",
-        ".home.arpa",
-        ".localdomain",
-    ];
+    let local_suffixes = [".localhost", ".local", ".internal", ".home.arpa", ".localdomain"];
     if host.is_empty() || host == "localhost" || local_suffixes.iter().any(|s| host.ends_with(s)) {
         return Err(private_address_error());
     }
@@ -116,11 +110,7 @@ fn check_resolved(addrs: impl IntoIterator<Item = SocketAddr>) -> Result<()> {
             return Err(private_address_error());
         }
     }
-    if any {
-        Ok(())
-    } else {
-        Err(unresolvable_error())
-    }
+    if any { Ok(()) } else { Err(unresolvable_error()) }
 }
 
 /// Rejects URLs whose host resolves to a non-public address.
@@ -129,13 +119,9 @@ fn check_resolved(addrs: impl IntoIterator<Item = SocketAddr>) -> Result<()> {
 pub fn assert_public_url(url: &str) -> Result<()> {
     let url = Url::parse(url.trim()).map_err(|_| MfError::invalid("That link isn't valid."))?;
     match target(&url)? {
-        Target::Ip(ip) => is_public_ip(ip)
-            .then_some(())
-            .ok_or_else(private_address_error),
+        Target::Ip(ip) => is_public_ip(ip).then_some(()).ok_or_else(private_address_error),
         Target::Name(name, port) => {
-            let addrs = (name.as_str(), port)
-                .to_socket_addrs()
-                .map_err(|_| unresolvable_error())?;
+            let addrs = (name.as_str(), port).to_socket_addrs().map_err(|_| unresolvable_error())?;
             check_resolved(addrs)
         }
     }
@@ -149,15 +135,12 @@ pub async fn ensure_public_url(url: &str) -> Result<()> {
 
 /// Loopback ports tests may reach (mock servers). Never set outside tests.
 #[cfg(test)]
-pub(crate) static TEST_LOOPBACK_PORTS: parking_lot::Mutex<Vec<u16>> =
-    parking_lot::Mutex::new(Vec::new());
+pub(crate) static TEST_LOOPBACK_PORTS: parking_lot::Mutex<Vec<u16>> = parking_lot::Mutex::new(Vec::new());
 
 #[cfg(test)]
 fn allowed_in_test(url: &Url) -> bool {
     matches!(url.host(), Some(Host::Ipv4(ip)) if ip.is_loopback())
-        && url
-            .port()
-            .is_some_and(|port| TEST_LOOPBACK_PORTS.lock().contains(&port))
+        && url.port().is_some_and(|port| TEST_LOOPBACK_PORTS.lock().contains(&port))
 }
 
 pub(crate) async fn ensure_public(url: &Url) -> Result<()> {
@@ -166,13 +149,9 @@ pub(crate) async fn ensure_public(url: &Url) -> Result<()> {
         return Ok(());
     }
     match target(url)? {
-        Target::Ip(ip) => is_public_ip(ip)
-            .then_some(())
-            .ok_or_else(private_address_error),
+        Target::Ip(ip) => is_public_ip(ip).then_some(()).ok_or_else(private_address_error),
         Target::Name(name, port) => {
-            let addrs = tokio::net::lookup_host((name.as_str(), port))
-                .await
-                .map_err(|_| unresolvable_error())?;
+            let addrs = tokio::net::lookup_host((name.as_str(), port)).await.map_err(|_| unresolvable_error())?;
             check_resolved(addrs)
         }
     }
@@ -202,8 +181,7 @@ impl reqwest::dns::Resolve for PublicOnlyResolver {
             if check_host_name(&host).is_err() {
                 return Err(Box::new(NonPublicAddress) as Box<dyn std::error::Error + Send + Sync>);
             }
-            let addrs: Vec<SocketAddr> =
-                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
             if addrs.iter().any(|a| !is_public_ip(a.ip())) {
                 return Err(Box::new(NonPublicAddress) as Box<dyn std::error::Error + Send + Sync>);
             }
@@ -257,14 +235,7 @@ mod tests {
         ] {
             assert!(!is_public_ip(ip(blocked)), "{blocked} must be blocked");
         }
-        for allowed in [
-            "8.8.8.8",
-            "1.1.1.1",
-            "100.128.0.1",
-            "172.32.0.1",
-            "151.101.1.140",
-            "192.0.1.1",
-        ] {
+        for allowed in ["8.8.8.8", "1.1.1.1", "100.128.0.1", "172.32.0.1", "151.101.1.140", "192.0.1.1"] {
             assert!(is_public_ip(ip(allowed)), "{allowed} must be allowed");
         }
     }
@@ -325,14 +296,8 @@ mod tests {
 
     #[tokio::test]
     async fn async_guard_rejects_private_literals() {
-        assert_eq!(
-            ensure_public_url("http://10.0.0.1/").await,
-            Err(private_address_error())
-        );
-        assert_eq!(
-            ensure_public_url("https://[::ffff:192.168.1.1]/").await,
-            Err(private_address_error())
-        );
+        assert_eq!(ensure_public_url("http://10.0.0.1/").await, Err(private_address_error()));
+        assert_eq!(ensure_public_url("https://[::ffff:192.168.1.1]/").await, Err(private_address_error()));
         assert!(ensure_public_url("https://8.8.8.8/").await.is_ok());
     }
 

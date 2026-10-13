@@ -11,9 +11,7 @@ use url::Url;
 use super::fetch::{self, PageRequest};
 use super::html::{json_after, str_at, text_of, u64_at};
 use super::media_sites::{self, OEmbed};
-use super::{
-    Ctx, Resolution, Site, canonical, dedup_tracks, finish_track, service_link, source_info,
-};
+use super::{Ctx, Resolution, Site, canonical, dedup_tracks, finish_track, service_link, source_info};
 use crate::error::{MfError, Result};
 use crate::model::{Service, SourceInfo, Track};
 
@@ -45,34 +43,20 @@ pub(super) struct WatchPage {
     pub shorts_sound: Option<ShortsSound>,
 }
 
-pub(super) async fn resolve(
-    ctx: &Ctx<'_>,
-    url: &Url,
-    site: Site,
-    shorts: bool,
-) -> Result<Resolution> {
+pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url, site: Site, shorts: bool) -> Result<Resolution> {
     let mut source = source_info(url, site);
     let Some(id) = canonical::youtube_video_id(url) else {
         // Playlists and channels: the media backend lists entries.
         source.item_count = 0;
-        apply_oembed(
-            &mut source,
-            media_sites::youtube_oembed(ctx, url.as_str()).await?,
-        );
-        return Ok(Resolution::Media {
-            source,
-            url: url.to_string(),
-            direct: false,
-        });
+        apply_oembed(&mut source, media_sites::youtube_oembed(ctx, url.as_str()).await?);
+        return Ok(Resolution::Media { source, url: url.to_string(), direct: false });
     };
     let page_url = if shorts {
         format!("https://www.youtube.com/shorts/{id}?hl=en")
     } else {
         format!("https://www.youtube.com/watch?v={id}&hl=en&persist_hl=1")
     };
-    let req = PageRequest::new(SITE)
-        .cookies(CONSENT_COOKIES)
-        .language("en-US,en;q=0.9");
+    let req = PageRequest::new(SITE).cookies(CONSENT_COOKIES).language("en-US,en;q=0.9");
     match fetch::get_page(ctx.http, &page_url, &req, ctx.cancel).await {
         Ok(page) if page.status.is_success() => {
             let watch = parse_watch_page(&page.body);
@@ -98,16 +82,9 @@ pub(super) async fn resolve(
         Err(e) => tracing::debug!("youtube page failed: {e}"),
     }
     if source.title.is_none() {
-        apply_oembed(
-            &mut source,
-            media_sites::youtube_oembed(ctx, url.as_str()).await?,
-        );
+        apply_oembed(&mut source, media_sites::youtube_oembed(ctx, url.as_str()).await?);
     }
-    Ok(Resolution::Media {
-        source,
-        url: url.to_string(),
-        direct: false,
-    })
+    Ok(Resolution::Media { source, url: url.to_string(), direct: false })
 }
 
 fn apply_oembed(source: &mut SourceInfo, oembed: Option<OEmbed>) {
@@ -121,9 +98,7 @@ fn apply_oembed(source: &mut SourceInfo, oembed: Option<OEmbed>) {
 /// Depth-first search for the first value under `key`.
 fn find_key<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     match value {
-        Value::Object(map) => map
-            .get(key)
-            .or_else(|| map.values().find_map(|v| find_key(v, key))),
+        Value::Object(map) => map.get(key).or_else(|| map.values().find_map(|v| find_key(v, key))),
         Value::Array(items) => items.iter().find_map(|v| find_key(v, key)),
         _ => None,
     }
@@ -139,53 +114,28 @@ fn largest_thumbnail(details: &Value) -> Option<String> {
 }
 
 fn youtube_music_link(video_id: &str) -> crate::model::ServiceLink {
-    service_link(
-        Service::YouTubeMusic,
-        format!("https://music.youtube.com/watch?v={video_id}"),
-    )
+    service_link(Service::YouTubeMusic, format!("https://music.youtube.com/watch?v={video_id}"))
 }
 
 /// Songs in the description's "Music" section
 /// (`engagementPanels → structuredDescriptionContentRenderer → horizontalCardListRenderer`).
 fn music_cards(data: &Value) -> Vec<Track> {
     let mut tracks = Vec::new();
-    let panels = data
-        .get("engagementPanels")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+    let panels = data.get("engagementPanels").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     for panel in panels {
         let items = panel
             .pointer("/engagementPanelSectionListRenderer/content/structuredDescriptionContentRenderer/items")
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        for list in items
-            .iter()
-            .filter_map(|item| item.get("horizontalCardListRenderer"))
-        {
-            let header = list
-                .pointer("/header/richListHeaderRenderer/title")
-                .and_then(text_of);
-            let icon = list
-                .pointer("/footerButton/buttonViewModel/iconName")
-                .and_then(Value::as_str);
-            if !(header
-                .as_deref()
-                .is_some_and(|h| h.eq_ignore_ascii_case("music"))
-                || icon == Some("MUSIC"))
-            {
+        for list in items.iter().filter_map(|item| item.get("horizontalCardListRenderer")) {
+            let header = list.pointer("/header/richListHeaderRenderer/title").and_then(text_of);
+            let icon = list.pointer("/footerButton/buttonViewModel/iconName").and_then(Value::as_str);
+            if !(header.as_deref().is_some_and(|h| h.eq_ignore_ascii_case("music")) || icon == Some("MUSIC")) {
                 continue;
             }
-            let cards = list
-                .get("cards")
-                .and_then(Value::as_array)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            for card in cards
-                .iter()
-                .filter_map(|c| c.get("videoAttributeViewModel"))
-            {
+            let cards = list.get("cards").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+            for card in cards.iter().filter_map(|c| c.get("videoAttributeViewModel")) {
                 let Some(title) = card.get("title").and_then(text_of) else {
                     continue;
                 };
@@ -204,18 +154,13 @@ fn music_cards(data: &Value) -> Vec<Track> {
 }
 
 fn shorts_sound(data: &Value) -> Option<ShortsSound> {
-    let title = data
-        .get("overlay")
-        .and_then(|o| find_key(o, "soundAttributionTitle"))
-        .and_then(text_of)?;
+    let title = data.get("overlay").and_then(|o| find_key(o, "soundAttributionTitle")).and_then(text_of)?;
     let video_id = data
         .get("engagementPanels")
         .and_then(Value::as_array)?
         .iter()
         .filter_map(|p| p.get("engagementPanelSectionListRenderer"))
-        .find(|p| {
-            p.get("targetId").and_then(Value::as_str) == Some("engagement-panel-shorts-audio-pivot")
-        })
+        .find(|p| p.get("targetId").and_then(Value::as_str) == Some("engagement-panel-shorts-audio-pivot"))
         .and_then(|p| p.pointer("/content/richGridRenderer/header"))
         .and_then(|h| find_key(h, "watchEndpoint"))
         .and_then(|w| str_at(w, "/videoId"));
@@ -224,19 +169,13 @@ fn shorts_sound(data: &Value) -> Option<ShortsSound> {
 
 /// Parses `ytInitialPlayerResponse` and `ytInitialData` from a watch or Shorts page.
 pub(super) fn parse_watch_page(html: &str) -> WatchPage {
-    let player = json_after(html, "var ytInitialPlayerResponse =")
-        .or_else(|| json_after(html, "ytInitialPlayerResponse ="));
-    let data = json_after(html, "var ytInitialData =")
-        .or_else(|| json_after(html, "window[\"ytInitialData\"] ="));
+    let player =
+        json_after(html, "var ytInitialPlayerResponse =").or_else(|| json_after(html, "ytInitialPlayerResponse ="));
+    let data = json_after(html, "var ytInitialData =").or_else(|| json_after(html, "window[\"ytInitialData\"] ="));
     let mut page = WatchPage::default();
     if let Some(player) = &player {
-        if player
-            .pointer("/playabilityStatus/status")
-            .and_then(Value::as_str)
-            == Some("ERROR")
-        {
-            let reason = str_at(player, "/playabilityStatus/reason")
-                .unwrap_or_else(|| "Video unavailable".into());
+        if player.pointer("/playabilityStatus/status").and_then(Value::as_str) == Some("ERROR") {
+            let reason = str_at(player, "/playabilityStatus/reason").unwrap_or_else(|| "Video unavailable".into());
             page.unavailable = Some(format!("{}.", reason.trim_end_matches('.')));
             return page;
         }
@@ -244,9 +183,7 @@ pub(super) fn parse_watch_page(html: &str) -> WatchPage {
             page.title = str_at(details, "/title");
             page.uploader = str_at(details, "/author");
             page.thumbnail_url = largest_thumbnail(details);
-            page.duration_ms = u64_at(details, "/lengthSeconds")
-                .filter(|s| *s > 0)
-                .map(|s| s * 1000);
+            page.duration_ms = u64_at(details, "/lengthSeconds").filter(|s| *s > 0).map(|s| s * 1000);
             if let (Some(title), Some(author), Some(video_id)) =
                 (&page.title, &page.uploader, str_at(details, "/videoId"))
                 && let Some(artist) = author.strip_suffix(TOPIC_SUFFIX)
@@ -288,18 +225,11 @@ async fn shorts_hint(ctx: &Ctx<'_>, sound: &ShortsSound) -> Result<Option<Track>
     let Some((title, mut artist)) = sound_label(&sound.title) else {
         return Ok(None);
     };
-    let mut track = Track {
-        title,
-        ..Track::default()
-    };
+    let mut track = Track { title, ..Track::default() };
     if let Some(video_id) = &sound.video_id {
         let watch = format!("https://www.youtube.com/watch?v={video_id}");
         if let Some(info) = media_sites::youtube_oembed(ctx, &watch).await? {
-            let topic = info
-                .author
-                .as_deref()
-                .and_then(|a| a.strip_suffix(TOPIC_SUFFIX))
-                .map(str::to_string);
+            let topic = info.author.as_deref().and_then(|a| a.strip_suffix(TOPIC_SUFFIX)).map(str::to_string);
             if artist.is_none() {
                 artist = topic.clone();
             }
@@ -321,20 +251,13 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!(
-            "{}/tests/fixtures/links/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture")
+        std::fs::read_to_string(format!("{}/tests/fixtures/links/{name}", env!("CARGO_MANIFEST_DIR"))).expect("fixture")
     }
 
     #[test]
     fn official_video_has_one_music_card() {
         let page = parse_watch_page(&fixture("youtube_watch_card.html"));
-        assert_eq!(
-            page.title.as_deref(),
-            Some("Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)")
-        );
+        assert_eq!(page.title.as_deref(), Some("Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)"));
         assert_eq!(page.uploader.as_deref(), Some("Rick Astley"));
         assert_eq!(page.duration_ms, Some(213_000));
         assert!(page.thumbnail_url.is_some());
@@ -370,19 +293,10 @@ mod tests {
         let page = parse_watch_page(html);
         let art = page.art_track.expect("art track");
         assert_eq!(art.artist, "KATSEYE");
-        assert_eq!(
-            art.links[0].url,
-            "https://music.youtube.com/watch?v=HY397w59MT4"
-        );
-        assert_eq!(
-            page.thumbnail_url.as_deref(),
-            Some("https://i.ytimg.com/b.jpg")
-        );
+        assert_eq!(art.links[0].url, "https://music.youtube.com/watch?v=HY397w59MT4");
+        assert_eq!(page.thumbnail_url.as_deref(), Some("https://i.ytimg.com/b.jpg"));
         let gone = r#"<script>var ytInitialPlayerResponse = {"playabilityStatus":{"status":"ERROR","reason":"Video unavailable"}};</script>"#;
-        assert_eq!(
-            parse_watch_page(gone).unavailable.as_deref(),
-            Some("Video unavailable.")
-        );
+        assert_eq!(parse_watch_page(gone).unavailable.as_deref(), Some("Video unavailable."));
         assert_eq!(parse_watch_page("<html></html>"), WatchPage::default());
     }
 
@@ -390,13 +304,7 @@ mod tests {
     fn sound_labels() {
         assert_eq!(sound_label("original sound - someone"), None);
         assert_eq!(sound_label("Original Sound"), None);
-        assert_eq!(
-            sound_label("Song · Artist"),
-            Some(("Song".into(), Some("Artist".into())))
-        );
-        assert_eq!(
-            sound_label("Hootie Frutti"),
-            Some(("Hootie Frutti".into(), None))
-        );
+        assert_eq!(sound_label("Song · Artist"), Some(("Song".into(), Some("Artist".into()))));
+        assert_eq!(sound_label("Hootie Frutti"), Some(("Hootie Frutti".into(), None)));
     }
 }

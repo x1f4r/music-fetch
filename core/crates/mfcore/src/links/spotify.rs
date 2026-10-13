@@ -40,9 +40,7 @@ pub(super) fn entity(url: &Url) -> Option<(Kind, String)> {
         "playlist" => Kind::Playlist,
         _ => return None,
     };
-    let id = parts
-        .get(1)
-        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))?;
+    let id = parts.get(1).filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))?;
     Some((kind, (*id).to_string()))
 }
 
@@ -66,17 +64,10 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Resolution> {
         Err(MfError::Canceled) => return Err(MfError::Canceled),
         Err(e) => tracing::debug!("spotify embed failed: {e}"),
     }
-    let page = fetch::get_page(
-        ctx.http,
-        &canonical,
-        &PageRequest::new(SITE).agent(Agent::Crawler),
-        ctx.cancel,
-    )
-    .await?;
+    let page = fetch::get_page(ctx.http, &canonical, &PageRequest::new(SITE).agent(Agent::Crawler), ctx.cancel).await?;
     let page = fetch::require_success(page, SITE)?;
-    parse_crawler_page(&page.body, kind, &canonical_url).ok_or_else(|| MfError::MediaUnavailable {
-        message: "Couldn't read this Spotify page.".into(),
-    })
+    parse_crawler_page(&page.body, kind, &canonical_url)
+        .ok_or_else(|| MfError::MediaUnavailable { message: "Couldn't read this Spotify page.".into() })
 }
 
 /// Largest image of an embed entity (`visualIdentity.image` or `coverArt.sources`).
@@ -87,30 +78,21 @@ fn best_image(entity: &Value) -> Option<String> {
         .and_then(Value::as_array)?;
     images
         .iter()
-        .max_by_key(|img| {
-            img.get("maxWidth")
-                .or_else(|| img.get("width"))
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-        })
+        .max_by_key(|img| img.get("maxWidth").or_else(|| img.get("width")).and_then(Value::as_u64).unwrap_or(0))
         .and_then(|img| img.get("url"))
         .and_then(Value::as_str)
         .map(str::to_string)
 }
 
 fn id_from_uri(uri: &str) -> Option<&str> {
-    uri.strip_prefix("spotify:track:")
-        .filter(|id| !id.is_empty())
+    uri.strip_prefix("spotify:track:").filter(|id| !id.is_empty())
 }
 
 fn spotify_track(title: String, artists: Vec<String>, id: &str) -> Track {
     let mut track = Track {
         title,
         artists,
-        links: vec![service_link(
-            Service::Spotify,
-            format!("https://open.spotify.com/track/{id}"),
-        )],
+        links: vec![service_link(Service::Spotify, format!("https://open.spotify.com/track/{id}"))],
         ..Track::default()
     };
     track.ids.insert("spotify".into(), id.to_string());
@@ -130,9 +112,8 @@ pub(super) fn parse_embed(html: &str, canonical: &Url) -> Option<Resolution> {
     source.thumbnail_url.clone_from(&image);
     let tracks: Vec<Track> = match kind {
         "track" => {
-            let id = str_at(entity, "/id").or_else(|| {
-                str_at(entity, "/uri").and_then(|u| id_from_uri(&u).map(str::to_string))
-            })?;
+            let id = str_at(entity, "/id")
+                .or_else(|| str_at(entity, "/uri").and_then(|u| id_from_uri(&u).map(str::to_string)))?;
             let artists: Vec<String> = entity
                 .get("artists")
                 .and_then(Value::as_array)
@@ -140,9 +121,7 @@ pub(super) fn parse_embed(html: &str, canonical: &Url) -> Option<Resolution> {
                 .unwrap_or_default();
             let mut track = spotify_track(name.clone()?, artists, &id);
             track.duration_ms = u64_at(entity, "/duration").filter(|d| *d > 0);
-            track.release_year = str_at(entity, "/releaseDate/isoString")
-                .as_deref()
-                .and_then(year_of);
+            track.release_year = str_at(entity, "/releaseDate/isoString").as_deref().and_then(year_of);
             track.preview_url = str_at(entity, "/audioPreview/url");
             track.artwork_url = image;
             let track = finish_track(track);
@@ -156,8 +135,7 @@ pub(super) fn parse_embed(html: &str, canonical: &Url) -> Option<Resolution> {
             let list = entity.get("trackList").and_then(Value::as_array)?;
             list.iter()
                 .filter_map(|item| {
-                    let id =
-                        str_at(item, "/uri").and_then(|u| id_from_uri(&u).map(str::to_string))?;
+                    let id = str_at(item, "/uri").and_then(|u| id_from_uri(&u).map(str::to_string))?;
                     let title = str_at(item, "/title")?;
                     // Artists are joined with ",\u{a0}"; a plain comma can be part of a name.
                     let artists = str_at(item, "/subtitle")
@@ -181,8 +159,7 @@ pub(super) fn parse_embed(html: &str, canonical: &Url) -> Option<Resolution> {
     }
     source.item_count = tracks.len() as u32;
     if source.duration_ms.is_none() {
-        source.duration_ms =
-            Some(tracks.iter().filter_map(|t| t.duration_ms).sum()).filter(|d| *d > 0);
+        source.duration_ms = Some(tracks.iter().filter_map(|t| t.duration_ms).sum()).filter(|d| *d > 0);
     }
     Some(Resolution::Tracks { source, tracks })
 }
@@ -208,11 +185,8 @@ pub(super) fn parse_crawler_page(html: &str, kind: Kind, canonical: &Url) -> Opt
     if parts.len() >= 4 && parts[2] == "Song" {
         track.album = Some(parts[1].to_string());
     }
-    track.duration_ms = doc
-        .meta("music:duration")
-        .and_then(|s| s.parse::<u64>().ok())
-        .filter(|d| *d > 0)
-        .map(|s| s * 1000);
+    track.duration_ms =
+        doc.meta("music:duration").and_then(|s| s.parse::<u64>().ok()).filter(|d| *d > 0).map(|s| s * 1000);
     track.release_year = doc.meta("music:release_date").and_then(year_of);
     track.preview_url = doc.meta("og:audio").map(str::to_string);
     track.artwork_url = doc.meta("og:image").map(str::to_string);
@@ -222,10 +196,7 @@ pub(super) fn parse_crawler_page(html: &str, kind: Kind, canonical: &Url) -> Opt
     source.uploader = Some(track.artist.clone()).filter(|a| !a.is_empty());
     source.thumbnail_url.clone_from(&track.artwork_url);
     source.duration_ms = track.duration_ms;
-    Some(Resolution::Tracks {
-        source,
-        tracks: vec![track],
-    })
+    Some(Resolution::Tracks { source, tracks: vec![track] })
 }
 
 /// Turns a resolution into a single hint track (used for TikTok's Spotify ids).
@@ -241,11 +212,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!(
-            "{}/tests/fixtures/links/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture")
+        std::fs::read_to_string(format!("{}/tests/fixtures/links/{name}", env!("CARGO_MANIFEST_DIR"))).expect("fixture")
     }
 
     fn url(s: &str) -> Url {
@@ -255,24 +222,14 @@ mod tests {
     #[test]
     fn parses_entities() {
         assert_eq!(
-            entity(&url(
-                "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"
-            )),
+            entity(&url("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT")),
             Some((Kind::Track, "4cOdK2wGLETKBW3PvgPWqT".into()))
         );
         assert_eq!(
-            entity(&url(
-                "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
-            ))
-            .map(|e| e.0),
+            entity(&url("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M")).map(|e| e.0),
             Some(Kind::Playlist)
         );
-        assert_eq!(
-            entity(&url(
-                "https://open.spotify.com/artist/0gxyHStUsqpMadRV0Di1Qt"
-            )),
-            None
-        );
+        assert_eq!(entity(&url("https://open.spotify.com/artist/0gxyHStUsqpMadRV0Di1Qt")), None);
         assert_eq!(entity(&url("https://open.spotify.com/track/")), None);
         assert_eq!(entity(&url("https://open.spotify.com/track/abc$")), None);
     }
@@ -280,8 +237,7 @@ mod tests {
     #[test]
     fn parses_track_embed() {
         let canonical = url("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT");
-        let Some(Resolution::Tracks { source, tracks }) =
-            parse_embed(&fixture("spotify_track_embed.html"), &canonical)
+        let Some(Resolution::Tracks { source, tracks }) = parse_embed(&fixture("spotify_track_embed.html"), &canonical)
         else {
             panic!("expected tracks");
         };
@@ -291,24 +247,10 @@ mod tests {
         assert_eq!(t.artist, "Rick Astley");
         assert_eq!(t.duration_ms, Some(213_573));
         assert_eq!(t.release_year, Some(1987));
-        assert!(
-            t.preview_url
-                .as_deref()
-                .is_some_and(|u| u.starts_with("https://p.scdn.co/mp3-preview/"))
-        );
-        assert!(
-            t.artwork_url
-                .as_deref()
-                .is_some_and(|u| u.contains("ab67616d0000b273"))
-        );
-        assert_eq!(
-            t.ids.get("spotify").map(String::as_str),
-            Some("4cOdK2wGLETKBW3PvgPWqT")
-        );
-        assert_eq!(
-            t.links[0].url,
-            "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"
-        );
+        assert!(t.preview_url.as_deref().is_some_and(|u| u.starts_with("https://p.scdn.co/mp3-preview/")));
+        assert!(t.artwork_url.as_deref().is_some_and(|u| u.contains("ab67616d0000b273")));
+        assert_eq!(t.ids.get("spotify").map(String::as_str), Some("4cOdK2wGLETKBW3PvgPWqT"));
+        assert_eq!(t.links[0].url, "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT");
         assert_eq!(source.item_count, 1);
         assert_eq!(source.service, Some(Service::Spotify));
         assert_eq!(source.uploader.as_deref(), Some("Rick Astley"));
@@ -317,8 +259,7 @@ mod tests {
     #[test]
     fn parses_album_embed() {
         let canonical = url("https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy");
-        let Some(Resolution::Tracks { source, tracks }) =
-            parse_embed(&fixture("spotify_album_embed.html"), &canonical)
+        let Some(Resolution::Tracks { source, tracks }) = parse_embed(&fixture("spotify_album_embed.html"), &canonical)
         else {
             panic!("expected tracks");
         };
@@ -345,11 +286,7 @@ mod tests {
         assert_eq!(source.title.as_deref(), Some("Today’s Top Hits"));
         assert!(source.thumbnail_url.is_some());
         assert!(tracks.len() >= 2);
-        assert!(
-            tracks
-                .iter()
-                .all(|t| t.album.is_none() && !t.title.is_empty() && !t.artist.is_empty())
-        );
+        assert!(tracks.iter().all(|t| t.album.is_none() && !t.title.is_empty() && !t.artist.is_empty()));
     }
 
     #[test]
@@ -367,10 +304,7 @@ mod tests {
         assert_eq!(t.duration_ms, Some(214_000));
         assert_eq!(t.release_year, Some(1987));
         assert!(t.preview_url.is_some());
-        assert!(
-            parse_crawler_page(&fixture("spotify_track_og.html"), Kind::Album, &canonical)
-                .is_none()
-        );
+        assert!(parse_crawler_page(&fixture("spotify_track_og.html"), Kind::Album, &canonical).is_none());
     }
 
     #[test]
@@ -378,11 +312,8 @@ mod tests {
         let canonical = url("https://open.spotify.com/track/x");
         assert!(parse_embed("<html></html>", &canonical).is_none());
         assert!(
-            parse_embed(
-                r#"<script id="__NEXT_DATA__" type="application/json">{"props":{}}</script>"#,
-                &canonical
-            )
-            .is_none()
+            parse_embed(r#"<script id="__NEXT_DATA__" type="application/json">{"props":{}}</script>"#, &canonical)
+                .is_none()
         );
         assert!(parse_crawler_page("", Kind::Track, &canonical).is_none());
     }

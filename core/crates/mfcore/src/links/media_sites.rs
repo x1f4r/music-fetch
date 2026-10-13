@@ -26,9 +26,7 @@ pub(super) fn parse_oembed(value: &Value) -> OEmbed {
         title: str_at(value, "/title"),
         author: str_at(value, "/author_name"),
         thumbnail_url: str_at(value, "/thumbnail_url"),
-        duration_ms: u64_at(value, "/duration")
-            .filter(|d| *d > 0)
-            .map(|d| d * 1000),
+        duration_ms: u64_at(value, "/duration").filter(|d| *d > 0).map(|d| d * 1000),
     }
 }
 
@@ -39,17 +37,8 @@ fn encode(text: &str) -> String {
 /// GETs an oEmbed endpoint (`endpoint` ends with the `url=` parameter). Only
 /// cancellation is an error; anything else means no info.
 async fn oembed(ctx: &Ctx<'_>, endpoint: &str, target: &str, site: &str) -> Result<Option<OEmbed>> {
-    match fetch::fetch_json(
-        ctx.http,
-        &format!("{endpoint}{}", encode(target)),
-        site,
-        ctx.cancel,
-    )
-    .await
-    {
-        Ok(response) if response.status.is_success() => {
-            Ok(response.value.as_ref().map(parse_oembed))
-        }
+    match fetch::fetch_json(ctx.http, &format!("{endpoint}{}", encode(target)), site, ctx.cancel).await {
+        Ok(response) if response.status.is_success() => Ok(response.value.as_ref().map(parse_oembed)),
         Ok(_) => Ok(None),
         Err(MfError::Canceled) => Err(MfError::Canceled),
         Err(e) => {
@@ -61,13 +50,7 @@ async fn oembed(ctx: &Ctx<'_>, endpoint: &str, target: &str, site: &str) -> Resu
 
 /// YouTube oEmbed (videos and playlists).
 pub(super) async fn youtube_oembed(ctx: &Ctx<'_>, target: &str) -> Result<Option<OEmbed>> {
-    oembed(
-        ctx,
-        "https://www.youtube.com/oembed?format=json&url=",
-        target,
-        "YouTube",
-    )
-    .await
+    oembed(ctx, "https://www.youtube.com/oembed?format=json&url=", target, "YouTube").await
 }
 
 pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url, site: Site) -> Result<Resolution> {
@@ -84,11 +67,7 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url, site: Site) -> Result<Reso
         Err(e) => tracing::debug!("page info for {site:?} failed: {e}"),
         Ok(()) => {}
     }
-    Ok(Resolution::Media {
-        source,
-        url: url.to_string(),
-        direct: false,
-    })
+    Ok(Resolution::Media { source, url: url.to_string(), direct: false })
 }
 
 fn apply(source: &mut SourceInfo, info: OEmbed) {
@@ -104,13 +83,8 @@ async fn soundcloud(ctx: &Ctx<'_>, url: &Url, source: &mut SourceInfo) -> Result
     if parts.len() == 1 || parts.get(1) == Some(&"sets") {
         source.item_count = 0;
     }
-    if let Some(mut info) = oembed(
-        ctx,
-        "https://soundcloud.com/oembed?format=json&url=",
-        url.as_str(),
-        "SoundCloud",
-    )
-    .await?
+    if let Some(mut info) =
+        oembed(ctx, "https://soundcloud.com/oembed?format=json&url=", url.as_str(), "SoundCloud").await?
     {
         // Titles read "<track> by <uploader>".
         if let (Some(title), Some(author)) = (&info.title, &info.author)
@@ -124,14 +98,7 @@ async fn soundcloud(ctx: &Ctx<'_>, url: &Url, source: &mut SourceInfo) -> Result
 }
 
 async fn vimeo(ctx: &Ctx<'_>, url: &Url, source: &mut SourceInfo) -> Result<()> {
-    if let Some(info) = oembed(
-        ctx,
-        "https://vimeo.com/api/oembed.json?url=",
-        url.as_str(),
-        "Vimeo",
-    )
-    .await?
-    {
+    if let Some(info) = oembed(ctx, "https://vimeo.com/api/oembed.json?url=", url.as_str(), "Vimeo").await? {
         apply(source, info);
     }
     Ok(())
@@ -152,11 +119,8 @@ async fn mixcloud(ctx: &Ctx<'_>, url: &Url, source: &mut SourceInfo) -> Result<(
 pub(super) fn apply_mixcloud(value: &Value, source: &mut SourceInfo) {
     source.title = str_at(value, "/name");
     source.uploader = str_at(value, "/user/name");
-    source.thumbnail_url =
-        str_at(value, "/pictures/extra_large").or_else(|| str_at(value, "/pictures/large"));
-    source.duration_ms = u64_at(value, "/audio_length")
-        .filter(|d| *d > 0)
-        .map(|d| d * 1000);
+    source.thumbnail_url = str_at(value, "/pictures/extra_large").or_else(|| str_at(value, "/pictures/large"));
+    source.duration_ms = u64_at(value, "/audio_length").filter(|d| *d > 0).map(|d| d * 1000);
     source.hints = value
         .get("sections")
         .and_then(Value::as_array)
@@ -166,11 +130,7 @@ pub(super) fn apply_mixcloud(value: &Value, source: &mut SourceInfo) {
                 .filter_map(|s| {
                     let title = str_at(s, "/track/name")?;
                     let artist = str_at(s, "/track/artist/name").unwrap_or_default();
-                    Some(finish_track(Track {
-                        title,
-                        artist,
-                        ..Track::default()
-                    }))
+                    Some(finish_track(Track { title, artist, ..Track::default() }))
                 })
                 .collect()
         })
@@ -178,13 +138,7 @@ pub(super) fn apply_mixcloud(value: &Value, source: &mut SourceInfo) {
 }
 
 async fn bandcamp(ctx: &Ctx<'_>, url: &Url, source: &mut SourceInfo) -> Result<()> {
-    let page = fetch::get_page(
-        ctx.http,
-        url.as_str(),
-        &PageRequest::new("Bandcamp"),
-        ctx.cancel,
-    )
-    .await?;
+    let page = fetch::get_page(ctx.http, url.as_str(), &PageRequest::new("Bandcamp"), ctx.cancel).await?;
     let page = fetch::require_success(page, "Bandcamp")?;
     apply_bandcamp(&page.body, source);
     Ok(())
@@ -200,13 +154,8 @@ pub(super) fn apply_bandcamp(html: &str, source: &mut SourceInfo) {
         let track = finish_track(Track {
             title: str_at(ld, "/name").unwrap_or_default(),
             artists,
-            album: ld
-                .pointer("/inAlbum/name")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            duration_ms: str_at(ld, "/duration")
-                .as_deref()
-                .and_then(parse_iso_duration),
+            album: ld.pointer("/inAlbum/name").and_then(Value::as_str).map(str::to_string),
+            duration_ms: str_at(ld, "/duration").as_deref().and_then(parse_iso_duration),
             artwork_url: source.thumbnail_url.clone(),
             ..Track::default()
         });
@@ -218,8 +167,7 @@ pub(super) fn apply_bandcamp(html: &str, source: &mut SourceInfo) {
         }
     } else if let Some(ld) = doc.json_ld_of(&["MusicAlbum"]).next() {
         source.title = str_at(ld, "/name");
-        source.uploader =
-            Some(join_artists(&ld_names(ld.get("byArtist")))).filter(|a| !a.is_empty());
+        source.uploader = Some(join_artists(&ld_names(ld.get("byArtist")))).filter(|a| !a.is_empty());
         source.item_count = u64_at(ld, "/numTracks").map_or(0, |n| n as u32);
     } else {
         source.title = doc.meta("og:title").map(str::to_string);

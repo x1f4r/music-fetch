@@ -26,14 +26,8 @@ use crate::model::Track;
 
 /// Provider ids that identify a recording, most trustworthy first, with the
 /// prefix used in identity keys. Keys match `Track.ids`.
-pub const PROVIDER_ID_PREFIXES: [(&str, &str); 6] = [
-    ("acrcloud", "acr"),
-    ("audd", "audd"),
-    ("shazam", "shz"),
-    ("deezer", "dz"),
-    ("apple", "am"),
-    ("spotify", "sp"),
-];
+pub const PROVIDER_ID_PREFIXES: [(&str, &str); 6] =
+    [("acrcloud", "acr"), ("audd", "audd"), ("shazam", "shz"), ("deezer", "dz"), ("apple", "am"), ("spotify", "sp")];
 
 /// Strength of the evidence behind an identity key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,11 +46,8 @@ static PARENS_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // Dash clauses: "Yesterday - Remastered 2009", "Song – Radio Edit".
-static TRAILING_DASH: LazyLock<Regex> = LazyLock::new(|| {
-    regex(
-        r"(?i)\s[-–—]\s.*\b(remaster(?:ed)?|edit|version|mix|acoustic|re[\- ]?record(?:ed)?)\b.*$",
-    )
-});
+static TRAILING_DASH: LazyLock<Regex> =
+    LazyLock::new(|| regex(r"(?i)\s[-–—]\s.*\b(remaster(?:ed)?|edit|version|mix|acoustic|re[\- ]?record(?:ed)?)\b.*$"));
 
 // "feat. X" / "ft. X" / "(featuring X)" in either field.
 static FEAT: LazyLock<Regex> =
@@ -65,8 +56,7 @@ static FEAT: LazyLock<Regex> =
 // Separators between credited artists. Deliberately broad: providers use ",", "&",
 // "and", "/", "+", ";", "×" and " x ". Unlike 0.4, a bare "x" only separates when
 // surrounded by spaces, so "X" and "Malcolm X" stay intact.
-static ARTIST_SEPARATORS: LazyLock<Regex> =
-    LazyLock::new(|| regex(r"(?i)\s*(?:,|&|\band\b|/|\+|;|×)\s*|\s+x\s+"));
+static ARTIST_SEPARATORS: LazyLock<Regex> = LazyLock::new(|| regex(r"(?i)\s*(?:,|&|\band\b|/|\+|;|×)\s*|\s+x\s+"));
 
 static LEADING_THE: LazyLock<Regex> = LazyLock::new(|| regex(r"(?i)^the\s+"));
 
@@ -80,11 +70,7 @@ fn regex(pattern: &str) -> Regex {
 /// Artists are split, cleaned, sorted and deduplicated, so credit order and
 /// separators do not matter.
 pub fn fuzzy_key(title: &str, artist: &str) -> String {
-    format!(
-        "fuzzy::{}::{}",
-        normalize_artists(artist),
-        normalize_title(title)
-    )
+    format!("fuzzy::{}::{}", normalize_artists(artist), normalize_title(title))
 }
 
 /// The title part of the fuzzy key: no featured artists, no version suffixes,
@@ -133,28 +119,18 @@ fn clean_token(text: &str) -> String {
 
 /// ISRC in canonical form (uppercase, no separators), if non-empty.
 pub fn normalize_isrc(isrc: &str) -> Option<String> {
-    let cleaned: String = isrc
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '-')
-        .flat_map(char::to_uppercase)
-        .collect();
+    let cleaned: String =
+        isrc.chars().filter(|c| !c.is_whitespace() && *c != '-').flat_map(char::to_uppercase).collect();
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
 fn provider_id<'a>(ids: &'a HashMap<String, String>, provider: &str) -> Option<&'a str> {
-    ids.get(provider)
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
+    ids.get(provider).map(|v| v.trim()).filter(|v| !v.is_empty())
 }
 
 /// Tiered identity from loose fields: `isrc::…`, else the first provider id in
 /// `PROVIDER_ID_PREFIXES` order (`acr::…`, `shz::…`, …), else the fuzzy key.
-pub fn tiered_identity(
-    isrc: Option<&str>,
-    ids: &HashMap<String, String>,
-    title: &str,
-    artist: &str,
-) -> String {
+pub fn tiered_identity(isrc: Option<&str>, ids: &HashMap<String, String>, title: &str, artist: &str) -> String {
     if let Some(isrc) = isrc.and_then(normalize_isrc) {
         return format!("isrc::{isrc}");
     }
@@ -168,12 +144,7 @@ pub fn tiered_identity(
 
 /// `isrc::…`, else a provider id key, else the fuzzy key.
 pub fn identity_key(track: &Track) -> String {
-    tiered_identity(
-        track.isrc.as_deref(),
-        &track.ids,
-        &track.title,
-        &track.artist,
-    )
+    tiered_identity(track.isrc.as_deref(), &track.ids, &track.title, &track.artist)
 }
 
 /// The tier an identity key was built from.
@@ -181,10 +152,10 @@ pub fn identity_tier(key: &str) -> IdentityTier {
     if key.starts_with("isrc::") {
         return IdentityTier::Isrc;
     }
-    if PROVIDER_ID_PREFIXES.iter().any(|(_, prefix)| {
-        key.strip_prefix(prefix)
-            .is_some_and(|rest| rest.starts_with("::"))
-    }) {
+    if PROVIDER_ID_PREFIXES
+        .iter()
+        .any(|(_, prefix)| key.strip_prefix(prefix).is_some_and(|rest| rest.starts_with("::")))
+    {
         return IdentityTier::ProviderId;
     }
     if key.starts_with("fuzzy::") {
@@ -201,10 +172,8 @@ pub fn identity_tier(key: &str) -> IdentityTier {
 /// 3. Otherwise (no shared evidence) the fuzzy keys decide; an empty title never
 ///    matches.
 pub fn same_track(a: &Track, b: &Track) -> bool {
-    if let (Some(x), Some(y)) = (
-        a.isrc.as_deref().and_then(normalize_isrc),
-        b.isrc.as_deref().and_then(normalize_isrc),
-    ) {
+    if let (Some(x), Some(y)) = (a.isrc.as_deref().and_then(normalize_isrc), b.isrc.as_deref().and_then(normalize_isrc))
+    {
         return x == y;
     }
     let mut shared_provider = false;
@@ -235,11 +204,7 @@ mod tests {
     use super::*;
 
     fn track(title: &str, artist: &str) -> Track {
-        Track {
-            title: title.into(),
-            artist: artist.into(),
-            ..Track::default()
-        }
+        Track { title: title.into(), artist: artist.into(), ..Track::default() }
     }
 
     fn with_isrc(mut t: Track, isrc: &str) -> Track {
@@ -257,87 +222,46 @@ mod tests {
 
     // Golden table ported from 0.4 tests/test_identity.py (artist, title).
     const SAME_FUZZY_PAIRS: &[Pair] = &[
-        (
-            ("Prince", "Purple Rain"),
-            ("Prince", "Purple Rain (Remastered 2015)"),
-        ),
-        (
-            ("The Beatles", "Yesterday"),
-            ("The Beatles", "Yesterday - Remastered 2015"),
-        ),
-        (
-            ("CADMIUM, Chris Linton", "Slow Down"),
-            ("Chris Linton & CADMIUM", "Slow Down"),
-        ),
+        (("Prince", "Purple Rain"), ("Prince", "Purple Rain (Remastered 2015)")),
+        (("The Beatles", "Yesterday"), ("The Beatles", "Yesterday - Remastered 2015")),
+        (("CADMIUM, Chris Linton", "Slow Down"), ("Chris Linton & CADMIUM", "Slow Down")),
         (("A & B", "Anthem"), ("B and A", "Anthem")),
         (("Beyoncé", "Halo"), ("Beyonce", "Halo")),
         (("The Beatles", "Hey Jude"), ("Beatles", "Hey Jude")),
-        (
-            ("Drake ft. Rihanna", "What's My Name"),
-            ("Drake", "What's My Name"),
-        ),
-        (
-            ("Drake", "What's My Name (feat. Rihanna)"),
-            ("Drake", "What's My Name"),
-        ),
-        (
-            ("  Drake  ", "  whats my name  "),
-            ("drake", "Whats My Name"),
-        ),
+        (("Drake ft. Rihanna", "What's My Name"), ("Drake", "What's My Name")),
+        (("Drake", "What's My Name (feat. Rihanna)"), ("Drake", "What's My Name")),
+        (("  Drake  ", "  whats my name  "), ("drake", "Whats My Name")),
     ];
 
     const DIFFERENT_FUZZY_PAIRS: &[Pair] = &[
         (("The Beatles", "Yesterday"), ("Boyz II Men", "Yesterday")),
         (("Prince", "Purple Rain"), ("Prince", "Raspberry Beret")),
         (("Ed Sheeran", "Halo"), ("Beyoncé", "Halo")),
-        (
-            ("The The", "This Is the Day"),
-            ("Unknown", "This Is the Day"),
-        ),
+        (("The The", "This Is the Day"), ("Unknown", "This Is the Day")),
     ];
 
     #[test]
     fn fuzzy_key_collapses_equivalents() {
         for ((la, lt), (ra, rt)) in SAME_FUZZY_PAIRS {
-            assert_eq!(
-                fuzzy_key(lt, la),
-                fuzzy_key(rt, ra),
-                "should merge: {la}/{lt} vs {ra}/{rt}"
-            );
+            assert_eq!(fuzzy_key(lt, la), fuzzy_key(rt, ra), "should merge: {la}/{lt} vs {ra}/{rt}");
         }
     }
 
     #[test]
     fn fuzzy_key_separates_distinct_tracks() {
         for ((la, lt), (ra, rt)) in DIFFERENT_FUZZY_PAIRS {
-            assert_ne!(
-                fuzzy_key(lt, la),
-                fuzzy_key(rt, ra),
-                "should stay separate: {la}/{lt} vs {ra}/{rt}"
-            );
+            assert_ne!(fuzzy_key(lt, la), fuzzy_key(rt, ra), "should stay separate: {la}/{lt} vs {ra}/{rt}");
         }
     }
 
     #[test]
     fn fuzzy_key_shape() {
-        assert_eq!(
-            fuzzy_key("Purple Rain (Remastered 2015)", "Prince"),
-            "fuzzy::prince::purplerain"
-        );
-        assert_eq!(
-            fuzzy_key("Slow Down", "Chris Linton & CADMIUM"),
-            "fuzzy::cadmium;chrislinton::slowdown"
-        );
+        assert_eq!(fuzzy_key("Purple Rain (Remastered 2015)", "Prince"), "fuzzy::prince::purplerain");
+        assert_eq!(fuzzy_key("Slow Down", "Chris Linton & CADMIUM"), "fuzzy::cadmium;chrislinton::slowdown");
         assert_eq!(fuzzy_key("Song", "A & A"), "fuzzy::a::song");
         assert_eq!(fuzzy_key("Song - Radio Edit", "X"), "fuzzy::x::song");
-        assert_eq!(
-            fuzzy_key("Song [Live at Wembley] (Remastered)", "X"),
-            "fuzzy::x::song"
-        );
-        assert_eq!(
-            fuzzy_key("Song", "Fred again.. x Skrillex"),
-            fuzzy_key("Song", "Skrillex & Fred again..")
-        );
+        assert_eq!(fuzzy_key("Song [Live at Wembley] (Remastered)", "X"), "fuzzy::x::song");
+        assert_eq!(fuzzy_key("Song", "Fred again.. x Skrillex"), fuzzy_key("Song", "Skrillex & Fred again.."));
         assert_eq!(normalize_artists("Malcolm X"), "malcolmx");
         assert_eq!(normalize_artists("YOASOBI×Ado"), "ado;yoasobi");
     }
@@ -345,20 +269,13 @@ mod tests {
     #[test]
     fn non_latin_titles_keep_their_letters() {
         assert_eq!(normalize_title("Кино"), "кино");
-        assert_ne!(
-            fuzzy_key("夜に駆ける", "YOASOBI"),
-            fuzzy_key("群青", "YOASOBI")
-        );
+        assert_ne!(fuzzy_key("夜に駆ける", "YOASOBI"), fuzzy_key("群青", "YOASOBI"));
         assert_eq!(normalize_title("ＦＵＬＬ ＷＩＤＴＨ"), "fullwidth");
     }
 
     #[test]
     fn tiered_identity_prefers_isrc() {
-        let t = with_id(
-            with_isrc(track("Some Title", "Some Artist"), "USRC17607839"),
-            "shazam",
-            "abc",
-        );
+        let t = with_id(with_isrc(track("Some Title", "Some Artist"), "USRC17607839"), "shazam", "abc");
         assert_eq!(identity_key(&t), "isrc::USRC17607839");
         assert_eq!(identity_tier(&identity_key(&t)), IdentityTier::Isrc);
     }
@@ -370,10 +287,7 @@ mod tests {
         assert_eq!(identity_tier(&identity_key(&t)), IdentityTier::ProviderId);
         let t = with_id(with_id(track("X", "Y"), "shazam", "s"), "acrcloud", "a");
         assert!(identity_key(&t).starts_with("acr::"));
-        assert_eq!(
-            identity_key(&with_id(track("X", "Y"), "deezer", "3135556")),
-            "dz::3135556"
-        );
+        assert_eq!(identity_key(&with_id(track("X", "Y"), "deezer", "3135556")), "dz::3135556");
     }
 
     #[test]
@@ -394,23 +308,14 @@ mod tests {
 
     #[test]
     fn isrc_normalization() {
-        assert_eq!(
-            normalize_isrc(" us-rc1-76-07839 ").as_deref(),
-            Some("USRC17607839")
-        );
+        assert_eq!(normalize_isrc(" us-rc1-76-07839 ").as_deref(), Some("USRC17607839"));
         assert_eq!(normalize_isrc(""), None);
     }
 
     #[test]
     fn merges_remaster_and_live_variants() {
-        assert!(same_track(
-            &track("Purple Rain", "Prince"),
-            &track("Purple Rain (Remastered 2015)", "Prince")
-        ));
-        assert!(same_track(
-            &track("Purple Rain", "Prince"),
-            &track("Purple Rain (Live)", "Prince")
-        ));
+        assert!(same_track(&track("Purple Rain", "Prince"), &track("Purple Rain (Remastered 2015)", "Prince")));
+        assert!(same_track(&track("Purple Rain", "Prince"), &track("Purple Rain (Live)", "Prince")));
     }
 
     #[test]
@@ -455,27 +360,17 @@ mod tests {
         let b = track("Slow Down", "Chris Linton & CADMIUM");
         assert!(same_track(&a, &b));
         // Ids from different providers.
-        let c = with_id(
-            track("Slow Down", "Chris Linton & CADMIUM"),
-            "acrcloud",
-            "x",
-        );
+        let c = with_id(track("Slow Down", "Chris Linton & CADMIUM"), "acrcloud", "x");
         assert!(same_track(&a, &c));
         // ISRC on one side only.
         let d = with_isrc(track("Slow Down", "CADMIUM"), "GBX1");
         assert!(!same_track(&d, &track("Other", "CADMIUM")));
-        assert!(same_track(
-            &with_isrc(track("Slow Down", "CADMIUM"), "GBX1"),
-            &track("Slow Down", "CADMIUM")
-        ));
+        assert!(same_track(&with_isrc(track("Slow Down", "CADMIUM"), "GBX1"), &track("Slow Down", "CADMIUM")));
     }
 
     #[test]
     fn separates_different_songs() {
-        assert!(!same_track(
-            &track("Purple Rain", "Prince"),
-            &track("Raspberry Beret", "Prince")
-        ));
+        assert!(!same_track(&track("Purple Rain", "Prince"), &track("Raspberry Beret", "Prince")));
         assert!(!same_track(&track("", "Prince"), &track("", "Prince")));
     }
 

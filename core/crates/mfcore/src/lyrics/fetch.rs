@@ -171,7 +171,7 @@ impl Fetcher<'_> {
             match status {
                 s if s.is_success() => {
                     let body = response.text().await.map_err(|e| FetchError::Network(e.without_url().to_string()))?;
-                    limits.limiter.success().await;
+                    limits.limiter.success();
                     return Ok(Fetched { body, from_cache: false });
                 }
                 StatusCode::NOT_FOUND => {
@@ -183,7 +183,7 @@ impl Fetcher<'_> {
                     self.cancel.sleep(wait).await.map_err(|_| FetchError::Canceled)?;
                 }
                 StatusCode::TOO_MANY_REQUESTS | StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => {
-                    let retry_in = limits.limiter.throttled(BREAKER_BASE, BREAKER_MAX, retry_after).await;
+                    let retry_in = limits.limiter.throttled(BREAKER_BASE, BREAKER_MAX, retry_after);
                     return Err(FetchError::Throttled { retry_in });
                 }
                 other => return Err(FetchError::Status(other.as_u16())),
@@ -194,7 +194,7 @@ impl Fetcher<'_> {
 
     /// The service signalled throttling inside a successful response.
     pub async fn throttled(&self, remote: Remote) -> FetchError {
-        let retry_in = remote.limits().limiter.throttled(BREAKER_BASE, BREAKER_MAX, None).await;
+        let retry_in = remote.limits().limiter.throttled(BREAKER_BASE, BREAKER_MAX, None);
         FetchError::Throttled { retry_in }
     }
 

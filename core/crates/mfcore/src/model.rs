@@ -19,8 +19,14 @@ pub enum Service {
     AmazonMusic,
     SoundCloud,
     Bandcamp,
+    Mixcloud,
+    Vimeo,
     TikTok,
     Instagram,
+    Facebook,
+    X,
+    Reddit,
+    Twitch,
     Shazam,
     Genius,
     Web,
@@ -268,14 +274,24 @@ pub enum NoMatchReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+#[allow(clippy::large_enum_variant)] // FFI value type; boxing would change the bindings.
 pub enum Outcome {
     /// A live session identified the recording.
-    Matched { track: Track },
+    Matched {
+        track: Track,
+    },
     /// Candidates were produced (see the last `Candidates` event).
-    Candidates { count: u32 },
+    Candidates {
+        count: u32,
+    },
     /// Link/file analysis finished.
-    Completed { identified: u32, total: u32 },
-    NoMatch { reason: NoMatchReason },
+    Completed {
+        identified: u32,
+        total: u32,
+    },
+    NoMatch {
+        reason: NoMatchReason,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
@@ -295,27 +311,62 @@ pub enum ErrorCode {
 /// Events pushed to a `SessionObserver`, in order, from engine threads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
 pub enum SessionEvent {
-    Started { session_id: String, kind: SessionKind },
+    Started {
+        session_id: String,
+        kind: SessionKind,
+    },
     /// `fraction` is set for phases with measurable progress (downloads).
-    Phase { phase: Phase, fraction: Option<f32> },
+    Phase {
+        phase: Phase,
+        fraction: Option<f32>,
+    },
     /// Analysis progress through a link or file.
-    Progress { analyzed_ms: u64, total_ms: u64, eta_ms: Option<u64> },
+    Progress {
+        analyzed_ms: u64,
+        total_ms: u64,
+        eta_ms: Option<u64>,
+    },
     /// Live input level, about 30 per second. Perceptual 0..=1: −60 dBFS maps to
     /// 0 and 0 dBFS to 1 (linear in dB in between).
-    Level { rms: f32, peak: f32 },
+    Level {
+        rms: f32,
+        peak: f32,
+    },
     /// Batched live pitch frames, about 10 batches per second.
-    Pitch { frames: Vec<PitchFrame> },
-    Source { info: SourceInfo },
+    Pitch {
+        frames: Vec<PitchFrame>,
+    },
+    Source {
+        info: SourceInfo,
+    },
     /// A playlist entry started.
-    Item { index: u32, count: u32, title: Option<String> },
+    Item {
+        index: u32,
+        count: u32,
+        title: Option<String>,
+    },
     /// Insert or replace (by id) a segment.
-    Segment { segment: Segment },
+    Segment {
+        segment: Segment,
+    },
     /// A segment was merged into another and should be removed.
-    SegmentRemoved { id: String },
-    Candidates { candidates: Vec<Candidate>, is_final: bool },
-    Notice { notice: Notice },
-    Finished { outcome: Outcome },
-    Failed { code: ErrorCode, message: String },
+    SegmentRemoved {
+        id: String,
+    },
+    Candidates {
+        candidates: Vec<Candidate>,
+        is_final: bool,
+    },
+    Notice {
+        notice: Notice,
+    },
+    Finished {
+        outcome: Outcome,
+    },
+    Failed {
+        code: ErrorCode,
+        message: String,
+    },
     /// The session was canceled by the app.
     Canceled,
 }

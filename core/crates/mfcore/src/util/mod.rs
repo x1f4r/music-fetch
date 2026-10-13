@@ -6,10 +6,7 @@ pub mod ratelimit;
 
 /// Current Unix time in milliseconds.
 pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 /// New random id (UUID v4, lowercase, hyphenated).

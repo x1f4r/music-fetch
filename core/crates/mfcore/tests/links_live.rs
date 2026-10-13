@@ -12,9 +12,7 @@ fn http() -> reqwest::Client {
 }
 
 async fn resolve(url: &str) -> Resolution {
-    links::resolve(&http(), url, "us", &CancelToken::new())
-        .await
-        .unwrap_or_else(|e| panic!("{url}: {e}"))
+    links::resolve(&http(), url, "us", &CancelToken::new()).await.unwrap_or_else(|e| panic!("{url}: {e}"))
 }
 
 fn tracks(resolution: Resolution) -> Vec<Track> {
@@ -34,26 +32,15 @@ async fn spotify_track_album_playlist() {
     let t = tracks(resolve("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT?si=x").await);
     assert_eq!(t[0].artist, "Rick Astley");
     assert!(t[0].preview_url.is_some());
-    assert!(
-        tracks(resolve("https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy").await).len() > 10
-    );
-    assert!(
-        tracks(resolve("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M").await).len()
-            >= 20
-    );
+    assert!(tracks(resolve("https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy").await).len() > 10);
+    assert!(tracks(resolve("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M").await).len() >= 20);
 }
 
 #[tokio::test]
 #[ignore = "live network"]
 async fn apple_deezer_tidal_amazon() {
-    let t = tracks(
-        resolve("https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421")
-            .await,
-    );
-    assert_eq!(
-        (t.len(), t[0].title.as_str()),
-        (1, "Never Gonna Give You Up")
-    );
+    let t = tracks(resolve("https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421").await);
+    assert_eq!((t.len(), t[0].title.as_str()), (1, "Never Gonna Give You Up"));
     let t = tracks(resolve("https://www.deezer.com/en/track/3135556").await);
     assert_eq!(t[0].isrc.as_deref(), Some("GBDUW0000059"));
     let t = tracks(resolve("https://tidal.com/browse/track/1781887").await);
@@ -89,17 +76,10 @@ async fn generic_page_and_short_link() {
 #[tokio::test]
 #[ignore = "live network"]
 async fn catalog_enrichment() {
-    let track = Track {
-        title: "Harder, Better, Faster, Stronger".into(),
-        artist: "Daft Punk".into(),
-        ..Track::default()
-    };
+    let track =
+        Track { title: "Harder, Better, Faster, Stronger".into(), artist: "Daft Punk".into(), ..Track::default() };
     let t = catalog::enrich(&http(), track, "us", &CancelToken::new()).await;
     assert_eq!(t.isrc.as_deref(), Some("GBDUW0000059"));
-    assert!(
-        t.links
-            .iter()
-            .any(|l| l.service == Service::Deezer && !l.is_search)
-    );
+    assert!(t.links.iter().any(|l| l.service == Service::Deezer && !l.is_search));
     assert!(t.artwork_url.is_some());
 }

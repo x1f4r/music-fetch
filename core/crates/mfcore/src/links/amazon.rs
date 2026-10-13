@@ -20,37 +20,22 @@ fn is_asin(s: &str) -> bool {
 pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Resolution> {
     let host = canonical::host_of(url);
     let parts = canonical::segments(url);
-    let track_asin = url
-        .query_pairs()
-        .find(|(k, v)| k == "trackAsin" && is_asin(v))
-        .map(|(_, v)| v.into_owned());
+    let track_asin = url.query_pairs().find(|(k, v)| k == "trackAsin" && is_asin(v)).map(|(_, v)| v.into_owned());
     match parts.as_slice() {
         ["tracks", asin] if is_asin(asin) => track(ctx, &host, asin).await,
-        ["albums", _] if track_asin.is_some() => {
-            track(ctx, &host, track_asin.as_deref().unwrap_or_default()).await
-        }
+        ["albums", _] if track_asin.is_some() => track(ctx, &host, track_asin.as_deref().unwrap_or_default()).await,
         ["albums", asin] if is_asin(asin) => album(ctx, url, asin).await,
-        _ => Err(MfError::UnsupportedLink {
-            message: "Only Amazon Music songs and albums are supported.".into(),
-        }),
+        _ => Err(MfError::UnsupportedLink { message: "Only Amazon Music songs and albums are supported.".into() }),
     }
 }
 
 async fn crawler_page(ctx: &Ctx<'_>, url: &str) -> Result<String> {
-    let page = fetch::get_page(
-        ctx.http,
-        url,
-        &PageRequest::new(SITE).agent(Agent::Crawler),
-        ctx.cancel,
-    )
-    .await?;
+    let page = fetch::get_page(ctx.http, url, &PageRequest::new(SITE).agent(Agent::Crawler), ctx.cancel).await?;
     Ok(fetch::require_success(page, SITE)?.body)
 }
 
 fn unreadable() -> MfError {
-    MfError::MediaUnavailable {
-        message: "Couldn't read this Amazon Music page.".into(),
-    }
+    MfError::MediaUnavailable { message: "Couldn't read this Amazon Music page.".into() }
 }
 
 async fn track(ctx: &Ctx<'_>, host: &str, asin: &str) -> Result<Resolution> {
@@ -64,14 +49,8 @@ async fn track(ctx: &Ctx<'_>, host: &str, asin: &str) -> Result<Resolution> {
         ..Track::default()
     };
     // The album page names the artist; it lives on the same Amazon host.
-    if let Some(album_url) = page
-        .album_url
-        .filter(|u| Url::parse(u).is_ok_and(|p| canonical::host_of(&p) == host))
-    {
-        match crawler_page(ctx, &album_url)
-            .await
-            .map(|html| parse_album_page(&html))
-        {
+    if let Some(album_url) = page.album_url.filter(|u| Url::parse(u).is_ok_and(|p| canonical::host_of(&p) == host)) {
+        match crawler_page(ctx, &album_url).await.map(|html| parse_album_page(&html)) {
             Ok(Some(album)) => {
                 track.artist = album.artist;
                 track.album = Some(album.title);
@@ -90,10 +69,7 @@ async fn track(ctx: &Ctx<'_>, host: &str, asin: &str) -> Result<Resolution> {
     source.uploader = Some(track.artist.clone()).filter(|a| !a.is_empty());
     source.thumbnail_url.clone_from(&track.artwork_url);
     source.duration_ms = track.duration_ms;
-    Ok(Resolution::Tracks {
-        source,
-        tracks: vec![track],
-    })
+    Ok(Resolution::Tracks { source, tracks: vec![track] })
 }
 
 async fn album(ctx: &Ctx<'_>, url: &Url, asin: &str) -> Result<Resolution> {
@@ -111,15 +87,8 @@ fn clean_image(url: &str) -> String {
     let Some(start) = url.find("/images/I/").map(|i| i + "/images/I/".len()) else {
         return url.to_string();
     };
-    let id: String = url[start..]
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '+')
-        .collect();
-    if id.is_empty() {
-        url.to_string()
-    } else {
-        format!("https://m.media-amazon.com/images/I/{id}.jpg")
-    }
+    let id: String = url[start..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '+').collect();
+    if id.is_empty() { url.to_string() } else { format!("https://m.media-amazon.com/images/I/{id}.jpg") }
 }
 
 /// Fields of a track page.
@@ -176,11 +145,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!(
-            "{}/tests/fixtures/links/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture")
+        std::fs::read_to_string(format!("{}/tests/fixtures/links/{name}", env!("CARGO_MANIFEST_DIR"))).expect("fixture")
     }
 
     #[test]
@@ -188,14 +153,8 @@ mod tests {
         let track = parse_track_page(&fixture("amazon_track.html")).expect("track");
         assert_eq!(track.title, "Alive");
         assert_eq!(track.duration_ms, Some(316_000));
-        assert_eq!(
-            track.album_url.as_deref(),
-            Some("https://music.amazon.com/albums/B000TDBNDG")
-        );
-        assert_eq!(
-            track.image.as_deref(),
-            Some("https://m.media-amazon.com/images/I/61EBamxG3SL.jpg")
-        );
+        assert_eq!(track.album_url.as_deref(), Some("https://music.amazon.com/albums/B000TDBNDG"));
+        assert_eq!(track.image.as_deref(), Some("https://m.media-amazon.com/images/I/61EBamxG3SL.jpg"));
         let album = parse_album_page(&fixture("amazon_album.html")).expect("album");
         assert_eq!(album.title, "Musique, Vol. 1");
         assert_eq!(album.artist, "Daft Punk");
@@ -209,9 +168,6 @@ mod tests {
         assert!(parse_album_page(generic).is_none());
         assert!(is_asin("B000TDFHJW"));
         assert!(!is_asin("B000TDFHJ"));
-        assert_eq!(
-            clean_image("https://example.com/x.jpg"),
-            "https://example.com/x.jpg"
-        );
+        assert_eq!(clean_image("https://example.com/x.jpg"), "https://example.com/x.jpg");
     }
 }

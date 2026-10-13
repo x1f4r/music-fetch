@@ -43,12 +43,9 @@ pub(super) struct VideoPage {
 
 pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Resolution> {
     let parts = canonical::segments(url);
-    let is_post =
-        parts.len() == 3 && parts[0].starts_with('@') && matches!(parts[1], "video" | "photo");
+    let is_post = parts.len() == 3 && parts[0].starts_with('@') && matches!(parts[1], "video" | "photo");
     if !is_post {
-        return Err(MfError::UnsupportedLink {
-            message: "This TikTok link doesn't point to a video.".into(),
-        });
+        return Err(MfError::UnsupportedLink { message: "This TikTok link doesn't point to a video.".into() });
     }
     let mut source = source_info(url, Site::TikTok);
     match fetch::get_page(ctx.http, url.as_str(), &PageRequest::new(SITE), ctx.cancel).await {
@@ -71,11 +68,7 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Resolution> {
         Err(MfError::Canceled) => return Err(MfError::Canceled),
         Err(e) => tracing::debug!("tiktok page failed: {e}"),
     }
-    Ok(Resolution::Media {
-        source,
-        url: url.to_string(),
-        direct: false,
-    })
+    Ok(Resolution::Media { source, url: url.to_string(), direct: false })
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {
@@ -94,27 +87,16 @@ pub(super) fn parse_page(html: &str) -> VideoPage {
     let Some(detail) = data.pointer("/__DEFAULT_SCOPE__/webapp.video-detail") else {
         return VideoPage::default();
     };
-    let status = detail
-        .get("statusCode")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+    let status = detail.get("statusCode").and_then(Value::as_i64).unwrap_or(0);
     let Some(item) = detail.pointer("/itemInfo/itemStruct") else {
-        return VideoPage {
-            missing: status != 0,
-            ..VideoPage::default()
-        };
+        return VideoPage { missing: status != 0, ..VideoPage::default() };
     };
     let music = item.get("music");
     let sound = music.map(|m| {
-        let dsp = m
-            .pointer("/tt2dsp/tt_to_dsp_song_infos")
-            .and_then(Value::as_array);
+        let dsp = m.pointer("/tt2dsp/tt_to_dsp_song_infos").and_then(Value::as_array);
         let dsp_id = |platform: u64| {
-            dsp.and_then(|list| {
-                list.iter()
-                    .find(|s| s.get("Platform").and_then(Value::as_u64) == Some(platform))
-            })
-            .and_then(|s| str_at(s, "/SongId"))
+            dsp.and_then(|list| list.iter().find(|s| s.get("Platform").and_then(Value::as_u64) == Some(platform)))
+                .and_then(|s| str_at(s, "/SongId"))
         };
         Sound {
             title: str_at(m, "/title"),
@@ -129,9 +111,7 @@ pub(super) fn parse_page(html: &str) -> VideoPage {
         title: str_at(item, "/desc").map(|d| truncate(&d, 200)),
         uploader: str_at(item, "/author/nickname").or_else(|| str_at(item, "/author/uniqueId")),
         thumbnail_url: str_at(item, "/video/cover"),
-        duration_ms: u64_at(item, "/video/duration")
-            .filter(|d| *d > 0)
-            .map(|d| d * 1000),
+        duration_ms: u64_at(item, "/video/duration").filter(|d| *d > 0).map(|d| d * 1000),
         sound,
         missing: false,
     }
@@ -151,17 +131,11 @@ pub(super) fn sound_track(sound: &Sound) -> Option<Track> {
     }
     if let Some(id) = &sound.apple_id {
         track.ids.insert("apple".into(), id.clone());
-        track.links.push(service_link(
-            Service::AppleMusic,
-            format!("https://music.apple.com/song/{id}"),
-        ));
+        track.links.push(service_link(Service::AppleMusic, format!("https://music.apple.com/song/{id}")));
     }
     if let Some(id) = &sound.spotify_id {
         track.ids.insert("spotify".into(), id.clone());
-        track.links.push(service_link(
-            Service::Spotify,
-            format!("https://open.spotify.com/track/{id}"),
-        ));
+        track.links.push(service_link(Service::Spotify, format!("https://open.spotify.com/track/{id}")));
     }
     Some(finish_track(track))
 }
@@ -202,8 +176,7 @@ async fn lookup_title(ctx: &Ctx<'_>, sound: &Sound) -> Result<Option<Track>> {
         }
     }
     if let Some(id) = &sound.apple_id {
-        let results =
-            itunes::lookup(ctx.http, id, &ctx.country, false, ITUNES_QUEUE, ctx.cancel).await?;
+        let results = itunes::lookup(ctx.http, id, &ctx.country, false, ITUNES_QUEUE, ctx.cancel).await?;
         return Ok(results.iter().find_map(itunes::track_from_json));
     }
     Ok(None)
@@ -214,11 +187,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!(
-            "{}/tests/fixtures/links/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture")
+        std::fs::read_to_string(format!("{}/tests/fixtures/links/{name}", env!("CARGO_MANIFEST_DIR"))).expect("fixture")
     }
 
     #[test]
@@ -236,10 +205,7 @@ mod tests {
         let track = sound_track(&sound).expect("hint");
         assert_eq!(track.title, "Touch");
         assert_eq!(track.artist, "KATSEYE");
-        assert_eq!(
-            track.ids.get("spotify").map(String::as_str),
-            Some("6aJn7Cst74cj4lNIiPRgav")
-        );
+        assert_eq!(track.ids.get("spotify").map(String::as_str), Some("6aJn7Cst74cj4lNIiPRgav"));
         assert_eq!(track.links.len(), 2);
         assert!(track.identity_key.starts_with("am::"));
     }

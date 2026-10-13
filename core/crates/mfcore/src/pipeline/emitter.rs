@@ -12,8 +12,7 @@ use parking_lot::Mutex;
 use crate::error::MfError;
 use crate::identity;
 use crate::model::{
-    Candidate, Notice, Outcome, Phase, PitchFrame, Segment, SessionEvent, SessionKind, SessionStatus, SourceInfo,
-    Track,
+    Candidate, Notice, Outcome, Phase, PitchFrame, Segment, SessionEvent, SessionKind, SessionStatus, SourceInfo, Track,
 };
 use crate::platform::SessionObserver;
 use crate::store::{SessionUpdate, Store};
@@ -48,7 +47,13 @@ impl Emitter {
                 session_id: session_id.to_string(),
                 observer,
                 store,
-                state: Mutex::new(State { started: false, terminal: false, last_level: None, pitch: Vec::new(), last_pitch: None }),
+                state: Mutex::new(State {
+                    started: false,
+                    terminal: false,
+                    last_level: None,
+                    pitch: Vec::new(),
+                    last_pitch: None,
+                }),
             }),
         }
     }
@@ -223,7 +228,8 @@ impl Emitter {
             return;
         }
         self.flush_pitch();
-        let update = SessionUpdate { status: Some(SessionStatus::Failed), error: Some(error.to_string()), ..Default::default() };
+        let update =
+            SessionUpdate { status: Some(SessionStatus::Failed), error: Some(error.to_string()), ..Default::default() };
         self.persist("fail", self.inner.store.update_session(&self.inner.session_id, update));
         self.terminal(SessionEvent::Failed { code: error.code(), message: error.to_string() });
     }

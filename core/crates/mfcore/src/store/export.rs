@@ -49,9 +49,7 @@ fn music_segments(detail: &SessionDetail) -> Vec<&Segment> {
 /// True for one recording whose segments carry positions on its timeline.
 fn has_timeline(detail: &SessionDetail, segments: &[&Segment]) -> bool {
     let single_item = detail.source.as_ref().is_none_or(|s| s.item_count <= 1)
-        && segments
-            .windows(2)
-            .all(|w| w[0].item_index == w[1].item_index);
+        && segments.windows(2).all(|w| w[0].item_index == w[1].item_index);
     single_item && segments.iter().any(|s| s.end_ms > 0)
 }
 
@@ -68,20 +66,12 @@ fn one_line(text: &str) -> String {
 }
 
 fn or_unknown(text: String) -> String {
-    if text.is_empty() {
-        UNKNOWN.to_string()
-    } else {
-        text
-    }
+    if text.is_empty() { UNKNOWN.to_string() } else { text }
 }
 
 fn artist_of(track: &Track) -> String {
     let artist = one_line(&track.artist);
-    if artist.is_empty() {
-        one_line(&track.artists.join(", "))
-    } else {
-        artist
-    }
+    if artist.is_empty() { one_line(&track.artists.join(", ")) } else { artist }
 }
 
 fn artist_title(track: Option<&Track>) -> (String, String) {
@@ -92,11 +82,7 @@ fn artist_title(track: Option<&Track>) -> (String, String) {
 }
 
 fn segment_track(segment: &Segment) -> Option<&Track> {
-    if segment.kind == SegmentKind::Track {
-        segment.track.as_ref()
-    } else {
-        None
-    }
+    if segment.kind == SegmentKind::Track { segment.track.as_ref() } else { None }
 }
 
 fn display_name(track: Option<&Track>) -> String {
@@ -108,11 +94,7 @@ fn display_name(track: Option<&Track>) -> String {
 fn clock(ms: u64) -> String {
     let secs = ms / 1000;
     let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m:02}:{s:02}")
-    }
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m:02}:{s:02}") }
 }
 
 /// `hh:mm:ss`, unambiguous for spreadsheets.
@@ -176,11 +158,7 @@ struct CsvRow<'a> {
 }
 
 fn csv_row(out: &mut String, index: usize, row: &CsvRow<'_>) {
-    let _ = write!(
-        out,
-        "{index},{},{},{},{},",
-        row.start, row.end, row.kind, row.tier
-    );
+    let _ = write!(out, "{index},{},{},{},{},", row.start, row.end, row.kind, row.tier);
     if let Some(confidence) = row.confidence {
         let _ = write!(out, "{confidence:.2}");
     }
@@ -195,15 +173,8 @@ fn csv_row(out: &mut String, index: usize, row: &CsvRow<'_>) {
         out.push(',');
         csv_text(out, value);
     }
-    let links: Vec<&str> = track
-        .map(|t| {
-            t.links
-                .iter()
-                .filter(|l| !l.is_search)
-                .map(|l| l.url.as_str())
-                .collect()
-        })
-        .unwrap_or_default();
+    let links: Vec<&str> =
+        track.map(|t| t.links.iter().filter(|l| !l.is_search).map(|l| l.url.as_str()).collect()).unwrap_or_default();
     out.push(',');
     csv_text(out, &links.join(" | "));
     out.push_str("\r\n");
@@ -270,11 +241,7 @@ fn cue_quote(text: &str) -> String {
 }
 
 fn cue_time(frames: u64) -> String {
-    let (m, s, f) = (
-        frames / (CUE_FPS * 60),
-        frames / CUE_FPS % 60,
-        frames % CUE_FPS,
-    );
+    let (m, s, f) = (frames / (CUE_FPS * 60), frames / CUE_FPS % 60, frames % CUE_FPS);
     format!("{m:02}:{s:02}:{f:02}")
 }
 
@@ -282,27 +249,19 @@ fn cue_time(frames: u64) -> String {
 /// otherwise the source title (with `.mp3` unless it already has an extension).
 fn cue_file(detail: &SessionDetail, title: &str) -> (String, &'static str) {
     let local = match detail.entry.kind {
-        SessionKind::File => detail
-            .entry
-            .source_url
-            .as_deref()
-            .and_then(|p| Path::new(p).file_name()),
+        SessionKind::File => detail.entry.source_url.as_deref().and_then(|p| Path::new(p).file_name()),
         _ => None,
     }
     .and_then(|name| name.to_str())
     .map(str::to_string);
     let name = local.unwrap_or_else(|| one_line(title).replace(['/', '\\'], "-"));
-    let ext = Path::new(&name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase);
+    let ext = Path::new(&name).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
     match ext.as_deref() {
         Some("mp3") => (name, "MP3"),
         Some("aif" | "aiff") => (name, "AIFF"),
-        Some(
-            "wav" | "flac" | "m4a" | "aac" | "alac" | "ogg" | "opus" | "webm" | "mp4" | "mkv"
-            | "mov",
-        ) => (name, "WAVE"),
+        Some("wav" | "flac" | "m4a" | "aac" | "alac" | "ogg" | "opus" | "webm" | "mp4" | "mkv" | "mov") => {
+            (name, "WAVE")
+        }
         _ => (format!("{name}.mp3"), "MP3"),
     }
 }
@@ -310,20 +269,12 @@ fn cue_file(detail: &SessionDetail, title: &str) -> (String, &'static str) {
 fn cue(detail: &SessionDetail) -> Result<String> {
     let music = music_segments(detail);
     if !has_timeline(detail, &music) {
-        return Err(MfError::invalid(
-            "Only a recording with a timeline can be exported as a cue sheet.",
-        ));
+        return Err(MfError::invalid("Only a recording with a timeline can be exported as a cue sheet."));
     }
     let source = detail.source.as_ref();
-    let title = source
-        .and_then(|s| s.title.as_deref())
-        .filter(|t| !t.trim().is_empty())
-        .unwrap_or(&detail.entry.title);
+    let title = source.and_then(|s| s.title.as_deref()).filter(|t| !t.trim().is_empty()).unwrap_or(&detail.entry.title);
     let mut out = String::new();
-    if let Some(uploader) = source
-        .and_then(|s| s.uploader.as_deref())
-        .filter(|u| !u.trim().is_empty())
-    {
+    if let Some(uploader) = source.and_then(|s| s.uploader.as_deref()).filter(|u| !u.trim().is_empty()) {
         let _ = writeln!(out, "PERFORMER {}", cue_quote(uploader));
     }
     let _ = writeln!(out, "TITLE {}", cue_quote(title));
@@ -351,27 +302,13 @@ fn cue(detail: &SessionDetail) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{
-        Candidate, CandidateTier, LibraryEntry, Service, ServiceLink, SessionStatus, SourceInfo,
-        Tier,
-    };
+    use crate::model::{Candidate, CandidateTier, LibraryEntry, Service, ServiceLink, SessionStatus, SourceInfo, Tier};
 
     fn track(artist: &str, title: &str) -> Track {
-        Track {
-            title: title.into(),
-            artist: artist.into(),
-            ..Default::default()
-        }
+        Track { title: title.into(), artist: artist.into(), ..Default::default() }
     }
 
-    fn segment(
-        id: &str,
-        item: u32,
-        start: u64,
-        end: u64,
-        kind: SegmentKind,
-        track: Option<Track>,
-    ) -> Segment {
+    fn segment(id: &str, item: u32, start: u64, end: u64, kind: SegmentKind, track: Option<Track>) -> Segment {
         let confidence = if track.is_some() { 0.88 } else { 0.0 };
         Segment {
             id: id.into(),
@@ -381,22 +318,14 @@ mod tests {
             kind,
             track,
             confidence,
-            tier: if confidence > 0.0 {
-                Tier::Likely
-            } else {
-                Tier::Unknown
-            },
+            tier: if confidence > 0.0 { Tier::Likely } else { Tier::Unknown },
             evidence: vec![],
             alternates: vec![],
             source_url: None,
         }
     }
 
-    fn detail(
-        kind: SessionKind,
-        segments: Vec<Segment>,
-        source: Option<SourceInfo>,
-    ) -> SessionDetail {
+    fn detail(kind: SessionKind, segments: Vec<Segment>, source: Option<SourceInfo>) -> SessionDetail {
         SessionDetail {
             entry: LibraryEntry {
                 id: "s1".into(),
@@ -435,29 +364,14 @@ mod tests {
                 url: "https://open.spotify.com/track/abc".into(),
                 is_search: false,
             },
-            ServiceLink {
-                service: Service::Deezer,
-                url: "https://www.deezer.com/search/x".into(),
-                is_search: true,
-            },
-            ServiceLink {
-                service: Service::Deezer,
-                url: "https://www.deezer.com/track/1".into(),
-                is_search: false,
-            },
+            ServiceLink { service: Service::Deezer, url: "https://www.deezer.com/search/x".into(), is_search: true },
+            ServiceLink { service: Service::Deezer, url: "https://www.deezer.com/track/1".into(), is_search: false },
         ];
         detail(
             SessionKind::Link,
             vec![
                 // Out of order on purpose: exports sort by position.
-                segment(
-                    "c",
-                    0,
-                    3_725_400,
-                    3_900_000,
-                    SegmentKind::Track,
-                    Some(track("Artist, Jr.", "=Title \"Q\"")),
-                ),
+                segment("c", 0, 3_725_400, 3_900_000, SegmentKind::Track, Some(track("Artist, Jr.", "=Title \"Q\""))),
                 segment("a", 0, 0, 195_000, SegmentKind::Track, Some(first)),
                 segment("b", 0, 195_000, 3_570_500, SegmentKind::Unidentified, None),
                 segment("s", 0, 3_570_500, 3_725_400, SegmentKind::Speech, None),
@@ -483,24 +397,11 @@ mod tests {
             vec![
                 segment("1", 1, 0, 0, SegmentKind::Track, Some(track("B", "Second"))),
                 segment("0", 0, 0, 0, SegmentKind::Track, Some(track("A", "First"))),
-                segment(
-                    "2",
-                    2,
-                    0,
-                    0,
-                    SegmentKind::Track,
-                    Some(track("", "No Artist")),
-                ),
+                segment("2", 2, 0, 0, SegmentKind::Track, Some(track("", "No Artist"))),
             ],
-            Some(SourceInfo {
-                item_count: 3,
-                ..Default::default()
-            }),
+            Some(SourceInfo { item_count: 3, ..Default::default() }),
         );
-        assert_eq!(
-            render(&playlist, ExportFormat::Text).unwrap(),
-            "1. A - First\n2. B - Second\n3. ID - No Artist\n"
-        );
+        assert_eq!(render(&playlist, ExportFormat::Text).unwrap(), "1. A - First\n2. B - Second\n3. ID - No Artist\n");
     }
 
     #[test]
@@ -508,29 +409,12 @@ mod tests {
         let playlist = detail(
             SessionKind::Link,
             vec![
-                segment(
-                    "a",
-                    0,
-                    10_000,
-                    50_000,
-                    SegmentKind::Track,
-                    Some(track("A", "One")),
-                ),
-                segment(
-                    "b",
-                    1,
-                    5_000,
-                    40_000,
-                    SegmentKind::Track,
-                    Some(track("B", "Two")),
-                ),
+                segment("a", 0, 10_000, 50_000, SegmentKind::Track, Some(track("A", "One"))),
+                segment("b", 1, 5_000, 40_000, SegmentKind::Track, Some(track("B", "Two"))),
             ],
             None,
         );
-        assert_eq!(
-            render(&playlist, ExportFormat::Text).unwrap(),
-            "1. A - One\n2. B - Two\n"
-        );
+        assert_eq!(render(&playlist, ExportFormat::Text).unwrap(), "1. A - One\n2. B - Two\n");
     }
 
     #[test]
@@ -539,10 +423,7 @@ mod tests {
         let mut answer = track("", "Song");
         answer.artists = vec!["X".into(), "Y".into()];
         listen.entry.track = Some(answer);
-        assert_eq!(
-            render(&listen, ExportFormat::Text).unwrap(),
-            "X, Y - Song\n"
-        );
+        assert_eq!(render(&listen, ExportFormat::Text).unwrap(), "X, Y - Song\n");
 
         let mut hum = detail(SessionKind::Hum, vec![], None);
         hum.candidates = vec![
@@ -561,34 +442,18 @@ mod tests {
                 alignment: None,
             },
         ];
-        assert_eq!(
-            render(&hum, ExportFormat::Text).unwrap(),
-            "1. A - One\n2. B - Two\n"
-        );
-        assert_eq!(
-            render(&detail(SessionKind::Hum, vec![], None), ExportFormat::Text).unwrap(),
-            ""
-        );
+        assert_eq!(render(&hum, ExportFormat::Text).unwrap(), "1. A - One\n2. B - Two\n");
+        assert_eq!(render(&detail(SessionKind::Hum, vec![], None), ExportFormat::Text).unwrap(), "");
     }
 
     #[test]
     fn text_strips_line_breaks_from_metadata() {
         let d = detail(
             SessionKind::Link,
-            vec![segment(
-                "a",
-                0,
-                0,
-                1000,
-                SegmentKind::Track,
-                Some(track("A\nB", "T\r\n2")),
-            )],
+            vec![segment("a", 0, 0, 1000, SegmentKind::Track, Some(track("A\nB", "T\r\n2")))],
             None,
         );
-        assert_eq!(
-            render(&d, ExportFormat::Text).unwrap(),
-            "[00:00] A B - T 2\n"
-        );
+        assert_eq!(render(&d, ExportFormat::Text).unwrap(), "[00:00] A B - T 2\n");
     }
 
     #[test]
@@ -605,14 +470,7 @@ mod tests {
     fn csv_collection_has_no_times() {
         let playlist = detail(
             SessionKind::Link,
-            vec![segment(
-                "0",
-                0,
-                0,
-                0,
-                SegmentKind::Track,
-                Some(track("A", "Line\nBreak")),
-            )],
+            vec![segment("0", 0, 0, 0, SegmentKind::Track, Some(track("A", "Line\nBreak")))],
             None,
         );
         let expected = "index,start,end,kind,tier,confidence,title,artist,album,isrc,links\r\n\
@@ -681,27 +539,10 @@ FILE \"Boiler Room: Berlin 'Live'.mp3\" MP3
         let d = detail(
             SessionKind::File,
             vec![
-                segment(
-                    "a",
-                    0,
-                    1_013,
-                    5_000,
-                    SegmentKind::Track,
-                    Some(track("A", "One")),
-                ),
-                segment(
-                    "b",
-                    0,
-                    1_013,
-                    5_000,
-                    SegmentKind::Track,
-                    Some(track("B", "Two")),
-                ),
+                segment("a", 0, 1_013, 5_000, SegmentKind::Track, Some(track("A", "One"))),
+                segment("b", 0, 1_013, 5_000, SegmentKind::Track, Some(track("B", "Two"))),
             ],
-            Some(SourceInfo {
-                title: Some("ignored".into()),
-                ..Default::default()
-            }),
+            Some(SourceInfo { title: Some("ignored".into()), ..Default::default() }),
         );
         let mut d = d;
         d.entry.source_url = Some("/Users/me/Music/Set 01.flac".into());
@@ -713,29 +554,10 @@ FILE \"Boiler Room: Berlin 'Live'.mp3\" MP3
 
     #[test]
     fn cue_requires_a_timeline() {
-        let playlist = detail(
-            SessionKind::Link,
-            vec![segment(
-                "0",
-                0,
-                0,
-                0,
-                SegmentKind::Track,
-                Some(track("A", "One")),
-            )],
-            None,
-        );
-        assert!(matches!(
-            render(&playlist, ExportFormat::Cue),
-            Err(MfError::InvalidInput { .. })
-        ));
-        assert!(
-            render(
-                &detail(SessionKind::Listen, vec![], None),
-                ExportFormat::Cue
-            )
-            .is_err()
-        );
+        let playlist =
+            detail(SessionKind::Link, vec![segment("0", 0, 0, 0, SegmentKind::Track, Some(track("A", "One")))], None);
+        assert!(matches!(render(&playlist, ExportFormat::Cue), Err(MfError::InvalidInput { .. })));
+        assert!(render(&detail(SessionKind::Listen, vec![], None), ExportFormat::Cue).is_err());
     }
 
     #[test]

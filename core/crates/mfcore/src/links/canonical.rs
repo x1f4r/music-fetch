@@ -57,19 +57,15 @@ pub const SHORTENER_HOSTS: &[&str] = &[
 ];
 
 /// Redirect wrappers whose target sits in a query parameter.
-const WRAPPER_HOSTS: &[(&str, &str)] = &[
-    ("l.instagram.com", "u"),
-    ("l.facebook.com", "u"),
-    ("lm.facebook.com", "u"),
-];
+const WRAPPER_HOSTS: &[(&str, &str)] = &[("l.instagram.com", "u"), ("l.facebook.com", "u"), ("lm.facebook.com", "u")];
 
 /// Top-level domains accepted for a bare host without a path ("example.com").
 /// Other bare tokens with a dot ("song.mp3", "Mr.Brightside") are not links
 /// unless they have a path, start with "www." or name a known site.
 const COMMON_TLDS: &[&str] = &[
-    "app", "at", "au", "be", "biz", "br", "ca", "ch", "co", "com", "de", "dev", "dk", "es", "eu",
-    "fi", "fm", "fr", "info", "io", "it", "jp", "kr", "link", "ly", "me", "music", "net", "nl",
-    "no", "nz", "online", "org", "page", "pl", "pt", "ru", "se", "site", "to", "tv", "uk", "us",
+    "app", "at", "au", "be", "biz", "br", "ca", "ch", "co", "com", "de", "dev", "dk", "es", "eu", "fi", "fm", "fr",
+    "info", "io", "it", "jp", "kr", "link", "ly", "me", "music", "net", "nl", "no", "nz", "online", "org", "page",
+    "pl", "pt", "ru", "se", "site", "to", "tv", "uk", "us",
 ];
 
 /// True when `text` (trimmed) is an http(s) URL or a bare domain link, or shared
@@ -95,10 +91,7 @@ pub fn extract_url(text: &str) -> Option<String> {
         let has_path = !rest.is_empty() && rest != "/";
         // In running text only accept domains with a path; a lone token may be a bare host.
         if (has_path || single) && is_bare_domain(host, has_path) {
-            Url::parse(&format!("https://{token}"))
-                .ok()
-                .filter(|u| u.host_str().is_some())
-                .map(|u| u.to_string())
+            Url::parse(&format!("https://{token}")).ok().filter(|u| u.host_str().is_some()).map(|u| u.to_string())
         } else {
             None
         }
@@ -115,19 +108,11 @@ fn find_explicit_url(text: &str) -> Option<String> {
             continue;
         }
         // Only at a word start ("xhttp://" is not a link).
-        if pos > 0
-            && text[..pos]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c.is_alphanumeric())
-        {
+        if pos > 0 && text[..pos].chars().next_back().is_some_and(|c| c.is_alphanumeric()) {
             continue;
         }
         let end = text[pos..]
-            .find(|c: char| {
-                c.is_whitespace()
-                    || matches!(c, '<' | '>' | '"' | '`' | '|' | '{' | '}' | '\\' | '^')
-            })
+            .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '`' | '|' | '{' | '}' | '\\' | '^'))
             .map_or(text.len(), |e| pos + e);
         let candidate = trim_token(&text[pos..end]);
         if let Ok(url) = Url::parse(candidate)
@@ -189,8 +174,7 @@ fn is_bare_domain(host_port: &str, has_path: bool) -> bool {
         return false;
     }
     let tld = labels[labels.len() - 1].to_ascii_lowercase();
-    let tld_ok =
-        (tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())) || tld.starts_with("xn--");
+    let tld_ok = (tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())) || tld.starts_with("xn--");
     if !tld_ok {
         return false;
     }
@@ -217,8 +201,7 @@ pub(crate) fn parse_http_url(input: &str) -> Result<Url> {
         if !is_bare_domain(host, !rest.is_empty()) {
             return Err(MfError::invalid("That doesn't look like a link."));
         }
-        Url::parse(&format!("https://{input}"))
-            .map_err(|_| MfError::invalid("That link isn't valid."))?
+        Url::parse(&format!("https://{input}")).map_err(|_| MfError::invalid("That link isn't valid."))?
     };
     if url.host_str().is_none_or(str::is_empty) {
         return Err(MfError::invalid("That link has no website in it."));
@@ -235,10 +218,7 @@ pub fn canonicalize(url: &str) -> Result<String> {
 
 /// Lowercase host without a trailing dot.
 pub(crate) fn host_of(url: &Url) -> String {
-    url.host_str()
-        .unwrap_or_default()
-        .trim_end_matches('.')
-        .to_ascii_lowercase()
+    url.host_str().unwrap_or_default().trim_end_matches('.').to_ascii_lowercase()
 }
 
 /// True when `url` must be expanded over the network before it can be routed.
@@ -250,9 +230,7 @@ pub(crate) fn is_shortener(url: &Url) -> bool {
     let parts = segments(url);
     match host.as_str() {
         // TikTok and Reddit share links: /t/<code>, /r/<sub>/s/<code>.
-        "www.tiktok.com" | "tiktok.com" | "m.tiktok.com" => {
-            parts.first() == Some(&"t") && parts.len() == 2
-        }
+        "www.tiktok.com" | "tiktok.com" | "m.tiktok.com" => parts.first() == Some(&"t") && parts.len() == 2,
         "www.reddit.com" | "reddit.com" => parts.len() == 4 && parts[0] == "r" && parts[2] == "s",
         _ => false,
     }
@@ -261,19 +239,14 @@ pub(crate) fn is_shortener(url: &Url) -> bool {
 /// The target of a redirect wrapper such as `l.instagram.com/?u=<url>`.
 pub(crate) fn unwrap_wrapper(url: &Url) -> Option<Url> {
     let host = host_of(url);
-    let key = WRAPPER_HOSTS
-        .iter()
-        .find(|(h, _)| *h == host)
-        .map(|(_, k)| *k)?;
+    let key = WRAPPER_HOSTS.iter().find(|(h, _)| *h == host).map(|(_, k)| *k)?;
     url.query_pairs()
         .find(|(k, v)| k == key && (v.starts_with("http://") || v.starts_with("https://")))
         .and_then(|(_, v)| Url::parse(&v).ok())
 }
 
 pub(crate) fn segments(url: &Url) -> Vec<&str> {
-    url.path_segments()
-        .map(|s| s.filter(|p| !p.is_empty()).collect())
-        .unwrap_or_default()
+    url.path_segments().map(|s| s.filter(|p| !p.is_empty()).collect()).unwrap_or_default()
 }
 
 fn is_tracking(key: &str) -> bool {
@@ -299,9 +272,7 @@ fn build(scheme: &str, authority: &str, path: &str, query: &[(String, String)]) 
     }
     let mut out = format!("{scheme}://{authority}{path}");
     if !query.is_empty() {
-        let encoded = url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(query)
-            .finish();
+        let encoded = url::form_urlencoded::Serializer::new(String::new()).extend_pairs(query).finish();
         out.push('?');
         out.push_str(&encoded);
     }
@@ -347,10 +318,7 @@ fn canonical_at_depth(url: &Url, depth: u8) -> String {
         twitch,
         shortener,
     ];
-    normalizers
-        .iter()
-        .find_map(|f| f(url, &host))
-        .unwrap_or_else(|| generic(url, &host))
+    normalizers.iter().find_map(|f| f(url, &host)).unwrap_or_else(|| generic(url, &host))
 }
 
 fn generic(url: &Url, host: &str) -> String {
@@ -358,12 +326,7 @@ fn generic(url: &Url, host: &str) -> String {
         Some(port) => format!("{}:{port}", host_display(url, host)),
         None => host_display(url, host),
     };
-    build(
-        url.scheme(),
-        &authority,
-        url.path(),
-        &filtered_query(url, None),
-    )
+    build(url.scheme(), &authority, url.path(), &filtered_query(url, None))
 }
 
 /// IPv6 literals keep their brackets.
@@ -376,9 +339,7 @@ fn host_display(url: &Url, host: &str) -> String {
 
 /// Shortener links stay as they are (minus tracking) until expanded.
 fn shortener(url: &Url, host: &str) -> Option<String> {
-    SHORTENER_HOSTS
-        .contains(&host)
-        .then(|| https(host, url.path(), &filtered_query(url, None)))
+    SHORTENER_HOSTS.contains(&host).then(|| https(host, url.path(), &filtered_query(url, None)))
 }
 
 /// The video id of a single-video YouTube link (`watch?v=`, `youtu.be/`,
@@ -393,30 +354,20 @@ pub(crate) fn youtube_video_id(url: &Url) -> Option<String> {
         return None;
     }
     if url.path() == "/watch" {
-        return url
-            .query_pairs()
-            .find(|(k, v)| k == "v" && !v.is_empty())
-            .map(|(_, v)| v.into_owned());
+        return url.query_pairs().find(|(k, v)| k == "v" && !v.is_empty()).map(|(_, v)| v.into_owned());
     }
     match parts.as_slice() {
-        [kind, id, ..] if matches!(*kind, "shorts" | "embed" | "live" | "v") => {
-            Some((*id).to_string())
-        }
+        [kind, id, ..] if matches!(*kind, "shorts" | "embed" | "live" | "v") => Some((*id).to_string()),
         _ => None,
     }
 }
 
 fn youtube(url: &Url, host: &str) -> Option<String> {
-    let is_youtube =
-        host == "youtu.be" || host.contains("youtube.") || host.ends_with("youtube-nocookie.com");
+    let is_youtube = host == "youtu.be" || host.contains("youtube.") || host.ends_with("youtube-nocookie.com");
     if !is_youtube {
         return None;
     }
-    let canonical_host = if host == "music.youtube.com" {
-        "music.youtube.com"
-    } else {
-        "www.youtube.com"
-    };
+    let canonical_host = if host == "music.youtube.com" { "music.youtube.com" } else { "www.youtube.com" };
     if let Some(id) = youtube_video_id(url) {
         // Radio/mix lists (`list=RD…&start_radio=1`) and every other extra are dropped.
         let mut query = vec![("v".to_string(), id)];
@@ -424,88 +375,53 @@ fn youtube(url: &Url, host: &str) -> Option<String> {
         return Some(https(canonical_host, "/watch", &query));
     }
     if url.path() == "/playlist" {
-        return Some(https(
-            canonical_host,
-            "/playlist",
-            &filtered_query(url, Some(&["list", "index"][..])),
-        ));
+        return Some(https(canonical_host, "/playlist", &filtered_query(url, Some(&["list", "index"][..]))));
     }
-    let canonical_host = if matches!(host, "youtube.com" | "www.youtube.com" | "m.youtube.com") {
-        "www.youtube.com"
-    } else {
-        host
-    };
-    Some(https(
-        canonical_host,
-        url.path(),
-        &filtered_query(url, None),
-    ))
+    let canonical_host =
+        if matches!(host, "youtube.com" | "www.youtube.com" | "m.youtube.com") { "www.youtube.com" } else { host };
+    Some(https(canonical_host, url.path(), &filtered_query(url, None)))
 }
 
 fn instagram(url: &Url, host: &str) -> Option<String> {
     if !host.contains("instagram.") {
         return None;
     }
-    let canonical_host = if matches!(
-        host,
-        "instagram.com" | "www.instagram.com" | "m.instagram.com"
-    ) {
+    let canonical_host = if matches!(host, "instagram.com" | "www.instagram.com" | "m.instagram.com") {
         "www.instagram.com"
     } else {
         host
     };
     let parts = segments(url);
     if parts.len() >= 2 && matches!(parts[0], "p" | "reel" | "reels" | "tv") {
-        return Some(https(
-            canonical_host,
-            &join(&parts[..2]),
-            &filtered_query(url, Some(&["img_index"][..])),
-        ));
+        return Some(https(canonical_host, &join(&parts[..2]), &filtered_query(url, Some(&["img_index"][..]))));
     }
-    Some(https(
-        canonical_host,
-        url.path(),
-        &filtered_query(url, None),
-    ))
+    Some(https(canonical_host, url.path(), &filtered_query(url, None)))
 }
 
 fn tiktok(url: &Url, host: &str) -> Option<String> {
     if !host.contains("tiktok.") {
         return None;
     }
-    let canonical_host = if matches!(host, "tiktok.com" | "www.tiktok.com" | "m.tiktok.com") {
-        "www.tiktok.com"
-    } else {
-        host
-    };
+    let canonical_host =
+        if matches!(host, "tiktok.com" | "www.tiktok.com" | "m.tiktok.com") { "www.tiktok.com" } else { host };
     let parts = segments(url);
-    let path =
-        if parts.len() >= 3 && parts[0].starts_with('@') && matches!(parts[1], "video" | "photo") {
-            join(&parts[..3])
-        } else {
-            url.path().to_string()
-        };
+    let path = if parts.len() >= 3 && parts[0].starts_with('@') && matches!(parts[1], "video" | "photo") {
+        join(&parts[..3])
+    } else {
+        url.path().to_string()
+    };
     Some(https(canonical_host, &path, &[]))
 }
 
 fn x_twitter(url: &Url, host: &str) -> Option<String> {
     if !matches!(
         host,
-        "twitter.com"
-            | "www.twitter.com"
-            | "mobile.twitter.com"
-            | "x.com"
-            | "www.x.com"
-            | "mobile.x.com"
+        "twitter.com" | "www.twitter.com" | "mobile.twitter.com" | "x.com" | "www.x.com" | "mobile.x.com"
     ) {
         return None;
     }
     let parts = segments(url);
-    let path = if parts.len() >= 3 && parts[1] == "status" {
-        join(&parts[..3])
-    } else {
-        url.path().to_string()
-    };
+    let path = if parts.len() >= 3 && parts[1] == "status" { join(&parts[..3]) } else { url.path().to_string() };
     Some(https("x.com", &path, &[]))
 }
 
@@ -513,10 +429,8 @@ fn spotify(url: &Url, host: &str) -> Option<String> {
     if !host.contains("spotify.") || SHORTENER_HOSTS.contains(&host) {
         return None;
     }
-    let canonical_host = if matches!(
-        host,
-        "spotify.com" | "www.spotify.com" | "open.spotify.com" | "play.spotify.com"
-    ) {
+    let canonical_host = if matches!(host, "spotify.com" | "www.spotify.com" | "open.spotify.com" | "play.spotify.com")
+    {
         "open.spotify.com"
     } else {
         host
@@ -528,15 +442,8 @@ fn spotify(url: &Url, host: &str) -> Option<String> {
     if parts.first() == Some(&"embed") {
         parts.remove(0);
     }
-    let entity = matches!(
-        parts.first(),
-        Some(&("track" | "album" | "playlist" | "artist" | "episode" | "show"))
-    );
-    let query = if entity {
-        Vec::new()
-    } else {
-        filtered_query(url, None)
-    };
+    let entity = matches!(parts.first(), Some(&("track" | "album" | "playlist" | "artist" | "episode" | "show")));
+    let query = if entity { Vec::new() } else { filtered_query(url, None) };
     Some(https(canonical_host, &join(&parts), &query))
 }
 
@@ -551,36 +458,21 @@ fn apple_music(url: &Url, host: &str) -> Option<String> {
     ) {
         return None;
     }
-    Some(https(
-        "music.apple.com",
-        url.path(),
-        &filtered_query(url, Some(&["i"][..])),
-    ))
+    Some(https("music.apple.com", url.path(), &filtered_query(url, Some(&["i"][..]))))
 }
 
 fn deezer(url: &Url, host: &str) -> Option<String> {
     if !host.contains("deezer.") || SHORTENER_HOSTS.contains(&host) {
         return None;
     }
-    let canonical_host = if matches!(host, "deezer.com" | "www.deezer.com") {
-        "www.deezer.com"
-    } else {
-        host
-    };
+    let canonical_host = if matches!(host, "deezer.com" | "www.deezer.com") { "www.deezer.com" } else { host };
     let mut parts = segments(url);
     if parts.len() >= 2 && parts[0].len() == 2 {
         parts.remove(0);
     }
     // Entity links carry only sharing data (including the sharer's user id).
-    let entity = matches!(
-        parts.first(),
-        Some(&("track" | "album" | "playlist" | "artist" | "show" | "episode"))
-    );
-    let query = if entity {
-        Vec::new()
-    } else {
-        filtered_query(url, None)
-    };
+    let entity = matches!(parts.first(), Some(&("track" | "album" | "playlist" | "artist" | "show" | "episode")));
+    let query = if entity { Vec::new() } else { filtered_query(url, None) };
     Some(https(canonical_host, &join(&parts), &query))
 }
 
@@ -589,24 +481,14 @@ fn tidal(url: &Url, host: &str) -> Option<String> {
         return None;
     }
     // listen.tidal.com now redirects to tidal.com.
-    let canonical_host = if matches!(host, "tidal.com" | "www.tidal.com" | "listen.tidal.com") {
-        "tidal.com"
-    } else {
-        host
-    };
+    let canonical_host =
+        if matches!(host, "tidal.com" | "www.tidal.com" | "listen.tidal.com") { "tidal.com" } else { host };
     let mut parts = segments(url);
     if parts.first() == Some(&"browse") {
         parts.remove(0);
     }
-    let entity = matches!(
-        parts.first(),
-        Some(&("track" | "album" | "playlist" | "video" | "artist" | "mix"))
-    );
-    let query = if entity {
-        Vec::new()
-    } else {
-        filtered_query(url, None)
-    };
+    let entity = matches!(parts.first(), Some(&("track" | "album" | "playlist" | "video" | "artist" | "mix")));
+    let query = if entity { Vec::new() } else { filtered_query(url, None) };
     Some(https(canonical_host, &join(&parts), &query))
 }
 
@@ -614,25 +496,14 @@ fn amazon_music(url: &Url, host: &str) -> Option<String> {
     if !host.starts_with("music.amazon.") {
         return None;
     }
-    Some(https(
-        host,
-        url.path(),
-        &filtered_query(url, Some(&["trackAsin"][..])),
-    ))
+    Some(https(host, url.path(), &filtered_query(url, Some(&["trackAsin"][..]))))
 }
 
 fn reddit(url: &Url, host: &str) -> Option<String> {
-    if !matches!(
-        host,
-        "reddit.com" | "www.reddit.com" | "old.reddit.com" | "new.reddit.com" | "redd.it"
-    ) {
+    if !matches!(host, "reddit.com" | "www.reddit.com" | "old.reddit.com" | "new.reddit.com" | "redd.it") {
         return None;
     }
-    let canonical_host = if host == "redd.it" {
-        host
-    } else {
-        "www.reddit.com"
-    };
+    let canonical_host = if host == "redd.it" { host } else { "www.reddit.com" };
     Some(https(canonical_host, url.path(), &[]))
 }
 
@@ -640,17 +511,9 @@ fn pornhub(url: &Url, host: &str) -> Option<String> {
     if !host.contains("pornhub.") {
         return None;
     }
-    let canonical_host = if matches!(host, "pornhub.com" | "www.pornhub.com") {
-        "www.pornhub.com"
-    } else {
-        host
-    };
+    let canonical_host = if matches!(host, "pornhub.com" | "www.pornhub.com") { "www.pornhub.com" } else { host };
     let allowed: Option<&[&str]> = (url.path() == "/view_video.php").then_some(&["viewkey"][..]);
-    Some(https(
-        canonical_host,
-        url.path(),
-        &filtered_query(url, allowed),
-    ))
+    Some(https(canonical_host, url.path(), &filtered_query(url, allowed)))
 }
 
 fn vimeo(url: &Url, host: &str) -> Option<String> {
@@ -664,26 +527,15 @@ fn vimeo(url: &Url, host: &str) -> Option<String> {
     {
         return Some(https("vimeo.com", &format!("/{id}"), &[]));
     }
-    let canonical_host = if matches!(host, "vimeo.com" | "www.vimeo.com") {
-        "vimeo.com"
-    } else {
-        host
-    };
-    Some(https(
-        canonical_host,
-        url.path(),
-        &filtered_query(url, None),
-    ))
+    let canonical_host = if matches!(host, "vimeo.com" | "www.vimeo.com") { "vimeo.com" } else { host };
+    Some(https(canonical_host, url.path(), &filtered_query(url, None)))
 }
 
 fn soundcloud(url: &Url, host: &str) -> Option<String> {
     if !host.contains("soundcloud.") || SHORTENER_HOSTS.contains(&host) {
         return None;
     }
-    if matches!(
-        host,
-        "soundcloud.com" | "www.soundcloud.com" | "m.soundcloud.com"
-    ) {
+    if matches!(host, "soundcloud.com" | "www.soundcloud.com" | "m.soundcloud.com") {
         // Share links append ref/p/c/si; nothing in the query identifies the track.
         return Some(https("soundcloud.com", url.path(), &[]));
     }
@@ -691,8 +543,7 @@ fn soundcloud(url: &Url, host: &str) -> Option<String> {
 }
 
 fn bandcamp(url: &Url, host: &str) -> Option<String> {
-    (host == "bandcamp.com" || host.ends_with(".bandcamp.com"))
-        .then(|| https(host, url.path(), &[]))
+    (host == "bandcamp.com" || host.ends_with(".bandcamp.com")).then(|| https(host, url.path(), &[]))
 }
 
 fn mixcloud(url: &Url, host: &str) -> Option<String> {
@@ -725,15 +576,11 @@ mod tests {
             "https://www.youtube.com/watch?v=abc123"
         );
         assert_eq!(
-            canon(
-                "https://www.instagram.com/reel/Cxyz123/?utm_source=ig_web_copy_link&igsh=MzRlODBiNWFlZA=="
-            ),
+            canon("https://www.instagram.com/reel/Cxyz123/?utm_source=ig_web_copy_link&igsh=MzRlODBiNWFlZA=="),
             "https://www.instagram.com/reel/Cxyz123"
         );
         assert_eq!(
-            canon(
-                "https://www.tiktok.com/@artist/video/1234567890?is_from_webapp=1&sender_device=pc"
-            ),
+            canon("https://www.tiktok.com/@artist/video/1234567890?is_from_webapp=1&sender_device=pc"),
             "https://www.tiktok.com/@artist/video/1234567890"
         );
         assert_eq!(
@@ -763,14 +610,8 @@ mod tests {
 
     #[test]
     fn youtube_rules() {
-        assert_eq!(
-            canon("https://youtu.be/dQw4w9WgXcQ?si=abc"),
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        );
-        assert_eq!(
-            canon("https://youtu.be/dQw4w9WgXcQ?t=42"),
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42"
-        );
+        assert_eq!(canon("https://youtu.be/dQw4w9WgXcQ?si=abc"), "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+        assert_eq!(canon("https://youtu.be/dQw4w9WgXcQ?t=42"), "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42");
         assert_eq!(
             canon("https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=youtu.be"),
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -779,10 +620,7 @@ mod tests {
             canon("https://youtube.com/embed/dQw4w9WgXcQ?autoplay=1"),
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         );
-        assert_eq!(
-            canon("https://www.youtube.com/live/abcdefghijk/"),
-            "https://www.youtube.com/watch?v=abcdefghijk"
-        );
+        assert_eq!(canon("https://www.youtube.com/live/abcdefghijk/"), "https://www.youtube.com/watch?v=abcdefghijk");
         assert_eq!(
             canon("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"),
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -795,10 +633,7 @@ mod tests {
             canon("https://www.youtube.com/playlist?list=PLx&index=3&si=zz"),
             "https://www.youtube.com/playlist?list=PLx&index=3"
         );
-        assert_eq!(
-            canon("https://www.youtube.com/@channel/videos?si=x"),
-            "https://www.youtube.com/@channel/videos"
-        );
+        assert_eq!(canon("https://www.youtube.com/@channel/videos?si=x"), "https://www.youtube.com/@channel/videos");
     }
 
     #[test]
@@ -812,9 +647,7 @@ mod tests {
             "https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy"
         );
         assert_eq!(
-            canon(
-                "https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421&uo=4&ls=1"
-            ),
+            canon("https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421&uo=4&ls=1"),
             "https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421"
         );
         assert_eq!(
@@ -827,28 +660,15 @@ mod tests {
             ),
             "https://www.deezer.com/playlist/13957557901"
         );
+        assert_eq!(canon("https://deezer.com/en/track/3135556/"), "https://www.deezer.com/track/3135556");
+        assert_eq!(canon("https://listen.tidal.com/browse/track/1781887?u"), "https://tidal.com/track/1781887");
+        assert_eq!(canon("https://tidal.com/browse/album/1781800"), "https://tidal.com/album/1781800");
         assert_eq!(
-            canon("https://deezer.com/en/track/3135556/"),
-            "https://www.deezer.com/track/3135556"
-        );
-        assert_eq!(
-            canon("https://listen.tidal.com/browse/track/1781887?u"),
-            "https://tidal.com/track/1781887"
-        );
-        assert_eq!(
-            canon("https://tidal.com/browse/album/1781800"),
-            "https://tidal.com/album/1781800"
-        );
-        assert_eq!(
-            canon(
-                "https://music.amazon.com/albums/B000TDBNDG?do=play&trackAsin=B000TDFHJW&ref=dm_sh_x"
-            ),
+            canon("https://music.amazon.com/albums/B000TDBNDG?do=play&trackAsin=B000TDFHJW&ref=dm_sh_x"),
             "https://music.amazon.com/albums/B000TDBNDG?trackAsin=B000TDFHJW"
         );
         assert_eq!(
-            canon(
-                "https://m.soundcloud.com/forss/flickermood?ref=clipboard&p=a&c=1&si=0e&utm_source=clipboard"
-            ),
+            canon("https://m.soundcloud.com/forss/flickermood?ref=clipboard&p=a&c=1&si=0e&utm_source=clipboard"),
             "https://soundcloud.com/forss/flickermood"
         );
         assert_eq!(
@@ -859,36 +679,22 @@ mod tests {
             canon("https://m.mixcloud.com/spartacus/party-time/?utm_source=x"),
             "https://www.mixcloud.com/spartacus/party-time"
         );
-        assert_eq!(
-            canon("https://player.vimeo.com/video/76979871?h=abc"),
-            "https://vimeo.com/76979871"
-        );
-        assert_eq!(
-            canon("https://m.twitch.tv/videos/123?t=1h2m3s"),
-            "https://www.twitch.tv/videos/123?t=1h2m3s"
-        );
+        assert_eq!(canon("https://player.vimeo.com/video/76979871?h=abc"), "https://vimeo.com/76979871");
+        assert_eq!(canon("https://m.twitch.tv/videos/123?t=1h2m3s"), "https://www.twitch.tv/videos/123?t=1h2m3s");
     }
 
     #[test]
     fn wrappers_and_shorteners() {
         assert_eq!(
-            canon(
-                "https://l.instagram.com/?u=https%3A%2F%2Fopen.spotify.com%2Ftrack%2Fabc%3Fsi%3D1&e=AT0"
-            ),
+            canon("https://l.instagram.com/?u=https%3A%2F%2Fopen.spotify.com%2Ftrack%2Fabc%3Fsi%3D1&e=AT0"),
             "https://open.spotify.com/track/abc"
         );
-        assert_eq!(
-            canon("https://spotify.link/6tpneu0iVIb"),
-            "https://spotify.link/6tpneu0iVIb"
-        );
+        assert_eq!(canon("https://spotify.link/6tpneu0iVIb"), "https://spotify.link/6tpneu0iVIb");
         assert_eq!(
             canon("https://on.soundcloud.com/9BWtqT2nIcIiAubq3X/"),
             "https://on.soundcloud.com/9BWtqT2nIcIiAubq3X"
         );
-        assert_eq!(
-            canon("https://vm.tiktok.com/ZMRxd5VLN/"),
-            "https://vm.tiktok.com/ZMRxd5VLN"
-        );
+        assert_eq!(canon("https://vm.tiktok.com/ZMRxd5VLN/"), "https://vm.tiktok.com/ZMRxd5VLN");
         let shortener = |u: &str| is_shortener(&Url::parse(u).unwrap());
         assert!(shortener("https://link.deezer.com/s/323PqDbPY7fERrDJhrypG"));
         assert!(shortener("https://www.tiktok.com/t/ZTabc123/"));
@@ -899,14 +705,8 @@ mod tests {
 
     #[test]
     fn generic_sites_keep_scheme_and_port() {
-        assert_eq!(
-            canon("http://example.com:8080/a/b/?utm_source=x&id=3#frag"),
-            "http://example.com:8080/a/b?id=3"
-        );
-        assert_eq!(
-            canon("HTTPS://Example.COM/Track.mp3"),
-            "https://example.com/Track.mp3"
-        );
+        assert_eq!(canon("http://example.com:8080/a/b/?utm_source=x&id=3#frag"), "http://example.com:8080/a/b?id=3");
+        assert_eq!(canon("HTTPS://Example.COM/Track.mp3"), "https://example.com/Track.mp3");
         assert_eq!(canon("https://example.com"), "https://example.com/");
         assert_eq!(canon("http://[::1]:8000/x"), "http://[::1]:8000/x");
         assert_eq!(canon("example.com/song"), "https://example.com/song");
@@ -934,9 +734,7 @@ mod tests {
         assert!(!looks_like_url("/tmp/file.mp4"));
         assert!(looks_like_url("  https://example.com/a  \n"));
         assert!(looks_like_url("youtu.be/abc"));
-        assert!(looks_like_url(
-            "open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"
-        ));
+        assert!(looks_like_url("open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"));
         assert!(looks_like_url("example.com"));
         assert!(looks_like_url("www.example.zone"));
         assert!(looks_like_url("youtu.be"));
@@ -953,31 +751,18 @@ mod tests {
     #[test]
     fn extracts_first_url_from_shared_text() {
         assert_eq!(
-            extract_url("Check this out https://open.spotify.com/track/abc?si=1 via @app")
-                .as_deref(),
+            extract_url("Check this out https://open.spotify.com/track/abc?si=1 via @app").as_deref(),
             Some("https://open.spotify.com/track/abc?si=1")
         );
-        assert_eq!(
-            extract_url("(see https://example.com/a_(b)).").as_deref(),
-            Some("https://example.com/a_(b)")
-        );
-        assert_eq!(
-            extract_url("“https://example.com/x”").as_deref(),
-            Some("https://example.com/x")
-        );
-        assert_eq!(
-            extract_url("listen: youtu.be/dQw4w9WgXcQ!").as_deref(),
-            Some("https://youtu.be/dQw4w9WgXcQ")
-        );
+        assert_eq!(extract_url("(see https://example.com/a_(b)).").as_deref(), Some("https://example.com/a_(b)"));
+        assert_eq!(extract_url("“https://example.com/x”").as_deref(), Some("https://example.com/x"));
+        assert_eq!(extract_url("listen: youtu.be/dQw4w9WgXcQ!").as_deref(), Some("https://youtu.be/dQw4w9WgXcQ"));
         assert_eq!(
             extract_url("first http://a.example/1 then https://b.example/2").as_deref(),
             Some("http://a.example/1")
         );
         assert_eq!(extract_url("Visit example.com today"), None);
         assert_eq!(extract_url("xhttps://example.com"), None);
-        assert_eq!(
-            extract_url("http://127.0.0.1/admin").as_deref(),
-            Some("http://127.0.0.1/admin")
-        );
+        assert_eq!(extract_url("http://127.0.0.1/admin").as_deref(), Some("http://127.0.0.1/admin"));
     }
 }

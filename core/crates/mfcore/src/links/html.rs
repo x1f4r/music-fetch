@@ -38,25 +38,19 @@ impl Document {
         let mut out = Document::default();
         for el in doc.select(&selector("meta[content]")) {
             let attrs = el.value();
-            let Some(key) = attrs
-                .attr("property")
-                .or_else(|| attrs.attr("name"))
-                .or_else(|| attrs.attr("itemprop"))
+            let Some(key) = attrs.attr("property").or_else(|| attrs.attr("name")).or_else(|| attrs.attr("itemprop"))
             else {
                 continue;
             };
             let content = attrs.attr("content").unwrap_or_default().trim();
             if !content.is_empty() {
-                out.meta
-                    .push((key.trim().to_ascii_lowercase(), content.to_string()));
+                out.meta.push((key.trim().to_ascii_lowercase(), content.to_string()));
             }
         }
         for el in doc.select(&selector("script")) {
             let attrs = el.value();
             let text: String = el.text().collect();
-            if attrs
-                .attr("type")
-                .is_some_and(|t| t.eq_ignore_ascii_case("application/ld+json"))
+            if attrs.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("application/ld+json"))
                 && let Ok(value) = serde_json::from_str::<Value>(text.trim())
             {
                 flatten_json_ld(value, &mut out.json_ld);
@@ -66,33 +60,21 @@ impl Document {
             }
         }
         for el in doc.select(&selector("audio[src], video[src], source[src]")) {
-            if let Some(src) = el
-                .value()
-                .attr("src")
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
+            if let Some(src) = el.value().attr("src").map(str::trim).filter(|s| !s.is_empty()) {
                 out.media_sources.push(src.to_string());
             }
         }
         for el in doc.select(&selector("iframe")) {
             let attrs = el.value();
-            if let Some(src) = attrs
-                .attr("src")
-                .or_else(|| attrs.attr("data-src"))
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
+            if let Some(src) =
+                attrs.attr("src").or_else(|| attrs.attr("data-src")).map(str::trim).filter(|s| !s.is_empty())
             {
                 out.iframes.push(src.to_string());
             }
         }
         out.oembed = doc
             .select(&selector("link[rel=alternate][href]"))
-            .find(|el| {
-                el.value()
-                    .attr("type")
-                    .is_some_and(|t| t.eq_ignore_ascii_case("application/json+oembed"))
-            })
+            .find(|el| el.value().attr("type").is_some_and(|t| t.eq_ignore_ascii_case("application/json+oembed")))
             .and_then(|el| el.value().attr("href"))
             .map(str::to_string);
         out.title = doc
@@ -105,10 +87,7 @@ impl Document {
 
     /// First meta value for `key` (e.g. "og:title").
     pub(crate) fn meta(&self, key: &str) -> Option<&str> {
-        self.meta
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
+        self.meta.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
     }
 
     /// First meta value among `keys`, in order of preference.
@@ -118,27 +97,17 @@ impl Document {
 
     /// All meta values for `key`.
     pub(crate) fn meta_all<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        self.meta
-            .iter()
-            .filter(move |(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
+        self.meta.iter().filter(move |(k, _)| k == key).map(|(_, v)| v.as_str())
     }
 
     /// JSON-LD nodes whose `@type` includes one of `types`.
-    pub(crate) fn json_ld_of<'a>(
-        &'a self,
-        types: &'a [&'a str],
-    ) -> impl Iterator<Item = &'a Value> + 'a {
-        self.json_ld
-            .iter()
-            .filter(move |node| ld_types(node).iter().any(|t| types.contains(&t.as_str())))
+    pub(crate) fn json_ld_of<'a>(&'a self, types: &'a [&'a str]) -> impl Iterator<Item = &'a Value> + 'a {
+        self.json_ld.iter().filter(move |node| ld_types(node).iter().any(|t| types.contains(&t.as_str())))
     }
 
     /// Parsed JSON of `<script id=…>`.
     pub(crate) fn script_json(&self, id: &str) -> Option<Value> {
-        self.scripts
-            .get(id)
-            .and_then(|text| serde_json::from_str(text.trim()).ok())
+        self.scripts.get(id).and_then(|text| serde_json::from_str(text.trim()).ok())
     }
 }
 
@@ -173,10 +142,7 @@ pub(crate) fn json_after(html: &str, marker: &str) -> Option<Value> {
     if !html[start..brace].trim().is_empty() {
         return None;
     }
-    serde_json::Deserializer::from_str(&html[brace..])
-        .into_iter::<Value>()
-        .next()?
-        .ok()
+    serde_json::Deserializer::from_str(&html[brace..]).into_iter::<Value>().next()?.ok()
 }
 
 /// Text of a JSON value that is either a string or a `{content|simpleText|text}` object,
@@ -185,16 +151,12 @@ pub(crate) fn text_of(value: &Value) -> Option<String> {
     let text = match value {
         Value::String(s) => s.clone(),
         Value::Object(map) => {
-            if let Some(s) = ["content", "simpleText", "text"]
-                .iter()
-                .find_map(|k| map.get(*k).and_then(Value::as_str))
+            if let Some(s) = ["content", "simpleText", "text"].iter().find_map(|k| map.get(*k).and_then(Value::as_str))
             {
                 s.to_string()
             } else {
                 let runs = map.get("runs").and_then(Value::as_array)?;
-                runs.iter()
-                    .filter_map(|r| r.get("text").and_then(Value::as_str))
-                    .collect()
+                runs.iter().filter_map(|r| r.get("text").and_then(Value::as_str)).collect()
             }
         }
         _ => return None,
@@ -205,20 +167,13 @@ pub(crate) fn text_of(value: &Value) -> Option<String> {
 
 /// Non-empty trimmed string at a JSON pointer.
 pub(crate) fn str_at(value: &Value, pointer: &str) -> Option<String> {
-    value
-        .pointer(pointer)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+    value.pointer(pointer).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
 
 /// Number (or numeric string) at a JSON pointer.
 pub(crate) fn u64_at(value: &Value, pointer: &str) -> Option<u64> {
     match value.pointer(pointer)? {
-        Value::Number(n) => n
-            .as_u64()
-            .or_else(|| n.as_f64().filter(|f| *f >= 0.0).map(|f| f as u64)),
+        Value::Number(n) => n.as_u64().or_else(|| n.as_f64().filter(|f| *f >= 0.0).map(|f| f as u64)),
         Value::String(s) => s.trim().parse().ok(),
         _ => None,
     }
@@ -277,31 +232,16 @@ mod tests {
         assert_eq!(doc.title.as_deref(), Some("Page"));
         assert_eq!(doc.meta("og:title"), Some("Song & Co"));
         assert_eq!(doc.meta_all("music:song").count(), 2);
-        assert_eq!(
-            doc.meta_any(&["og:audio", "twitter:player:stream"]),
-            Some("https://cdn.example/a.mp4")
-        );
+        assert_eq!(doc.meta_any(&["og:audio", "twitter:player:stream"]), Some("https://cdn.example/a.mp4"));
         assert_eq!(doc.json_ld_of(&["MusicRecording"]).count(), 1);
         assert_eq!(
-            doc.json_ld_of(&["AudioObject"])
-                .next()
-                .and_then(|n| n.get("contentUrl"))
-                .and_then(Value::as_str),
+            doc.json_ld_of(&["AudioObject"]).next().and_then(|n| n.get("contentUrl")).and_then(Value::as_str),
             Some("https://cdn.example/a.mp3")
         );
-        assert_eq!(
-            doc.script_json("data").and_then(|v| u64_at(&v, "/a/b")),
-            Some(3)
-        );
+        assert_eq!(doc.script_json("data").and_then(|v| u64_at(&v, "/a/b")), Some(3));
         assert_eq!(doc.media_sources, vec!["/media/a.mp3", "b.webm"]);
-        assert_eq!(
-            doc.iframes,
-            vec!["https://www.youtube.com/embed/dQw4w9WgXcQ"]
-        );
-        assert_eq!(
-            doc.oembed.as_deref(),
-            Some("https://example.com/oembed?url=x")
-        );
+        assert_eq!(doc.iframes, vec!["https://www.youtube.com/embed/dQw4w9WgXcQ"]);
+        assert_eq!(doc.oembed.as_deref(), Some("https://example.com/oembed?url=x"));
     }
 
     #[test]
@@ -317,12 +257,7 @@ mod tests {
     #[test]
     fn extracts_inline_json() {
         let html = r#"<script>var ytInitialData = {"a":[1,{"b":"};"}]};var other = 1;</script>"#;
-        assert_eq!(
-            json_after(html, "var ytInitialData =")
-                .and_then(|v| str_at(&v, "/a/1/b"))
-                .as_deref(),
-            Some("};")
-        );
+        assert_eq!(json_after(html, "var ytInitialData =").and_then(|v| str_at(&v, "/a/1/b")).as_deref(), Some("};"));
         assert!(json_after(html, "var missing =").is_none());
         assert!(json_after("var x = 1; {\"a\":1}", "var x =").is_none());
         assert!(json_after("var x = {broken", "var x =").is_none());
@@ -331,18 +266,9 @@ mod tests {
     #[test]
     fn text_shapes() {
         assert_eq!(text_of(&serde_json::json!("  a ")).as_deref(), Some("a"));
-        assert_eq!(
-            text_of(&serde_json::json!({"content": "b"})).as_deref(),
-            Some("b")
-        );
-        assert_eq!(
-            text_of(&serde_json::json!({"simpleText": "c"})).as_deref(),
-            Some("c")
-        );
-        assert_eq!(
-            text_of(&serde_json::json!({"runs": [{"text": "d"}, {"text": "e"}]})).as_deref(),
-            Some("de")
-        );
+        assert_eq!(text_of(&serde_json::json!({"content": "b"})).as_deref(), Some("b"));
+        assert_eq!(text_of(&serde_json::json!({"simpleText": "c"})).as_deref(), Some("c"));
+        assert_eq!(text_of(&serde_json::json!({"runs": [{"text": "d"}, {"text": "e"}]})).as_deref(), Some("de"));
         assert_eq!(text_of(&serde_json::json!({"x": 1})), None);
         assert_eq!(text_of(&serde_json::json!("  ")), None);
     }

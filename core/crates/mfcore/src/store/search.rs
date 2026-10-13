@@ -68,11 +68,7 @@ pub(crate) fn join_folded<'a>(parts: impl IntoIterator<Item = &'a str>) -> Strin
 
 /// Searchable text of a track: title, artist and album.
 pub(crate) fn track_text(track: &Track) -> String {
-    join_folded([
-        track.title.as_str(),
-        track.artist.as_str(),
-        track.album.as_deref().unwrap_or(""),
-    ])
+    join_folded([track.title.as_str(), track.artist.as_str(), track.album.as_deref().unwrap_or("")])
 }
 
 /// Searchable text of a session's own fields.
@@ -83,9 +79,8 @@ pub(crate) fn session_text(
     source: Option<&SourceInfo>,
 ) -> String {
     let track = track.map(track_text).unwrap_or_default();
-    let (source_title, uploader, site) = source
-        .map(|s| (s.title.as_deref(), s.uploader.as_deref(), s.site.as_deref()))
-        .unwrap_or_default();
+    let (source_title, uploader, site) =
+        source.map(|s| (s.title.as_deref(), s.uploader.as_deref(), s.site.as_deref())).unwrap_or_default();
     join_folded([
         title,
         subtitle.unwrap_or(""),
@@ -164,10 +159,7 @@ mod tests {
 
     #[test]
     fn fold_normalizes_punctuation() {
-        assert_eq!(
-            fold("  Daft Punk — One More Time!! "),
-            "daft punk one more time"
-        );
+        assert_eq!(fold("  Daft Punk — One More Time!! "), "daft punk one more time");
         assert_eq!(fold("Don't Stop Me Now"), "dont stop me now");
         assert_eq!(fold("Don’t"), "dont");
         assert_eq!(fold("AC/DC"), "ac dc");
@@ -191,16 +183,9 @@ mod tests {
 
     #[test]
     fn session_text_includes_track_and_source() {
-        let track = Track {
-            title: "Halo".into(),
-            artist: "Beyoncé".into(),
-            ..Default::default()
-        };
-        let source = SourceInfo {
-            title: Some("Live set".into()),
-            uploader: Some("Boiler Room".into()),
-            ..Default::default()
-        };
+        let track = Track { title: "Halo".into(), artist: "Beyoncé".into(), ..Default::default() };
+        let source =
+            SourceInfo { title: Some("Live set".into()), uploader: Some("Boiler Room".into()), ..Default::default() };
         assert_eq!(
             session_text("My mix", Some("2 tracks"), Some(&track), Some(&source)),
             "my mix 2 tracks halo beyonce live set boiler room"
@@ -209,11 +194,7 @@ mod tests {
 
     #[test]
     fn identity_key_falls_back() {
-        let mut track = Track {
-            title: "Halo".into(),
-            artist: "Beyoncé".into(),
-            ..Default::default()
-        };
+        let mut track = Track { title: "Halo".into(), artist: "Beyoncé".into(), ..Default::default() };
         assert_eq!(identity_key(Some(&track), "s1"), "fold::beyonce::halo");
         track.identity_key = "isrc::USSM10804556".into();
         assert_eq!(identity_key(Some(&track), "s1"), "isrc::USSM10804556");

@@ -15,10 +15,7 @@ pub(crate) struct TtlCache<V> {
 impl<V: Clone> TtlCache<V> {
     pub(crate) fn new(capacity: usize, ttl: Duration) -> Self {
         let capacity = NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::MIN);
-        Self {
-            inner: Mutex::new(LruCache::new(capacity)),
-            ttl,
-        }
+        Self { inner: Mutex::new(LruCache::new(capacity)), ttl }
     }
 
     pub(crate) fn get(&self, key: &str) -> Option<V> {
@@ -54,9 +51,6 @@ mod tests {
         let expired = TtlCache::new(2, Duration::ZERO);
         expired.put("a", 1);
         assert_eq!(expired.get("a"), None);
-        assert_eq!(
-            TtlCache::<u8>::new(0, Duration::from_secs(1)).get("x"),
-            None
-        );
+        assert_eq!(TtlCache::<u8>::new(0, Duration::from_secs(1)).get("x"), None);
     }
 }

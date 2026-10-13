@@ -48,26 +48,15 @@ pub struct Window {
 
 pub fn run(command: Command) -> anyhow::Result<()> {
     match command {
-        Command::Shazam {
-            wav,
-            window,
-            country,
-            language,
-        } => {
+        Command::Shazam { wav, window, country, language } => {
             let samples = load_window(&wav, &window)?;
             let sig = signature::generate(&samples);
             let _ = rustls::crypto::ring::default_provider().install_default();
             let http = mfcore::util::http::build_client(&mfcore::core_version())?;
             let client = ShazamClient::new(http, &country, &language);
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
             let started = Instant::now();
-            let result = runtime.block_on(client.recognize(
-                &sig,
-                Priority::Interactive,
-                &CancelToken::new(),
-            ))?;
+            let result = runtime.block_on(client.recognize(&sig, Priority::Interactive, &CancelToken::new()))?;
             eprintln!(
                 "{:.1} s clip, {} byte signature, answered in {} ms",
                 sig.sample_ms() as f64 / 1000.0,
@@ -76,19 +65,9 @@ pub fn run(command: Command) -> anyhow::Result<()> {
             );
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
-        Command::Sig {
-            wav,
-            window,
-            reference,
-            uri,
-        } => {
+        Command::Sig { wav, window, reference, uri } => {
             let samples = load_window(&wav, &window)?;
-            let sig = signature::generate_with(
-                &samples,
-                &Options {
-                    pad_tail: !reference,
-                },
-            );
+            let sig = signature::generate_with(&samples, &Options { pad_tail: !reference });
             let decoded = sig.decode()?;
             let data_uri = sig.data_uri();
             println!(
@@ -99,11 +78,7 @@ pub fn run(command: Command) -> anyhow::Result<()> {
                 decoded.peak_count()
             );
             for band in Band::ALL {
-                println!(
-                    "  {:<13} {:>4}",
-                    band.label(),
-                    decoded.bands[band.index()].len()
-                );
+                println!("  {:<13} {:>4}", band.label(), decoded.bands[band.index()].len());
             }
             if uri {
                 println!("{data_uri}");
@@ -124,10 +99,7 @@ fn load_window(path: &Path, window: &Window) -> anyhow::Result<Vec<i16>> {
     let start = ((window.start * rate) as usize).min(samples.len());
     let end = (start + (window.len * rate) as usize).min(samples.len());
     if end - start < signature::HOP {
-        bail!(
-            "the window is empty (file is {:.1} s long)",
-            samples.len() as f64 / rate
-        );
+        bail!("the window is empty (file is {:.1} s long)", samples.len() as f64 / rate);
     }
     Ok(samples[start..end].to_vec())
 }
@@ -143,12 +115,7 @@ fn read_wav_16k_mono(path: &Path) -> anyhow::Result<Vec<i16>> {
     let mut format_ok = false;
     while pos + 8 <= bytes.len() {
         let id = &bytes[pos..pos + 4];
-        let len = u32::from_le_bytes([
-            bytes[pos + 4],
-            bytes[pos + 5],
-            bytes[pos + 6],
-            bytes[pos + 7],
-        ]) as usize;
+        let len = u32::from_le_bytes([bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]]) as usize;
         let body = &bytes[pos + 8..pos.saturating_add(8).saturating_add(len).min(bytes.len())];
         match id {
             b"fmt " if body.len() >= 16 => {
@@ -157,9 +124,7 @@ fn read_wav_16k_mono(path: &Path) -> anyhow::Result<Vec<i16>> {
                 let rate = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
                 let bits = u16::from_le_bytes([body[14], body[15]]);
                 if !matches!(format, 1 | 0xFFFE) || channels != 1 || rate != 16_000 || bits != 16 {
-                    bail!(
-                        "need 16 kHz mono 16-bit PCM, got {rate} Hz, {channels} ch, {bits} bit; {hint}"
-                    );
+                    bail!("need 16 kHz mono 16-bit PCM, got {rate} Hz, {channels} ch, {bits} bit; {hint}");
                 }
                 format_ok = true;
             }
@@ -167,19 +132,11 @@ fn read_wav_16k_mono(path: &Path) -> anyhow::Result<Vec<i16>> {
                 if !format_ok {
                     bail!("WAV data before a valid fmt chunk; {hint}");
                 }
-                return Ok(body
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|c| i16::from_le_bytes(*c))
-                    .collect());
+                return Ok(body.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect());
             }
             _ => {}
         }
-        pos = pos
-            .saturating_add(8)
-            .saturating_add(len)
-            .saturating_add(len & 1);
+        pos = pos.saturating_add(8).saturating_add(len).saturating_add(len & 1);
     }
     bail!("no audio data in {}", path.display())
 }

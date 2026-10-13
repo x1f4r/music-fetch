@@ -19,19 +19,9 @@ const ITUNES_QUEUE: usize = 6;
 /// What an Apple Music link points at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum AppleRef {
-    Album {
-        storefront: String,
-        id: String,
-        track: Option<String>,
-    },
-    Song {
-        storefront: String,
-        id: String,
-    },
-    Playlist {
-        storefront: String,
-        id: String,
-    },
+    Album { storefront: String, id: String, track: Option<String> },
+    Song { storefront: String, id: String },
+    Playlist { storefront: String, id: String },
 }
 
 fn is_numeric(s: &str) -> bool {
@@ -54,15 +44,8 @@ pub(super) fn parse_ref(url: &Url, default_storefront: &str) -> Option<AppleRef>
     let id = rest[rest.len() - 1].to_string();
     match rest[0] {
         "album" if is_numeric(&id) => {
-            let track = url
-                .query_pairs()
-                .find(|(k, v)| k == "i" && is_numeric(v))
-                .map(|(_, v)| v.into_owned());
-            Some(AppleRef::Album {
-                storefront,
-                id,
-                track,
-            })
+            let track = url.query_pairs().find(|(k, v)| k == "i" && is_numeric(v)).map(|(_, v)| v.into_owned());
+            Some(AppleRef::Album { storefront, id, track })
         }
         "song" if is_numeric(&id) => Some(AppleRef::Song { storefront, id }),
         "playlist" if id.starts_with("pl.") => Some(AppleRef::Playlist { storefront, id }),
@@ -92,16 +75,8 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Resolution> {
 
 /// `{w}x{h}bb.{f}` artwork templates at 1000 px.
 fn artwork(value: &Value) -> Option<String> {
-    let template = value
-        .pointer("/artwork/dictionary/url")
-        .and_then(Value::as_str)?;
-    Some(
-        template
-            .replace("{w}", "1000")
-            .replace("{h}", "1000")
-            .replace("{c}", "bb")
-            .replace("{f}", "jpg"),
-    )
+    let template = value.pointer("/artwork/dictionary/url").and_then(Value::as_str)?;
+    Some(template.replace("{w}", "1000").replace("{h}", "1000").replace("{c}", "bb").replace("{f}", "jpg"))
 }
 
 /// Last plausible four-digit year in free text ("Pop · 1987", "July 27, 1987").
@@ -128,10 +103,7 @@ fn apple_track(item: &Value, storefront: &str) -> Option<Track> {
         duration_ms: u64_at(item, "/duration").filter(|d| *d > 0),
         preview_url: str_at(item, "/previewUrl"),
         artwork_url: artwork(item),
-        album: item
-            .pointer("/tertiaryLinks/0/title")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        album: item.pointer("/tertiaryLinks/0/title").and_then(Value::as_str).map(str::to_string),
         links: vec![service_link(Service::AppleMusic, link)],
         ..Track::default()
     };
@@ -149,26 +121,18 @@ fn items_of<'a>(sections: &'a [Value], kind: &str) -> Vec<&'a Value> {
         .collect()
 }
 
-fn song_tracks(
-    sections: &[Value],
-    song_ld: Option<&Value>,
-    storefront: &str,
-) -> Option<Vec<Track>> {
+fn song_tracks(sections: &[Value], song_ld: Option<&Value>, storefront: &str) -> Option<Vec<Track>> {
     let header = *items_of(sections, "songDetailHeader").first()?;
     let mut track = apple_track(header, storefront)?;
     track.artist = str_at(header, "/artists").unwrap_or_default();
     track.album = str_at(header, "/album");
-    track.release_year = str_at(header, "/releaseDate")
-        .as_deref()
-        .and_then(year_in_text);
+    track.release_year = str_at(header, "/releaseDate").as_deref().and_then(year_in_text);
     if let Some(ld) = song_ld {
         track.duration_ms = str_at(ld, "/audio/duration")
             .or_else(|| str_at(ld, "/timeRequired"))
             .as_deref()
             .and_then(parse_iso_duration);
-        track.release_year = track
-            .release_year
-            .or_else(|| str_at(ld, "/datePublished").as_deref().and_then(year_of));
+        track.release_year = track.release_year.or_else(|| str_at(ld, "/datePublished").as_deref().and_then(year_of));
     }
     Some(vec![finish_track(track)])
 }
@@ -181,16 +145,11 @@ fn collection_tracks(
     is_album: bool,
     source: &mut SourceInfo,
 ) -> Vec<Track> {
-    let header = items_of(sections, "containerDetailHeaderLockup")
-        .first()
-        .copied();
+    let header = items_of(sections, "containerDetailHeaderLockup").first().copied();
     let header_title = header.and_then(|h| str_at(h, "/title"));
     let header_artist = header.and_then(|h| str_at(h, "/subtitleLinks/0/title"));
     let header_art = header.and_then(artwork);
-    let header_year = header
-        .and_then(|h| str_at(h, "/quaternaryTitle"))
-        .as_deref()
-        .and_then(year_in_text);
+    let header_year = header.and_then(|h| str_at(h, "/quaternaryTitle")).as_deref().and_then(year_in_text);
     source.title.clone_from(&header_title);
     source.uploader.clone_from(&header_artist);
     source.thumbnail_url.clone_from(&header_art);
@@ -220,23 +179,17 @@ fn collection_tracks(
 pub(super) fn parse_page(html: &str, apple: &AppleRef, canonical_url: &Url) -> Option<Resolution> {
     let doc = Document::parse(html);
     let data = doc.script_json("serialized-server-data")?;
-    let sections = data
-        .pointer("/data/0/data/sections")
-        .or_else(|| data.pointer("/0/data/sections"))
-        .and_then(Value::as_array)?;
+    let sections =
+        data.pointer("/data/0/data/sections").or_else(|| data.pointer("/0/data/sections")).and_then(Value::as_array)?;
     let mut source = source_info(canonical_url, Site::AppleMusic);
     let tracks = match apple {
-        AppleRef::Song { storefront, .. } => song_tracks(
-            sections,
-            doc.script_json("schema:song").as_ref(),
-            storefront,
-        )?,
-        AppleRef::Album {
-            storefront, track, ..
-        } => collection_tracks(sections, storefront, track.as_deref(), true, &mut source),
-        AppleRef::Playlist { storefront, .. } => {
-            collection_tracks(sections, storefront, None, false, &mut source)
+        AppleRef::Song { storefront, .. } => {
+            song_tracks(sections, doc.script_json("schema:song").as_ref(), storefront)?
         }
+        AppleRef::Album { storefront, track, .. } => {
+            collection_tracks(sections, storefront, track.as_deref(), true, &mut source)
+        }
+        AppleRef::Playlist { storefront, .. } => collection_tracks(sections, storefront, None, false, &mut source),
     };
     if tracks.is_empty() {
         return None;
@@ -253,22 +206,15 @@ fn finish_source(source: &mut SourceInfo, tracks: &[Track]) {
         source.thumbnail_url = track.artwork_url.clone().or(source.thumbnail_url.take());
         source.duration_ms = track.duration_ms;
     } else {
-        source.duration_ms =
-            Some(tracks.iter().filter_map(|t| t.duration_ms).sum()).filter(|d| *d > 0);
+        source.duration_ms = Some(tracks.iter().filter_map(|t| t.duration_ms).sum()).filter(|d| *d > 0);
     }
     source.item_count = tracks.len() as u32;
 }
 
 async fn itunes_fallback(ctx: &Ctx<'_>, apple: &AppleRef, url: &Url) -> Result<Resolution> {
-    let unreadable = || MfError::MediaUnavailable {
-        message: "Couldn't read this Apple Music link.".into(),
-    };
+    let unreadable = || MfError::MediaUnavailable { message: "Couldn't read this Apple Music link.".into() };
     let (storefront, id, songs, wanted) = match apple {
-        AppleRef::Album {
-            storefront,
-            id,
-            track,
-        } => (storefront, id, true, track.as_deref()),
+        AppleRef::Album { storefront, id, track } => (storefront, id, true, track.as_deref()),
         AppleRef::Song { storefront, id } => (storefront, id, false, None),
         AppleRef::Playlist { .. } => return Err(unreadable()),
     };
@@ -276,28 +222,19 @@ async fn itunes_fallback(ctx: &Ctx<'_>, apple: &AppleRef, url: &Url) -> Result<R
         (true, Some(track)) => track,
         _ => id.as_str(),
     };
-    let results = itunes::lookup(
-        ctx.http,
-        lookup_id,
-        storefront,
-        songs && wanted.is_none(),
-        ITUNES_QUEUE,
-        ctx.cancel,
-    )
-    .await?;
+    let results =
+        itunes::lookup(ctx.http, lookup_id, storefront, songs && wanted.is_none(), ITUNES_QUEUE, ctx.cancel).await?;
     let tracks: Vec<Track> = results.iter().filter_map(itunes::track_from_json).collect();
     if tracks.is_empty() {
         return Err(unreadable());
     }
     let mut source = source_info(url, Site::AppleMusic);
-    if let Some(collection) = results
-        .iter()
-        .find(|r| r.get("wrapperType").and_then(Value::as_str) == Some("collection"))
+    if let Some(collection) =
+        results.iter().find(|r| r.get("wrapperType").and_then(Value::as_str) == Some("collection"))
     {
         source.title = str_at(collection, "/collectionName");
         source.uploader = str_at(collection, "/artistName");
-        source.thumbnail_url =
-            str_at(collection, "/artworkUrl100").map(|u| itunes::large_artwork(&u));
+        source.thumbnail_url = str_at(collection, "/artworkUrl100").map(|u| itunes::large_artwork(&u));
     }
     finish_source(&mut source, &tracks);
     Ok(Resolution::Tracks { source, tracks })
@@ -308,11 +245,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!(
-            "{}/tests/fixtures/links/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture")
+        std::fs::read_to_string(format!("{}/tests/fixtures/links/{name}", env!("CARGO_MANIFEST_DIR"))).expect("fixture")
     }
 
     fn url(s: &str) -> Url {
@@ -322,12 +255,7 @@ mod tests {
     #[test]
     fn parses_refs() {
         assert_eq!(
-            parse_ref(
-                &url(
-                    "https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421"
-                ),
-                "de"
-            ),
+            parse_ref(&url("https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421"), "de"),
             Some(AppleRef::Album {
                 storefront: "us".into(),
                 id: "1559885420".into(),
@@ -336,48 +264,26 @@ mod tests {
         );
         assert_eq!(
             parse_ref(&url("https://music.apple.com/album/1559885420"), "de"),
-            Some(AppleRef::Album {
-                storefront: "de".into(),
-                id: "1559885420".into(),
-                track: None
-            })
+            Some(AppleRef::Album { storefront: "de".into(), id: "1559885420".into(), track: None })
         );
         assert_eq!(
-            parse_ref(
-                &url("https://music.apple.com/us/song/never-gonna-give-you-up/1559885421"),
-                "de"
-            ),
-            Some(AppleRef::Song {
-                storefront: "us".into(),
-                id: "1559885421".into()
-            })
+            parse_ref(&url("https://music.apple.com/us/song/never-gonna-give-you-up/1559885421"), "de"),
+            Some(AppleRef::Song { storefront: "us".into(), id: "1559885421".into() })
         );
         assert!(matches!(
             parse_ref(
-                &url(
-                    "https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb"
-                ),
+                &url("https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb"),
                 "us"
             ),
             Some(AppleRef::Playlist { .. })
         ));
-        assert_eq!(
-            parse_ref(
-                &url("https://music.apple.com/us/artist/rick-astley/669771"),
-                "us"
-            ),
-            None
-        );
-        assert_eq!(
-            parse_ref(&url("https://music.apple.com/us/browse"), "us"),
-            None
-        );
+        assert_eq!(parse_ref(&url("https://music.apple.com/us/artist/rick-astley/669771"), "us"), None);
+        assert_eq!(parse_ref(&url("https://music.apple.com/us/browse"), "us"), None);
     }
 
     #[test]
     fn album_with_track_id_is_that_song() {
-        let canonical =
-            url("https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421");
+        let canonical = url("https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421");
         let apple = parse_ref(&canonical, "us").unwrap();
         let Some(Resolution::Tracks { source, tracks }) =
             parse_page(&fixture("apple_album_i.html"), &apple, &canonical)
@@ -391,29 +297,17 @@ mod tests {
         assert_eq!(t.album.as_deref(), Some("Whenever You Need Somebody"));
         assert_eq!(t.duration_ms, Some(213_573));
         assert_eq!(t.release_year, Some(1987));
-        assert!(
-            t.preview_url
-                .as_deref()
-                .is_some_and(|u| u.ends_with(".m4a"))
-        );
-        assert!(
-            t.artwork_url
-                .as_deref()
-                .is_some_and(|u| u.ends_with("/1000x1000bb.jpg"))
-        );
+        assert!(t.preview_url.as_deref().is_some_and(|u| u.ends_with(".m4a")));
+        assert!(t.artwork_url.as_deref().is_some_and(|u| u.ends_with("/1000x1000bb.jpg")));
         assert_eq!(t.ids.get("apple").map(String::as_str), Some("1559885421"));
-        assert_eq!(
-            t.links[0].url,
-            "https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421"
-        );
+        assert_eq!(t.links[0].url, "https://music.apple.com/us/album/never-gonna-give-you-up/1559885420?i=1559885421");
         assert_eq!(source.title.as_deref(), Some("Never Gonna Give You Up"));
         assert_eq!(source.item_count, 1);
     }
 
     #[test]
     fn whole_album() {
-        let canonical =
-            url("https://music.apple.com/us/album/whenever-you-need-somebody/1559885420");
+        let canonical = url("https://music.apple.com/us/album/whenever-you-need-somebody/1559885420");
         let apple = parse_ref(&canonical, "us").unwrap();
         let Some(Resolution::Tracks { source, tracks }) =
             parse_page(&fixture("apple_album_i.html"), &apple, &canonical)
@@ -423,19 +317,14 @@ mod tests {
         assert!(tracks.len() >= 2);
         assert_eq!(source.title.as_deref(), Some("Whenever You Need Somebody"));
         assert_eq!(source.uploader.as_deref(), Some("Rick Astley"));
-        assert!(
-            tracks
-                .iter()
-                .all(|t| t.album.as_deref() == Some("Whenever You Need Somebody"))
-        );
+        assert!(tracks.iter().all(|t| t.album.as_deref() == Some("Whenever You Need Somebody")));
     }
 
     #[test]
     fn song_page() {
         let canonical = url("https://music.apple.com/us/song/never-gonna-give-you-up/1559885421");
         let apple = parse_ref(&canonical, "us").unwrap();
-        let Some(Resolution::Tracks { tracks, .. }) =
-            parse_page(&fixture("apple_song.html"), &apple, &canonical)
+        let Some(Resolution::Tracks { tracks, .. }) = parse_page(&fixture("apple_song.html"), &apple, &canonical)
         else {
             panic!("expected tracks");
         };
@@ -449,9 +338,7 @@ mod tests {
 
     #[test]
     fn playlist_page() {
-        let canonical = url(
-            "https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb",
-        );
+        let canonical = url("https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb");
         let apple = parse_ref(&canonical, "us").unwrap();
         let Some(Resolution::Tracks { source, tracks }) =
             parse_page(&fixture("apple_playlist.html"), &apple, &canonical)

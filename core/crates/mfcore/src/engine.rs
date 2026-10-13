@@ -5,8 +5,8 @@ use std::sync::Arc;
 use crate::config::{Credentials, EngineConfig};
 use crate::error::{MfError, Result};
 use crate::model::{
-    AnalyzeMode, CaptureSource, ExportFormat, LibraryEntry, Lyrics, LibraryQuery, ListenMode, MelodyIndexStatus, Segment,
-    SessionDetail, StorageUsage, Track,
+    AnalyzeMode, CaptureSource, ExportFormat, LibraryEntry, LibraryQuery, ListenMode, Lyrics, MelodyIndexStatus,
+    Segment, SessionDetail, StorageUsage, Track,
 };
 use crate::platform::{MediaBackend, PlatformDecoder, SessionObserver, SpeechToText};
 
@@ -44,7 +44,12 @@ impl Engine {
     }
 
     /// Analyze a link or a local file path.
-    pub fn analyze(&self, input: String, mode: AnalyzeMode, observer: Arc<dyn SessionObserver>) -> Result<Arc<AnalysisSession>> {
+    pub fn analyze(
+        &self,
+        input: String,
+        mode: AnalyzeMode,
+        observer: Arc<dyn SessionObserver>,
+    ) -> Result<Arc<AnalysisSession>> {
         let _ = (input, mode, observer);
         Err(MfError::internal("not implemented"))
     }

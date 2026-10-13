@@ -7,9 +7,7 @@ use serde_json::Value;
 
 use crate::error::{MfError, Result};
 use crate::model::{Service, ServiceLink, Track};
-use crate::providers::{
-    ProviderMatch, apple_artwork, join_artists, number_at, send_json, text_at, year_of,
-};
+use crate::providers::{ProviderMatch, apple_artwork, join_artists, number_at, send_json, text_at, year_of};
 use crate::util::cancel::CancelToken;
 
 const ENDPOINT: &str = "https://api.audd.io/";
@@ -28,11 +26,7 @@ pub struct AudD {
 
 impl AudD {
     pub fn new(http: reqwest::Client, token: String) -> Self {
-        Self {
-            http,
-            token,
-            endpoint: ENDPOINT.to_string(),
-        }
+        Self { http, token, endpoint: ENDPOINT.to_string() }
     }
 
     /// Send requests to another URL (tests, proxies).
@@ -42,17 +36,11 @@ impl AudD {
     }
 
     /// Recognize a WAV clip (≤ 12 s).
-    pub async fn recognize(
-        &self,
-        wav: Vec<u8>,
-        cancel: &CancelToken,
-    ) -> Result<Option<ProviderMatch>> {
+    pub async fn recognize(&self, wav: Vec<u8>, cancel: &CancelToken) -> Result<Option<ProviderMatch>> {
         cancel.check()?;
         let token = self.token.trim();
         if token.is_empty() {
-            return Err(MfError::Platform {
-                message: "AudD needs an API token.".into(),
-            });
+            return Err(MfError::Platform { message: "AudD needs an API token.".into() });
         }
         if wav.is_empty() {
             return Err(MfError::invalid("The clip is empty."));
@@ -64,16 +52,9 @@ impl AudD {
             .file_name("clip.wav")
             .mime_str("audio/wav")
             .map_err(|_| MfError::internal("invalid MIME type"))?;
-        let form = Form::new()
-            .text("api_token", token.to_string())
-            .text("return", "apple_music,spotify")
-            .part("file", file);
-        let body = send_json(
-            self.http.post(&self.endpoint).multipart(form),
-            cancel,
-            SERVICE,
-        )
-        .await?;
+        let form =
+            Form::new().text("api_token", token.to_string()).text("return", "apple_music,spotify").part("file", file);
+        let body = send_json(self.http.post(&self.endpoint).multipart(form), cancel, SERVICE).await?;
         parse(&body)
     }
 }
@@ -82,17 +63,11 @@ impl AudD {
 /// (codes from the AudD docs: 900/901 token, 400 file too large).
 pub(crate) fn parse(body: &Value) -> Result<Option<ProviderMatch>> {
     if body.get("status").and_then(Value::as_str) == Some("error") {
-        let code = number_at(body, "/error/error_code")
-            .map(|c| c as i64)
-            .unwrap_or(0);
+        let code = number_at(body, "/error/error_code").map(|c| c as i64).unwrap_or(0);
         return Err(match code {
-            900 | 901 => MfError::Platform {
-                message: "AudD rejected the API token.".into(),
-            },
+            900 | 901 => MfError::Platform { message: "AudD rejected the API token.".into() },
             400 => MfError::invalid("The clip is too large for AudD."),
-            _ => MfError::Platform {
-                message: format!("AudD could not recognize the clip (error {code})."),
-            },
+            _ => MfError::Platform { message: format!("AudD could not recognize the clip (error {code}).") },
         });
     }
     let Some(result) = body.get("result").filter(|r| r.is_object()) else {
@@ -117,26 +92,14 @@ pub(crate) fn parse(body: &Value) -> Result<Option<ProviderMatch>> {
 
     let mut links = Vec::new();
     if let Some(url) = at(spotify, "/external_urls/spotify").filter(|u| u.starts_with("https://")) {
-        links.push(ServiceLink {
-            service: Service::Spotify,
-            url,
-            is_search: false,
-        });
+        links.push(ServiceLink { service: Service::Spotify, url, is_search: false });
     }
     if let Some(url) = at(apple, "/url").filter(|u| u.starts_with("https://")) {
-        links.push(ServiceLink {
-            service: Service::AppleMusic,
-            url,
-            is_search: false,
-        });
+        links.push(ServiceLink { service: Service::AppleMusic, url, is_search: false });
     }
     let song_link = text_at(result, "/song_link").filter(|u| u.starts_with("https://"));
     if let Some(url) = &song_link {
-        links.push(ServiceLink {
-            service: Service::Web,
-            url: url.clone(),
-            is_search: false,
-        });
+        links.push(ServiceLink { service: Service::Web, url: url.clone(), is_search: false });
     }
 
     let mut ids = HashMap::new();
@@ -153,16 +116,10 @@ pub(crate) fn parse(body: &Value) -> Result<Option<ProviderMatch>> {
     let genre = apple
         .and_then(|a| a.get("genreNames"))
         .and_then(Value::as_array)
-        .and_then(|g| {
-            g.iter()
-                .filter_map(Value::as_str)
-                .find(|g| !g.is_empty() && *g != "Music")
-        })
+        .and_then(|g| g.iter().filter_map(Value::as_str).find(|g| !g.is_empty() && *g != "Music"))
         .map(String::from);
     let track = Track {
-        album: text_at(result, "/album")
-            .or_else(|| at(apple, "/albumName"))
-            .or_else(|| at(spotify, "/album/name")),
+        album: text_at(result, "/album").or_else(|| at(apple, "/albumName")).or_else(|| at(spotify, "/album/name")),
         isrc: text_at(result, "/isrc")
             .or_else(|| at(spotify, "/external_ids/isrc"))
             .or_else(|| at(apple, "/isrc"))
@@ -172,9 +129,7 @@ pub(crate) fn parse(body: &Value) -> Result<Option<ProviderMatch>> {
             .or_else(|| spotify.and_then(|s| number_at(s, "/duration_ms")))
             .filter(|d| *d > 0.0)
             .map(|d| d as u64),
-        release_year: text_at(result, "/release_date")
-            .or_else(|| at(apple, "/releaseDate"))
-            .and_then(|d| year_of(&d)),
+        release_year: text_at(result, "/release_date").or_else(|| at(apple, "/releaseDate")).and_then(|d| year_of(&d)),
         genre,
         artwork_url: at(apple, "/artwork/url")
             .map(|t| apple_artwork(&t))
@@ -191,11 +146,7 @@ pub(crate) fn parse(body: &Value) -> Result<Option<ProviderMatch>> {
         artists,
     };
     let offset_ms = text_at(result, "/timecode").and_then(|t| timecode_ms(&t));
-    Ok(Some(ProviderMatch {
-        track,
-        score: SCORE,
-        offset_ms,
-    }))
+    Ok(Some(ProviderMatch { track, score: SCORE, offset_ms }))
 }
 
 /// "MM:SS" or "H:MM:SS" → milliseconds.
@@ -231,40 +182,18 @@ mod tests {
         assert_eq!(t.duration_ms, Some(170_393));
         assert_eq!(t.release_year, Some(2014));
         assert_eq!(t.genre.as_deref(), Some("Alternative"));
-        assert!(
-            t.artwork_url
-                .as_deref()
-                .unwrap()
-                .ends_with("/source/1000x1000bb.jpg")
-        );
+        assert!(t.artwork_url.as_deref().unwrap().ends_with("/source/1000x1000bb.jpg"));
         assert!(t.preview_url.as_deref().unwrap().ends_with(".m4a"));
         assert_eq!(
-            t.links
-                .iter()
-                .map(|l| (l.service, l.url.as_str(), l.is_search))
-                .collect::<Vec<_>>(),
+            t.links.iter().map(|l| (l.service, l.url.as_str(), l.is_search)).collect::<Vec<_>>(),
             [
-                (
-                    Service::Spotify,
-                    "https://open.spotify.com/track/1lgN0A2Vki2FTON5PYq42m",
-                    false
-                ),
-                (
-                    Service::AppleMusic,
-                    "https://music.apple.com/us/album/warriors/1440831203?i=1440831624",
-                    false
-                ),
+                (Service::Spotify, "https://open.spotify.com/track/1lgN0A2Vki2FTON5PYq42m", false),
+                (Service::AppleMusic, "https://music.apple.com/us/album/warriors/1440831203?i=1440831624", false),
                 (Service::Web, "https://lis.tn/Warriors", false),
             ]
         );
-        assert_eq!(
-            t.ids.get("audd").map(String::as_str),
-            Some("https://lis.tn/Warriors")
-        );
-        assert_eq!(
-            t.ids.get("spotify").map(String::as_str),
-            Some("1lgN0A2Vki2FTON5PYq42m")
-        );
+        assert_eq!(t.ids.get("audd").map(String::as_str), Some("https://lis.tn/Warriors"));
+        assert_eq!(t.ids.get("spotify").map(String::as_str), Some("1lgN0A2Vki2FTON5PYq42m"));
         assert_eq!(t.ids.get("apple").map(String::as_str), Some("1440831624"));
         assert_eq!(m.score, 0.8);
         assert_eq!(m.offset_ms, Some(62_000));
@@ -295,28 +224,12 @@ mod tests {
     #[test]
     fn errors_map_to_engine_errors() {
         let err = |code: i64| {
-            parse(&json!({"status": "error", "error": {"error_code": code, "error_message": "x"}}))
-                .unwrap_err()
+            parse(&json!({"status": "error", "error": {"error_code": code, "error_message": "x"}})).unwrap_err()
         };
-        assert_eq!(
-            err(900),
-            MfError::Platform {
-                message: "AudD rejected the API token.".into()
-            }
-        );
-        assert_eq!(
-            err(901),
-            MfError::Platform {
-                message: "AudD rejected the API token.".into()
-            }
-        );
+        assert_eq!(err(900), MfError::Platform { message: "AudD rejected the API token.".into() });
+        assert_eq!(err(901), MfError::Platform { message: "AudD rejected the API token.".into() });
         assert!(matches!(err(400), MfError::InvalidInput { .. }));
-        assert_eq!(
-            err(300),
-            MfError::Platform {
-                message: "AudD could not recognize the clip (error 300).".into()
-            }
-        );
+        assert_eq!(err(300), MfError::Platform { message: "AudD could not recognize the clip (error 300).".into() });
     }
 
     #[test]
@@ -332,32 +245,21 @@ mod tests {
     #[tokio::test]
     async fn sends_multipart_upload() {
         let server = TestServer::start(vec![Reply::json(200, FIXTURE)]);
-        let audd = AudD::new(http_client(), " secret-token ".into())
-            .with_endpoint(&format!("{}/", server.url()));
+        let audd = AudD::new(http_client(), " secret-token ".into()).with_endpoint(&format!("{}/", server.url()));
         let wav = b"RIFF\x24\x00\x00\x00WAVEfake".to_vec();
-        let m = audd
-            .recognize(wav.clone(), &CancelToken::new())
-            .await
-            .unwrap()
-            .unwrap();
+        let m = audd.recognize(wav.clone(), &CancelToken::new()).await.unwrap().unwrap();
         assert_eq!(m.track.title, "Warriors");
 
         let requests = server.requests();
         assert_eq!(requests.len(), 1);
         let r = &requests[0];
         assert_eq!((r.method.as_str(), r.target.as_str()), ("POST", "/"));
-        assert!(
-            r.header("content-type")
-                .unwrap()
-                .starts_with("multipart/form-data; boundary=")
-        );
+        assert!(r.header("content-type").unwrap().starts_with("multipart/form-data; boundary="));
         assert!(r.header("user-agent").unwrap().starts_with("MusicFetch/"));
         let body = String::from_utf8_lossy(&r.body);
         assert!(body.contains("name=\"api_token\"\r\n\r\nsecret-token\r\n"));
         assert!(body.contains("name=\"return\"\r\n\r\napple_music,spotify\r\n"));
-        assert!(body.contains(
-            "name=\"file\"; filename=\"clip.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF"
-        ));
+        assert!(body.contains("name=\"file\"; filename=\"clip.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF"));
     }
 
     #[tokio::test]
@@ -371,10 +273,7 @@ mod tests {
         let audd = AudD::new(http_client(), "t".into()).with_endpoint(&server.url());
         let cancel = CancelToken::new();
         let wav = || vec![1u8; 100];
-        assert_eq!(
-            audd.recognize(wav(), &cancel).await.unwrap_err(),
-            MfError::RateLimited { retry_in_ms: 7000 }
-        );
+        assert_eq!(audd.recognize(wav(), &cancel).await.unwrap_err(), MfError::RateLimited { retry_in_ms: 7000 });
         assert_eq!(
             audd.recognize(wav(), &cancel).await.unwrap_err(),
             MfError::network("AudD is unavailable (HTTP 503).")
@@ -389,20 +288,11 @@ mod tests {
     #[tokio::test]
     async fn validates_before_sending() {
         let audd = AudD::new(http_client(), "  ".into()).with_endpoint("http://127.0.0.1:9");
-        assert!(matches!(
-            audd.recognize(vec![1], &CancelToken::new()).await,
-            Err(MfError::Platform { .. })
-        ));
+        assert!(matches!(audd.recognize(vec![1], &CancelToken::new()).await, Err(MfError::Platform { .. })));
         let audd = AudD::new(http_client(), "t".into()).with_endpoint("http://127.0.0.1:9");
-        assert!(matches!(
-            audd.recognize(Vec::new(), &CancelToken::new()).await,
-            Err(MfError::InvalidInput { .. })
-        ));
+        assert!(matches!(audd.recognize(Vec::new(), &CancelToken::new()).await, Err(MfError::InvalidInput { .. })));
         let cancel = CancelToken::new();
         cancel.cancel();
-        assert_eq!(
-            audd.recognize(vec![1], &cancel).await.unwrap_err(),
-            MfError::Canceled
-        );
+        assert_eq!(audd.recognize(vec![1], &cancel).await.unwrap_err(), MfError::Canceled);
     }
 }

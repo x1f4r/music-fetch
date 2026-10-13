@@ -18,15 +18,14 @@ use std::path::{Path, PathBuf};
 use parking_lot::Mutex;
 use rusqlite::types::Value;
 use rusqlite::{
-    Connection, ErrorCode, OptionalExtension, Row, Transaction, TransactionBehavior, params,
-    params_from_iter,
+    Connection, ErrorCode, OptionalExtension, Row, Transaction, TransactionBehavior, params, params_from_iter,
 };
 
 use self::codec::DbText;
 use crate::error::{MfError, Result};
 use crate::model::{
-    Candidate, ExportFormat, LibraryEntry, LibraryQuery, Segment, SegmentKind, SessionDetail,
-    SessionKind, SessionStatus, SourceInfo, Track,
+    Candidate, ExportFormat, LibraryEntry, LibraryQuery, Segment, SegmentKind, SessionDetail, SessionKind,
+    SessionStatus, SourceInfo, Track,
 };
 use crate::util::now_ms;
 
@@ -84,10 +83,7 @@ pub struct SessionUpdate {
 
 impl SessionUpdate {
     fn touches_search(&self) -> bool {
-        self.title.is_some()
-            || self.subtitle.is_some()
-            || self.track.is_some()
-            || self.source.is_some()
+        self.title.is_some() || self.subtitle.is_some() || self.track.is_some() || self.source.is_some()
     }
 }
 
@@ -122,9 +118,7 @@ impl From<std::io::Error> for StoreError {
 
 impl StoreError {
     fn into_mf(self, op: &'static str) -> MfError {
-        let storage = |message: &str| MfError::Storage {
-            message: message.to_string(),
-        };
+        let storage = |message: &str| MfError::Storage { message: message.to_string() };
         match self {
             StoreError::NotFound => MfError::invalid("Session not found."),
             StoreError::Exists => MfError::invalid("A session with this id already exists."),
@@ -155,15 +149,11 @@ impl StoreError {
 
 fn db_message(e: &rusqlite::Error) -> &'static str {
     match e.sqlite_error_code() {
-        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => {
-            "The library is busy. Try again in a moment."
-        }
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => "The library is busy. Try again in a moment.",
         Some(ErrorCode::DiskFull) => "There is not enough disk space to save the library.",
         Some(ErrorCode::ReadOnly | ErrorCode::PermissionDenied) => "The library is read-only.",
         Some(ErrorCode::CannotOpen) => "The library could not be opened.",
-        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => {
-            "The library database is damaged."
-        }
+        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => "The library database is damaged.",
         Some(ErrorCode::SystemIoFailure) => "The library could not be read or written.",
         _ => "The library could not be accessed.",
     }
@@ -221,30 +211,17 @@ impl Store {
         if let Err(e) = purge_cache(&conn, now) {
             tracing::warn!(error = %e, "store: cache purge failed");
         }
-        Ok(Self {
-            inner: Mutex::new(Inner {
-                conn,
-                last_purge_ms: now,
-            }),
-        })
+        Ok(Self { inner: Mutex::new(Inner { conn, last_purge_ms: now }) })
     }
 
     /// Runs `f` in a deferred (read) transaction for a consistent snapshot.
-    fn read<T>(
-        &self,
-        op: &'static str,
-        f: impl FnOnce(&Transaction<'_>) -> StoreResult<T>,
-    ) -> Result<T> {
+    fn read<T>(&self, op: &'static str, f: impl FnOnce(&Transaction<'_>) -> StoreResult<T>) -> Result<T> {
         let mut inner = self.inner.lock();
         run_tx(&mut inner.conn, TransactionBehavior::Deferred, f).map_err(|e| e.into_mf(op))
     }
 
     /// Runs `f` in an immediate (write) transaction; rolled back on error.
-    fn write<T>(
-        &self,
-        op: &'static str,
-        f: impl FnOnce(&Transaction<'_>) -> StoreResult<T>,
-    ) -> Result<T> {
+    fn write<T>(&self, op: &'static str, f: impl FnOnce(&Transaction<'_>) -> StoreResult<T>) -> Result<T> {
         let mut inner = self.inner.lock();
         run_tx(&mut inner.conn, TransactionBehavior::Immediate, f).map_err(|e| e.into_mf(op))
     }
@@ -286,11 +263,7 @@ impl Store {
         self.write("update_session", |tx| {
             let track_json = update.track.as_ref().map(codec::encode).transpose()?;
             let source_json = update.source.as_ref().map(codec::encode).transpose()?;
-            let search_text = if update.touches_search() {
-                Some(merged_search_text(tx, id, &update)?)
-            } else {
-                None
-            };
+            let search_text = if update.touches_search() { Some(merged_search_text(tx, id, &update)?) } else { None };
             let changed = tx.execute(
                 "UPDATE sessions SET
                     status = coalesce(?2, status),
@@ -334,14 +307,9 @@ impl Store {
     /// Inserts or replaces (by id) a segment and refreshes the session's track count.
     pub fn upsert_segment(&self, session_id: &str, segment: &Segment) -> Result<()> {
         let segment = codec::sanitize_segment(segment);
-        let json = codec::encode(segment.as_ref())
-            .map_err(|e| StoreError::from(e).into_mf("upsert_segment"))?;
-        let track = segment
-            .track
-            .as_ref()
-            .filter(|_| segment.kind == SegmentKind::Track);
-        let identity =
-            (segment.kind == SegmentKind::Track).then(|| search::identity_key(track, &segment.id));
+        let json = codec::encode(segment.as_ref()).map_err(|e| StoreError::from(e).into_mf("upsert_segment"))?;
+        let track = segment.track.as_ref().filter(|_| segment.kind == SegmentKind::Track);
+        let identity = (segment.kind == SegmentKind::Track).then(|| search::identity_key(track, &segment.id));
         let search_text = track.map(search::track_text).unwrap_or_default();
         let now = now_ms();
         self.write("upsert_segment", |tx| {
@@ -384,10 +352,8 @@ impl Store {
     pub fn remove_segment(&self, session_id: &str, segment_id: &str) -> Result<()> {
         let now = now_ms();
         self.write("remove_segment", |tx| {
-            let removed = tx.execute(
-                "DELETE FROM segments WHERE session_id = ?1 AND id = ?2",
-                params![session_id, segment_id],
-            )?;
+            let removed =
+                tx.execute("DELETE FROM segments WHERE session_id = ?1 AND id = ?2", params![session_id, segment_id])?;
             if removed > 0 {
                 refresh_derived(tx, session_id, now)?;
             }
@@ -401,12 +367,7 @@ impl Store {
             .iter()
             .map(|c| {
                 let c = codec::sanitize_candidate(c);
-                Ok((
-                    f64::from(c.score),
-                    c.tier.as_text(),
-                    search::track_text(&c.track),
-                    codec::encode(c.as_ref())?,
-                ))
+                Ok((f64::from(c.score), c.tier.as_text(), search::track_text(&c.track), codec::encode(c.as_ref())?))
             })
             .collect::<StoreResult<Vec<_>>>()
             .map_err(|e| e.into_mf("set_candidates"))?;
@@ -434,11 +395,7 @@ impl Store {
     /// session's title, subtitle, track, source, identified tracks or top
     /// candidate. `limit = 0` means no limit.
     pub fn library(&self, query: &LibraryQuery) -> Result<Vec<LibraryEntry>> {
-        let mut sql = String::from(concat!(
-            "SELECT ",
-            entry_columns!(),
-            " FROM sessions WHERE 1 = 1"
-        ));
+        let mut sql = String::from(concat!("SELECT ", entry_columns!(), " FROM sessions WHERE 1 = 1"));
         let mut args: Vec<Value> = Vec::new();
         let mut kinds: Vec<&'static str> = query.kinds.iter().map(|k| k.as_text()).collect();
         kinds.sort_unstable();
@@ -452,22 +409,13 @@ impl Store {
         if query.pinned_only {
             sql.push_str(" AND pinned = 1");
         }
-        for term in query
-            .search
-            .as_deref()
-            .map(search::terms)
-            .unwrap_or_default()
-        {
+        for term in query.search.as_deref().map(search::terms).unwrap_or_default() {
             sql.push_str(" AND (instr(search_text, ?) > 0 OR instr(search_tracks, ?) > 0)");
             args.push(Value::Text(term.clone()));
             args.push(Value::Text(term));
         }
         sql.push_str(" ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?");
-        args.push(Value::Integer(if query.limit == 0 {
-            -1
-        } else {
-            i64::from(query.limit)
-        }));
+        args.push(Value::Integer(if query.limit == 0 { -1 } else { i64::from(query.limit) }));
         args.push(Value::Integer(i64::from(query.offset)));
 
         self.read("library", |tx| {
@@ -492,18 +440,13 @@ impl Store {
                     ", source_json, transcript FROM sessions WHERE id = ?1"
                 ))?
                 .query_row([id], |row| {
-                    Ok((
-                        entry_from_row(row)?,
-                        row.get::<_, Option<String>>(12)?,
-                        row.get::<_, Option<String>>(13)?,
-                    ))
+                    Ok((entry_from_row(row)?, row.get::<_, Option<String>>(12)?, row.get::<_, Option<String>>(13)?))
                 })
                 .optional()?;
             let Some((Some(entry), source_json, transcript)) = row else {
                 return Ok(None);
             };
-            let source = source_json
-                .and_then(|json| decode_or_skip("source", id, &json, codec::decode_source));
+            let source = source_json.and_then(|json| decode_or_skip("source", id, &json, codec::decode_source));
             Ok(Some(SessionDetail {
                 entry,
                 source,
@@ -519,13 +462,9 @@ impl Store {
         self.read("segment", |tx| {
             let json = tx
                 .prepare_cached("SELECT json FROM segments WHERE session_id = ?1 AND id = ?2")?
-                .query_row(params![session_id, segment_id], |row| {
-                    row.get::<_, String>(0)
-                })
+                .query_row(params![session_id, segment_id], |row| row.get::<_, String>(0))
                 .optional()?;
-            Ok(json.and_then(|json| {
-                decode_or_skip("segment", session_id, &json, codec::decode_segment)
-            }))
+            Ok(json.and_then(|json| decode_or_skip("segment", session_id, &json, codec::decode_segment)))
         })
     }
 
@@ -538,10 +477,7 @@ impl Store {
         self.write("delete_sessions", |tx| {
             let mut deleted = 0;
             for chunk in ids.chunks(DELETE_CHUNK) {
-                let sql = format!(
-                    "DELETE FROM sessions WHERE id IN ({})",
-                    vec!["?"; chunk.len()].join(", ")
-                );
+                let sql = format!("DELETE FROM sessions WHERE id IN ({})", vec!["?"; chunk.len()].join(", "));
                 deleted += tx.execute(&sql, params_from_iter(chunk.iter()))?;
             }
             tracing::debug!(requested = ids.len(), deleted, "store: deleted sessions");
@@ -553,10 +489,8 @@ impl Store {
     pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<()> {
         let now = now_ms();
         self.write("set_pinned", |tx| {
-            let changed = tx.execute(
-                "UPDATE sessions SET pinned = ?2, updated_at = ?3 WHERE id = ?1",
-                params![id, pinned, now],
-            )?;
+            let changed =
+                tx.execute("UPDATE sessions SET pinned = ?2, updated_at = ?3 WHERE id = ?1", params![id, pinned, now])?;
             if changed == 0 {
                 return Err(StoreError::NotFound);
             }
@@ -571,12 +505,7 @@ impl Store {
         self.write("recover_interrupted", |tx| {
             let changed = tx.execute(
                 "UPDATE sessions SET status = ?1, error = ?2, updated_at = ?3 WHERE status = ?4",
-                params![
-                    SessionStatus::Failed.as_text(),
-                    INTERRUPTED,
-                    now,
-                    SessionStatus::Running.as_text()
-                ],
+                params![SessionStatus::Failed.as_text(), INTERRUPTED, now, SessionStatus::Running.as_text()],
             )?;
             Ok(u32::try_from(changed).unwrap_or(u32::MAX))
         })
@@ -587,21 +516,14 @@ impl Store {
         self.cache_get_at(namespace, key, now_ms())
     }
 
-    pub(crate) fn cache_get_at(
-        &self,
-        namespace: &str,
-        key: &str,
-        now: i64,
-    ) -> Result<Option<String>> {
+    pub(crate) fn cache_get_at(&self, namespace: &str, key: &str, now: i64) -> Result<Option<String>> {
         let inner = self.inner.lock();
         let found = inner
             .conn
             .prepare_cached("SELECT value, expires_at FROM cache WHERE namespace = ?1 AND key = ?2")
             .and_then(|mut stmt| {
-                stmt.query_row(params![namespace, key], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-                })
-                .optional()
+                stmt.query_row(params![namespace, key], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+                    .optional()
             })
             .map_err(|e| StoreError::from(e).into_mf("cache_get"))?;
         match found {
@@ -626,20 +548,10 @@ impl Store {
         self.cache_put_at(namespace, key, value, ttl_ms, now_ms())
     }
 
-    pub(crate) fn cache_put_at(
-        &self,
-        namespace: &str,
-        key: &str,
-        value: &str,
-        ttl_ms: i64,
-        now: i64,
-    ) -> Result<()> {
+    pub(crate) fn cache_put_at(&self, namespace: &str, key: &str, value: &str, ttl_ms: i64, now: i64) -> Result<()> {
         let mut inner = self.inner.lock();
         let result = if ttl_ms <= 0 {
-            inner.conn.execute(
-                "DELETE FROM cache WHERE namespace = ?1 AND key = ?2",
-                params![namespace, key],
-            )
+            inner.conn.execute("DELETE FROM cache WHERE namespace = ?1 AND key = ?2", params![namespace, key])
         } else {
             inner.conn.execute(
                 "INSERT INTO cache (namespace, key, value, expires_at) VALUES (?1, ?2, ?3, ?4)
@@ -653,9 +565,7 @@ impl Store {
                 tracing::warn!(error = %e, "store: cache purge failed");
             }
         }
-        result
-            .map(drop)
-            .map_err(|e| StoreError::from(e).into_mf("cache_put"))
+        result.map(drop).map_err(|e| StoreError::from(e).into_mf("cache_put"))
     }
 
     /// Deletes expired cache entries now; returns how many were removed.
@@ -674,20 +584,16 @@ impl Store {
         let inner = self.inner.lock();
         inner
             .conn
-            .query_row(
-                "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .map(codec::to_u64)
             .unwrap_or(0)
     }
 
     /// Renders a session; see [`render_export`] for the formats.
     pub fn export(&self, id: &str, format: ExportFormat) -> Result<String> {
-        let detail = self
-            .session_detail(id)?
-            .ok_or_else(|| StoreError::NotFound.into_mf("export"))?;
+        let detail = self.session_detail(id)?.ok_or_else(|| StoreError::NotFound.into_mf("export"))?;
         export::render(&detail, format)
     }
 }
@@ -704,10 +610,7 @@ fn run_tx<T>(
 }
 
 fn is_damaged(e: &rusqlite::Error) -> bool {
-    matches!(
-        e.sqlite_error_code(),
-        Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt)
-    )
+    matches!(e.sqlite_error_code(), Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt))
 }
 
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
@@ -742,34 +645,20 @@ fn purge_cache(conn: &Connection, now: i64) -> rusqlite::Result<u32> {
 }
 
 fn session_exists(conn: &Connection, id: &str) -> StoreResult<bool> {
-    Ok(conn
-        .prepare_cached("SELECT 1 FROM sessions WHERE id = ?1")?
-        .exists([id])?)
+    Ok(conn.prepare_cached("SELECT 1 FROM sessions WHERE id = ?1")?.exists([id])?)
 }
 
 fn refresh_derived(tx: &Transaction<'_>, session_id: &str, now: i64) -> StoreResult<()> {
-    tx.prepare_cached(REFRESH_DERIVED)?.execute(params![
-        session_id,
-        now,
-        SegmentKind::Track.as_text()
-    ])?;
+    tx.prepare_cached(REFRESH_DERIVED)?.execute(params![session_id, now, SegmentKind::Track.as_text()])?;
     Ok(())
 }
 
 /// Search text for a session after `update`, merged with its stored fields.
-fn merged_search_text(
-    tx: &Transaction<'_>,
-    id: &str,
-    update: &SessionUpdate,
-) -> StoreResult<String> {
+fn merged_search_text(tx: &Transaction<'_>, id: &str, update: &SessionUpdate) -> StoreResult<String> {
     type Stored = (String, Option<String>, Option<String>, Option<String>);
     let (title, subtitle, track_json, source_json): Stored = tx
-        .prepare_cached(
-            "SELECT title, subtitle, track_json, source_json FROM sessions WHERE id = ?1",
-        )?
-        .query_row([id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
+        .prepare_cached("SELECT title, subtitle, track_json, source_json FROM sessions WHERE id = ?1")?
+        .query_row([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
         .optional()?
         .ok_or(StoreError::NotFound)?;
     let stored_track = match &update.track {
@@ -778,9 +667,7 @@ fn merged_search_text(
     };
     let stored_source = match &update.source {
         Some(_) => None,
-        None => {
-            source_json.and_then(|json| decode_or_skip("source", id, &json, codec::decode_source))
-        }
+        None => source_json.and_then(|json| decode_or_skip("source", id, &json, codec::decode_source)),
     };
     Ok(search::session_text(
         update.title.as_deref().unwrap_or(&title),
@@ -811,19 +698,13 @@ fn entry_from_row(row: &Row<'_>) -> rusqlite::Result<Option<LibraryEntry>> {
     let id: String = row.get(0)?;
     let kind: String = row.get(1)?;
     let status: String = row.get(2)?;
-    let (Some(kind), Some(status)) = (
-        SessionKind::from_text(&kind),
-        SessionStatus::from_text(&status),
-    ) else {
+    let (Some(kind), Some(status)) = (SessionKind::from_text(&kind), SessionStatus::from_text(&status)) else {
         tracing::warn!(session_id = %id, kind, status, "store: skipping session with unknown kind or status");
         return Ok(None);
     };
-    let track = row
-        .get::<_, Option<String>>(7)?
-        .and_then(|json| decode_or_skip("track", &id, &json, codec::decode_track));
-    let artwork_url = row
-        .get::<_, Option<String>>(6)?
-        .or_else(|| track.as_ref().and_then(|t| t.artwork_url.clone()));
+    let track =
+        row.get::<_, Option<String>>(7)?.and_then(|json| decode_or_skip("track", &id, &json, codec::decode_track));
+    let artwork_url = row.get::<_, Option<String>>(6)?.or_else(|| track.as_ref().and_then(|t| t.artwork_url.clone()));
     Ok(Some(LibraryEntry {
         kind,
         status,
@@ -841,34 +722,22 @@ fn entry_from_row(row: &Row<'_>) -> rusqlite::Result<Option<LibraryEntry>> {
 }
 
 fn load_segments(tx: &Transaction<'_>, session_id: &str) -> StoreResult<Vec<Segment>> {
-    let mut stmt = tx.prepare_cached(
-        "SELECT json FROM segments WHERE session_id = ?1 ORDER BY item_index, start_ms, end_ms, id",
-    )?;
+    let mut stmt =
+        tx.prepare_cached("SELECT json FROM segments WHERE session_id = ?1 ORDER BY item_index, start_ms, end_ms, id")?;
     let rows = stmt.query_map([session_id], |row| row.get::<_, String>(0))?;
     let mut segments = Vec::new();
     for json in rows {
-        segments.extend(decode_or_skip(
-            "segment",
-            session_id,
-            &json?,
-            codec::decode_segment,
-        ));
+        segments.extend(decode_or_skip("segment", session_id, &json?, codec::decode_segment));
     }
     Ok(segments)
 }
 
 fn load_candidates(tx: &Transaction<'_>, session_id: &str) -> StoreResult<Vec<Candidate>> {
-    let mut stmt =
-        tx.prepare_cached("SELECT json FROM candidates WHERE session_id = ?1 ORDER BY rank")?;
+    let mut stmt = tx.prepare_cached("SELECT json FROM candidates WHERE session_id = ?1 ORDER BY rank")?;
     let rows = stmt.query_map([session_id], |row| row.get::<_, String>(0))?;
     let mut candidates = Vec::new();
     for json in rows {
-        candidates.extend(decode_or_skip(
-            "candidate",
-            session_id,
-            &json?,
-            codec::decode_candidate,
-        ));
+        candidates.extend(decode_or_skip("candidate", session_id, &json?, codec::decode_candidate));
     }
     Ok(candidates)
 }

@@ -13,9 +13,7 @@ use url::Url;
 use super::fetch::{self, Agent, Page, PageRequest};
 use super::html::{Document, parse_iso_duration, str_at};
 use super::tidal::ld_names;
-use super::{
-    Ctx, Resolution, Site, apple, canonical, deezer, finish_track, source_info, spotify, ssrf,
-};
+use super::{Ctx, Resolution, Site, apple, canonical, deezer, finish_track, source_info, spotify, ssrf};
 use crate::error::{MfError, Result};
 use crate::model::{SourceInfo, Track};
 
@@ -23,8 +21,8 @@ const SITE: &str = "the website";
 
 /// Extensions of files the core can download and decode directly.
 const MEDIA_EXTENSIONS: &[&str] = &[
-    "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "weba", "webm", "mp4", "m4v", "mov",
-    "mkv", "mka", "aif", "aiff", "caf", "wma",
+    "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "weba", "webm", "mp4", "m4v", "mov", "mkv", "mka", "aif",
+    "aiff", "caf", "wma",
 ];
 /// Adaptive streams the media backend handles.
 const STREAM_EXTENSIONS: &[&str] = &["m3u8", "mpd"];
@@ -83,12 +81,7 @@ pub(super) fn kind_of_path(path: &str) -> Option<MediaKind> {
 }
 
 pub(super) fn kind_of_content_type(content_type: &str) -> Option<MediaKind> {
-    let mime = content_type
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
+    let mime = content_type.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
     if matches!(
         mime.as_str(),
         "application/vnd.apple.mpegurl"
@@ -106,18 +99,12 @@ pub(super) fn kind_of_content_type(content_type: &str) -> Option<MediaKind> {
 }
 
 fn media(source: SourceInfo, url: &Url, kind: MediaKind) -> Resolution {
-    Resolution::Media {
-        source,
-        url: url.to_string(),
-        direct: kind == MediaKind::File,
-    }
+    Resolution::Media { source, url: url.to_string(), direct: kind == MediaKind::File }
 }
 
 /// Last path segment, as a stand-in title for bare media files.
 fn file_name(url: &Url) -> Option<String> {
-    canonical::segments(url)
-        .last()
-        .map(|s| s.replace("%20", " "))
+    canonical::segments(url).last().map(|s| s.replace("%20", " "))
 }
 
 pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Outcome> {
@@ -137,13 +124,7 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Outcome> {
         Err(e @ (MfError::Canceled | MfError::InvalidInput { .. })) => return Err(e),
         Err(e) => tracing::debug!("HEAD probe failed: {e}"),
     }
-    let backend = |source: SourceInfo| {
-        Outcome::Done(Resolution::Media {
-            source,
-            url: url.to_string(),
-            direct: false,
-        })
-    };
+    let backend = |source: SourceInfo| Outcome::Done(Resolution::Media { source, url: url.to_string(), direct: false });
     let page = match fetch_page(ctx, url).await {
         Ok(page) => page,
         Err(e @ (MfError::Canceled | MfError::InvalidInput { .. })) => return Err(e),
@@ -181,11 +162,7 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Outcome> {
                 }
             }
             Candidate::Site(target) => {
-                let fallback = Resolution::Media {
-                    source,
-                    url: url.to_string(),
-                    direct: false,
-                };
+                let fallback = Resolution::Media { source, url: url.to_string(), direct: false };
                 return Ok(Outcome::Embed { target, fallback });
             }
         }
@@ -208,38 +185,20 @@ pub(super) fn site_target(url: &Url) -> Option<Url> {
     let host = canonical::host_of(url);
     let parts = canonical::segments(url);
     let mapped = match host.as_str() {
-        "w.soundcloud.com" => url
-            .query_pairs()
-            .find(|(k, _)| k == "url")
-            .and_then(|(_, v)| Url::parse(&v).ok()),
+        "w.soundcloud.com" => url.query_pairs().find(|(k, _)| k == "url").and_then(|(_, v)| Url::parse(&v).ok()),
         "widget.deezer.com" => {
-            let i = parts
-                .iter()
-                .position(|p| matches!(*p, "track" | "album" | "playlist"))?;
-            Url::parse(&format!(
-                "https://www.deezer.com/{}/{}",
-                parts[i],
-                parts.get(i + 1)?
-            ))
-            .ok()
+            let i = parts.iter().position(|p| matches!(*p, "track" | "album" | "playlist"))?;
+            Url::parse(&format!("https://www.deezer.com/{}/{}", parts[i], parts.get(i + 1)?)).ok()
         }
         "embed.tidal.com" => match parts.as_slice() {
-            [kind, id, ..] => Url::parse(&format!(
-                "https://tidal.com/{}/{id}",
-                kind.trim_end_matches('s')
-            ))
-            .ok(),
+            [kind, id, ..] => Url::parse(&format!("https://tidal.com/{}/{id}", kind.trim_end_matches('s'))).ok(),
             _ => None,
         },
-        "www.mixcloud.com" | "mixcloud.com" if parts.first() == Some(&"widget") => url
-            .query_pairs()
-            .find(|(k, _)| k == "feed")
-            .and_then(|(_, feed)| {
-                Url::parse("https://www.mixcloud.com/")
-                    .ok()?
-                    .join(feed.trim_start_matches('/'))
-                    .ok()
-            }),
+        "www.mixcloud.com" | "mixcloud.com" if parts.first() == Some(&"widget") => {
+            url.query_pairs().find(|(k, _)| k == "feed").and_then(|(_, feed)| {
+                Url::parse("https://www.mixcloud.com/").ok()?.join(feed.trim_start_matches('/')).ok()
+            })
+        }
         _ => None,
     };
     let candidate = mapped.unwrap_or_else(|| url.clone());
@@ -254,9 +213,7 @@ pub(super) fn site_target(url: &Url) -> Option<Url> {
         Site::Deezer => deezer::entity(&canonical).is_some(),
         Site::Tidal => matches!(parts.first(), Some(&("track" | "album"))) && parts.len() >= 2,
         Site::SoundCloud | Site::Mixcloud => parts.len() >= 2,
-        Site::Vimeo => parts
-            .first()
-            .is_some_and(|p| p.chars().all(|c| c.is_ascii_digit())),
+        Site::Vimeo => parts.first().is_some_and(|p| p.chars().all(|c| c.is_ascii_digit())),
         Site::TikTok => parts.len() == 3 && parts[1] == "video",
         _ => false,
     };
@@ -278,22 +235,14 @@ fn declared(base: &Url, raw: &str, declared_type: Option<&str>) -> Option<Candid
     if declared_type.is_some_and(|t| t.contains("html")) {
         return None;
     }
-    let kind = kind_of_path(url.path())
-        .or(typed)
-        .unwrap_or(MediaKind::File);
+    let kind = kind_of_path(url.path()).or(typed).unwrap_or(MediaKind::File);
     Some(Candidate::Media(url, kind))
 }
 
 fn ld_media_nodes(doc: &Document) -> Vec<&Value> {
-    let mut nodes: Vec<&Value> = doc
-        .json_ld_of(&["AudioObject", "VideoObject", "MusicRecording"])
-        .collect();
+    let mut nodes: Vec<&Value> = doc.json_ld_of(&["AudioObject", "VideoObject", "MusicRecording"]).collect();
     // MusicRecording.audio may hold the AudioObject.
-    let nested: Vec<&Value> = nodes
-        .iter()
-        .filter_map(|n| n.get("audio"))
-        .filter(|a| a.is_object())
-        .collect();
+    let nested: Vec<&Value> = nodes.iter().filter_map(|n| n.get("audio")).filter(|a| a.is_object()).collect();
     nodes.extend(nested);
     nodes
 }
@@ -308,34 +257,20 @@ pub(super) fn discover(html: &str, base: &Url) -> Discovery {
         .map(str::to_string)
         .or_else(|| ld_nodes.iter().find_map(|n| str_at(n, "/name")))
         .or_else(|| doc.title.clone());
-    found.uploader = doc
-        .meta("music:musician_description")
-        .map(str::to_string)
-        .or_else(|| {
-            ld_nodes
-                .iter()
-                .map(|n| {
-                    super::join_artists(&ld_names(n.get("byArtist").or_else(|| n.get("author"))))
-                })
-                .find(|a| !a.is_empty())
-        });
+    found.uploader = doc.meta("music:musician_description").map(str::to_string).or_else(|| {
+        ld_nodes
+            .iter()
+            .map(|n| super::join_artists(&ld_names(n.get("byArtist").or_else(|| n.get("author")))))
+            .find(|a| !a.is_empty())
+    });
     found.thumbnail_url = doc
         .meta_any(&["og:image:secure_url", "og:image", "twitter:image"])
         .and_then(|u| absolute(base, u))
         .map(|u| u.to_string())
         .or_else(|| ld_nodes.iter().find_map(|n| str_at(n, "/thumbnailUrl")));
-    found.duration_ms = ld_nodes
-        .iter()
-        .find_map(|n| {
-            str_at(n, "/duration")
-                .as_deref()
-                .and_then(parse_iso_duration)
-        })
-        .or_else(|| {
-            doc.meta("music:duration")
-                .and_then(|d| d.parse::<u64>().ok())
-                .filter(|d| *d > 0)
-                .map(|d| d * 1000)
+    found.duration_ms =
+        ld_nodes.iter().find_map(|n| str_at(n, "/duration").as_deref().and_then(parse_iso_duration)).or_else(|| {
+            doc.meta("music:duration").and_then(|d| d.parse::<u64>().ok()).filter(|d| *d > 0).map(|d| d * 1000)
         });
     found.site_name = doc.meta("og:site_name").map(str::to_string);
     found.hints = doc
@@ -348,14 +283,9 @@ pub(super) fn discover(html: &str, base: &Url) -> Discovery {
             Some(finish_track(Track {
                 title: str_at(n, "/name")?,
                 artists,
-                album: n
-                    .pointer("/inAlbum/name")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
+                album: n.pointer("/inAlbum/name").and_then(Value::as_str).map(str::to_string),
                 isrc: str_at(n, "/isrcCode"),
-                duration_ms: str_at(n, "/duration")
-                    .as_deref()
-                    .and_then(parse_iso_duration),
+                duration_ms: str_at(n, "/duration").as_deref().and_then(parse_iso_duration),
                 ..Track::default()
             }))
         })
@@ -364,17 +294,11 @@ pub(super) fn discover(html: &str, base: &Url) -> Discovery {
     let mut candidates = Vec::new();
     let audio_type = doc.meta("og:audio:type");
     for key in ["og:audio:secure_url", "og:audio", "og:audio:url"] {
-        candidates.extend(
-            doc.meta_all(key)
-                .filter_map(|u| declared(base, u, audio_type)),
-        );
+        candidates.extend(doc.meta_all(key).filter_map(|u| declared(base, u, audio_type)));
     }
     let video_type = doc.meta("og:video:type");
     for key in ["og:video:secure_url", "og:video", "og:video:url"] {
-        candidates.extend(
-            doc.meta_all(key)
-                .filter_map(|u| declared(base, u, video_type)),
-        );
+        candidates.extend(doc.meta_all(key).filter_map(|u| declared(base, u, video_type)));
     }
     candidates.extend(
         doc.meta_all("twitter:player:stream")
@@ -382,11 +306,7 @@ pub(super) fn discover(html: &str, base: &Url) -> Discovery {
     );
     for node in &ld_nodes {
         if let Some(content) = str_at(node, "/contentUrl") {
-            candidates.extend(declared(
-                base,
-                &content,
-                str_at(node, "/encodingFormat").as_deref(),
-            ));
+            candidates.extend(declared(base, &content, str_at(node, "/encodingFormat").as_deref()));
         }
         if let Some(embed) = str_at(node, "/embedUrl")
             && let Some(target) = absolute(base, &embed).and_then(|u| site_target(&u))
@@ -394,22 +314,10 @@ pub(super) fn discover(html: &str, base: &Url) -> Discovery {
             candidates.push(Candidate::Site(target));
         }
     }
-    candidates.extend(
-        doc.media_sources
-            .iter()
-            .filter_map(|src| declared(base, src, None)),
-    );
-    let players = doc
-        .iframes
-        .iter()
-        .map(String::as_str)
-        .chain(doc.meta_all("twitter:player"));
-    candidates.extend(
-        players
-            .filter_map(|src| absolute(base, src))
-            .filter_map(|u| site_target(&u))
-            .map(Candidate::Site),
-    );
+    candidates.extend(doc.media_sources.iter().filter_map(|src| declared(base, src, None)));
+    let players = doc.iframes.iter().map(String::as_str).chain(doc.meta_all("twitter:player"));
+    candidates
+        .extend(players.filter_map(|src| absolute(base, src)).filter_map(|u| site_target(&u)).map(Candidate::Site));
     let mut unique: Vec<Candidate> = Vec::new();
     for candidate in candidates {
         if !unique.contains(&candidate) {
@@ -427,11 +335,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!(
-            "{}/tests/fixtures/links/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture")
+        std::fs::read_to_string(format!("{}/tests/fixtures/links/{name}", env!("CARGO_MANIFEST_DIR"))).expect("fixture")
     }
 
     fn url(s: &str) -> Url {
@@ -446,14 +350,8 @@ mod tests {
         assert_eq!(kind_of_path("/watch"), None);
         assert_eq!(kind_of_path("/v1.2/page"), None);
         assert_eq!(kind_of_content_type("audio/mpeg"), Some(MediaKind::File));
-        assert_eq!(
-            kind_of_content_type("video/mp4; codecs=avc1"),
-            Some(MediaKind::File)
-        );
-        assert_eq!(
-            kind_of_content_type("application/vnd.apple.mpegurl"),
-            Some(MediaKind::Stream)
-        );
+        assert_eq!(kind_of_content_type("video/mp4; codecs=avc1"), Some(MediaKind::File));
+        assert_eq!(kind_of_content_type("application/vnd.apple.mpegurl"), Some(MediaKind::Stream));
         assert_eq!(kind_of_content_type("text/html; charset=utf-8"), None);
     }
 
@@ -461,10 +359,7 @@ mod tests {
     fn og_audio_page() {
         let base = url("https://www.jamendo.com/track/1886257/alone");
         let found = discover(&fixture("generic_og_audio.html"), &base);
-        assert_eq!(
-            found.title.as_deref(),
-            Some("Color Out - Alone | Jamendo Music | Free music downloads")
-        );
+        assert_eq!(found.title.as_deref(), Some("Color Out - Alone | Jamendo Music | Free music downloads"));
         assert_eq!(found.site_name.as_deref(), Some("Jamendo Music"));
         assert!(found.thumbnail_url.is_some());
         match found.candidates.first() {
@@ -515,60 +410,38 @@ mod tests {
     #[test]
     fn site_targets() {
         assert_eq!(
-            site_target(&url(
-                "https://embed.music.apple.com/us/album/x/1559885420?i=1559885421"
-            ))
-            .map(|u| u.to_string())
-            .as_deref(),
+            site_target(&url("https://embed.music.apple.com/us/album/x/1559885420?i=1559885421"))
+                .map(|u| u.to_string())
+                .as_deref(),
             Some("https://music.apple.com/us/album/x/1559885420?i=1559885421")
         );
         assert_eq!(
-            site_target(&url("https://embed.tidal.com/tracks/1781887"))
-                .map(|u| u.to_string())
-                .as_deref(),
+            site_target(&url("https://embed.tidal.com/tracks/1781887")).map(|u| u.to_string()).as_deref(),
             Some("https://tidal.com/track/1781887")
         );
         assert_eq!(
-            site_target(&url(
-                "https://www.mixcloud.com/widget/iframe/?feed=%2Fspartacus%2Fparty-time%2F"
-            ))
-            .map(|u| u.to_string())
-            .as_deref(),
+            site_target(&url("https://www.mixcloud.com/widget/iframe/?feed=%2Fspartacus%2Fparty-time%2F"))
+                .map(|u| u.to_string())
+                .as_deref(),
             Some("https://www.mixcloud.com/spartacus/party-time")
         );
         assert_eq!(site_target(&url("https://www.youtube.com/")), None);
         assert_eq!(site_target(&url("https://www.facebook.com/tr?id=1")), None);
         assert_eq!(
-            site_target(&url("https://player.vimeo.com/video/76979871"))
-                .map(|u| u.to_string())
-                .as_deref(),
+            site_target(&url("https://player.vimeo.com/video/76979871")).map(|u| u.to_string()).as_deref(),
             Some("https://vimeo.com/76979871")
         );
     }
 
     fn respond(_: &str, path: &str, port: u16) -> (String, String, String) {
-        let html = |body: String| {
-            (
-                "200 OK".to_string(),
-                "Content-Type: text/html\r\n".to_string(),
-                body,
-            )
-        };
+        let html = |body: String| ("200 OK".to_string(), "Content-Type: text/html\r\n".to_string(), body);
         match path {
-            "/stream" => (
-                "200 OK".into(),
-                "Content-Type: audio/mpeg\r\n".into(),
-                String::new(),
-            ),
+            "/stream" => ("200 OK".into(), "Content-Type: audio/mpeg\r\n".into(), String::new()),
             "/page" => html(format!(
                 r#"<meta property="og:title" content="A page"><meta property="og:audio" content="http://127.0.0.1:{port}/song.mp3">"#
             )),
-            "/private" => {
-                html(r#"<meta property="og:audio" content="http://192.168.0.10/a.mp3">"#.into())
-            }
-            "/embed" => {
-                html(r#"<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe>"#.into())
-            }
+            "/private" => html(r#"<meta property="og:audio" content="http://192.168.0.10/a.mp3">"#.into()),
+            "/embed" => html(r#"<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe>"#.into()),
             "/gone" => ("404 Not Found".into(), String::new(), String::new()),
             _ => html("<html><title>Plain</title></html>".into()),
         }
@@ -579,60 +452,34 @@ mod tests {
         let port = fetch::mock_server(respond).await;
         let http = fetch::test_client();
         let cancel = crate::util::cancel::CancelToken::new();
-        let ctx = Ctx {
-            http: &http,
-            country: "us".into(),
-            cancel: &cancel,
-        };
+        let ctx = Ctx { http: &http, country: "us".into(), cancel: &cancel };
         let at = |path: &str| url(&format!("http://127.0.0.1:{port}{path}"));
         let direct = |o: Outcome| match o {
-            Outcome::Done(Resolution::Media {
-                url,
-                direct,
-                source,
-            }) => (url, direct, source.title),
+            Outcome::Done(Resolution::Media { url, direct, source }) => (url, direct, source.title),
             other => panic!("unexpected {other:?}"),
         };
 
         let (u, d, title) = direct(resolve(&ctx, &at("/song.mp3")).await.unwrap());
-        assert_eq!(
-            (u.as_str(), d, title.as_deref()),
-            (at("/song.mp3").as_str(), true, Some("song.mp3"))
-        );
+        assert_eq!((u.as_str(), d, title.as_deref()), (at("/song.mp3").as_str(), true, Some("song.mp3")));
         let (u, d, _) = direct(resolve(&ctx, &at("/stream")).await.unwrap());
         assert_eq!((u, d), (at("/stream").to_string(), true));
         let (u, d, title) = direct(resolve(&ctx, &at("/page")).await.unwrap());
-        assert_eq!(
-            (u, d, title.as_deref()),
-            (at("/song.mp3").to_string(), true, Some("A page"))
-        );
+        assert_eq!((u, d, title.as_deref()), (at("/song.mp3").to_string(), true, Some("A page")));
         // Media on a private address is ignored; the page goes to the media backend.
         let (u, d, _) = direct(resolve(&ctx, &at("/private")).await.unwrap());
         assert_eq!((u, d), (at("/private").to_string(), false));
         let (u, d, title) = direct(resolve(&ctx, &at("/plain")).await.unwrap());
-        assert_eq!(
-            (u, d, title.as_deref()),
-            (at("/plain").to_string(), false, Some("Plain"))
-        );
+        assert_eq!((u, d, title.as_deref()), (at("/plain").to_string(), false, Some("Plain")));
         match resolve(&ctx, &at("/embed")).await.unwrap() {
-            Outcome::Embed { target, .. } => assert_eq!(
-                target.as_str(),
-                "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-            ),
+            Outcome::Embed { target, .. } => assert_eq!(target.as_str(), "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
             other => panic!("unexpected {other:?}"),
         }
-        assert!(matches!(
-            resolve(&ctx, &at("/gone")).await,
-            Err(MfError::MediaUnavailable { .. })
-        ));
+        assert!(matches!(resolve(&ctx, &at("/gone")).await, Err(MfError::MediaUnavailable { .. })));
     }
 
     #[test]
     fn empty_pages_have_no_candidates() {
-        let found = discover(
-            "<html><head><title>Nothing</title></head></html>",
-            &url("https://example.com/"),
-        );
+        let found = discover("<html><head><title>Nothing</title></head></html>", &url("https://example.com/"));
         assert!(found.candidates.is_empty());
         assert_eq!(found.title.as_deref(), Some("Nothing"));
         let found = discover(

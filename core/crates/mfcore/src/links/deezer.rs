@@ -16,9 +16,7 @@ pub(super) fn entity(url: &Url) -> Option<(&'static str, String)> {
         "playlist" => "playlist",
         _ => return None,
     };
-    let id = parts
-        .get(1)
-        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))?;
+    let id = parts.get(1).filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))?;
     Some((kind, (*id).to_string()))
 }
 
@@ -45,14 +43,11 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Resolution> {
         _ => deezer::playlist(ctx.http, &id, ctx.cancel).await?,
     };
     if tracks.is_empty() {
-        return Err(MfError::MediaUnavailable {
-            message: "This Deezer link has no playable tracks.".into(),
-        });
+        return Err(MfError::MediaUnavailable { message: "This Deezer link has no playable tracks.".into() });
     }
     source.item_count = tracks.len() as u32;
     if source.duration_ms.is_none() {
-        source.duration_ms =
-            Some(tracks.iter().filter_map(|t| t.duration_ms).sum()).filter(|d| *d > 0);
+        source.duration_ms = Some(tracks.iter().filter_map(|t| t.duration_ms).sum()).filter(|d| *d > 0);
     }
     Ok(Resolution::Tracks { source, tracks })
 }
@@ -65,12 +60,8 @@ pub(super) async fn album_via_deezer(
     artist: &str,
     mut source: SourceInfo,
 ) -> Result<Resolution> {
-    let not_found = || MfError::MediaUnavailable {
-        message: "Couldn't find the tracks on this album.".into(),
-    };
-    let id = deezer::find_album(ctx.http, title, artist, ctx.cancel)
-        .await?
-        .ok_or_else(not_found)?;
+    let not_found = || MfError::MediaUnavailable { message: "Couldn't find the tracks on this album.".into() };
+    let id = deezer::find_album(ctx.http, title, artist, ctx.cancel).await?.ok_or_else(not_found)?;
     let (album, tracks) = deezer::album(ctx.http, &id, ctx.cancel).await?;
     if tracks.is_empty() {
         return Err(not_found());
@@ -90,14 +81,8 @@ mod tests {
     #[test]
     fn parses_entities() {
         let e = |s: &str| entity(&Url::parse(s).unwrap());
-        assert_eq!(
-            e("https://www.deezer.com/track/3135556"),
-            Some(("track", "3135556".into()))
-        );
-        assert_eq!(
-            e("https://www.deezer.com/playlist/13957557901"),
-            Some(("playlist", "13957557901".into()))
-        );
+        assert_eq!(e("https://www.deezer.com/track/3135556"), Some(("track", "3135556".into())));
+        assert_eq!(e("https://www.deezer.com/playlist/13957557901"), Some(("playlist", "13957557901".into())));
         assert_eq!(e("https://www.deezer.com/artist/27"), None);
         assert_eq!(e("https://www.deezer.com/track/abc"), None);
     }

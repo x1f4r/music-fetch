@@ -36,8 +36,9 @@ impl Site {
             "music.apple.com" | "itunes.apple.com" => return Site::AppleMusic,
             "youtu.be" => return Site::YouTube,
             "redd.it" => return Site::Reddit,
-            "x.com" | "www.x.com" | "mobile.x.com" | "twitter.com" | "www.twitter.com"
-            | "mobile.twitter.com" => return Site::X,
+            "x.com" | "www.x.com" | "mobile.x.com" | "twitter.com" | "www.twitter.com" | "mobile.twitter.com" => {
+                return Site::X;
+            }
             _ => {}
         }
         if host.starts_with("music.amazon.") {
@@ -87,13 +88,9 @@ impl Site {
             Site::TikTok => Service::TikTok,
             Site::Instagram => Service::Instagram,
             Site::Bandcamp => Service::Bandcamp,
-            Site::X
-            | Site::Reddit
-            | Site::Twitch
-            | Site::Mixcloud
-            | Site::Vimeo
-            | Site::Facebook
-            | Site::Other => Service::Web,
+            Site::X | Site::Reddit | Site::Twitch | Site::Mixcloud | Site::Vimeo | Site::Facebook | Site::Other => {
+                Service::Web
+            }
         }
     }
 
@@ -124,10 +121,7 @@ impl Site {
 
     /// Streaming services whose links resolve to track metadata.
     pub fn is_streaming_service(self) -> bool {
-        matches!(
-            self,
-            Site::Spotify | Site::AppleMusic | Site::Deezer | Site::Tidal | Site::AmazonMusic
-        )
+        matches!(self, Site::Spotify | Site::AppleMusic | Site::Deezer | Site::Tidal | Site::AmazonMusic)
     }
 }
 

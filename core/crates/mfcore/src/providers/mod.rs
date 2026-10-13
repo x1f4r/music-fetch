@@ -29,11 +29,7 @@ pub struct ProviderMatch {
 }
 
 /// Send `request`, racing cancellation, and return the JSON body of a 2xx answer.
-async fn send_json(
-    request: reqwest::RequestBuilder,
-    cancel: &CancelToken,
-    service: &str,
-) -> Result<Value> {
+async fn send_json(request: reqwest::RequestBuilder, cancel: &CancelToken, service: &str) -> Result<Value> {
     let response = tokio::select! {
         r = request.timeout(REQUEST_TIMEOUT).send() => r,
         _ = cancel.canceled() => return Err(MfError::Canceled),
@@ -42,29 +38,20 @@ async fn send_json(
     let status = response.status();
     if status == StatusCode::TOO_MANY_REQUESTS {
         let wait = retry_after(response.headers()).unwrap_or(DEFAULT_RETRY);
-        return Err(MfError::RateLimited {
-            retry_in_ms: wait.as_millis() as u64,
-        });
+        return Err(MfError::RateLimited { retry_in_ms: wait.as_millis() as u64 });
     }
     if status.is_server_error() {
-        return Err(MfError::network(format!(
-            "{service} is unavailable (HTTP {}).",
-            status.as_u16()
-        )));
+        return Err(MfError::network(format!("{service} is unavailable (HTTP {}).", status.as_u16())));
     }
     if !status.is_success() {
-        return Err(MfError::network(format!(
-            "{service} rejected the request (HTTP {}).",
-            status.as_u16()
-        )));
+        return Err(MfError::network(format!("{service} rejected the request (HTTP {}).", status.as_u16())));
     }
     let body = tokio::select! {
         b = response.bytes() => b,
         _ = cancel.canceled() => return Err(MfError::Canceled),
     };
     let body = body.map_err(|e| transport_error(&e, service))?;
-    serde_json::from_slice(&body)
-        .map_err(|_| MfError::network(format!("{service} sent an unreadable answer.")))
+    serde_json::from_slice(&body).map_err(|_| MfError::network(format!("{service} sent an unreadable answer.")))
 }
 
 fn transport_error(e: &reqwest::Error, service: &str) -> MfError {
@@ -78,13 +65,7 @@ fn transport_error(e: &reqwest::Error, service: &str) -> MfError {
 }
 
 fn retry_after(headers: &HeaderMap) -> Option<Duration> {
-    let seconds = headers
-        .get(RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse::<u64>()
-        .ok()?;
+    let seconds = headers.get(RETRY_AFTER)?.to_str().ok()?.trim().parse::<u64>().ok()?;
     Some(Duration::from_secs(seconds.min(24 * 60 * 60)))
 }
 
@@ -109,10 +90,7 @@ fn number_at(value: &Value, pointer: &str) -> Option<f64> {
 
 /// Year from a date like "2015-10-23".
 fn year_of(date: &str) -> Option<u16> {
-    date.get(..4)?
-        .parse::<u16>()
-        .ok()
-        .filter(|y| (1000..=2999).contains(y))
+    date.get(..4)?.parse::<u16>().ok().filter(|y| (1000..=2999).contains(y))
 }
 
 /// Display string for credited artists: "A", "A & B", "A, B & C".
@@ -126,10 +104,7 @@ fn join_artists(artists: &[String]) -> String {
 
 /// Apple artwork template (`.../{w}x{h}bb.jpg`) at 1000 px.
 fn apple_artwork(template: &str) -> String {
-    template
-        .replace("{w}", "1000")
-        .replace("{h}", "1000")
-        .replace("{f}", "jpg")
+    template.replace("{w}", "1000").replace("{h}", "1000").replace("{f}", "jpg")
 }
 
 #[cfg(test)]

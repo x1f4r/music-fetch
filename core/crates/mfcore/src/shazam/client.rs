@@ -27,8 +27,7 @@ use crate::util::cancel::CancelToken;
 use crate::util::ratelimit::RateLimiter;
 
 const ENDPOINT: &str = "https://amp.shazam.com";
-const QUERY: &str =
-    "sync=true&webv3=true&sampling=true&connected=&shazamapiversion=v3&sharehub=true&video=v3";
+const QUERY: &str = "sync=true&webv3=true&sampling=true&connected=&shazamapiversion=v3&sharehub=true&video=v3";
 const CACHE_CAPACITY: usize = 256;
 /// Upper bound on breaker rounds within one `recognize` call.
 const MAX_THROTTLE_ROUNDS: u32 = 6;
@@ -212,9 +211,7 @@ impl ShazamClient {
     ) -> Result<Option<ShazamMatch>> {
         cancel.check()?;
         if (signature.sample_count as usize) < MIN_SAMPLES {
-            return Err(MfError::invalid(
-                "The clip is too short to recognize; at least 3 seconds are needed.",
-            ));
+            return Err(MfError::invalid("The clip is too short to recognize; at least 3 seconds are needed."));
         }
         let key: [u8; 32] = Sha256::digest(&signature.bytes).into();
         if let Some(hit) = self.cache.lock().get(&key) {
@@ -228,9 +225,7 @@ impl ShazamClient {
             // Wait out an open breaker without holding the queue.
             if let Some(remaining) = self.cooldown() {
                 if remaining > max_wait || throttles >= MAX_THROTTLE_ROUNDS {
-                    return Err(MfError::RateLimited {
-                        retry_in_ms: remaining.as_millis() as u64,
-                    });
+                    return Err(MfError::RateLimited { retry_in_ms: remaining.as_millis() as u64 });
                 }
                 cancel.sleep(remaining).await?;
             }
@@ -242,21 +237,17 @@ impl ShazamClient {
                 continue;
             }
             if priority == Priority::Batch
-                && let Some(ready) = queue
-                    .last_sent
-                    .map(|t| later(t, self.policy.batch_spacing.saturating_add(batch_jitter)))
+                && let Some(ready) =
+                    queue.last_sent.map(|t| later(t, self.policy.batch_spacing.saturating_add(batch_jitter)))
                 && ready > Instant::now()
             {
                 drop(queue);
                 cancel.sleep(ready - Instant::now()).await?;
                 continue;
             }
-            match self
-                .send_with_retries(&mut queue, signature, max_wait, cancel)
-                .await
-            {
+            match self.send_with_retries(&mut queue, signature, max_wait, cancel).await {
                 Ok(result) => {
-                    self.limiter.success().await;
+                    self.limiter.success();
                     *self.breaker_until.lock() = None;
                     self.cache.lock().insert(key, result.clone());
                     return Ok(result);
@@ -264,19 +255,9 @@ impl ShazamClient {
                 Err(Failure::Throttled(retry_after)) => {
                     throttles += 1;
                     let retry_after = retry_after.map(|d| d.min(MAX_RETRY_AFTER));
-                    let wait = self
-                        .limiter
-                        .throttled(
-                            self.policy.breaker_base,
-                            self.policy.breaker_max,
-                            retry_after,
-                        )
-                        .await;
+                    let wait = self.limiter.throttled(self.policy.breaker_base, self.policy.breaker_max, retry_after);
                     *self.breaker_until.lock() = Some(later(Instant::now(), wait));
-                    tracing::warn!(
-                        cooldown_s = wait.as_secs(),
-                        "shazam throttled; circuit breaker open"
-                    );
+                    tracing::warn!(cooldown_s = wait.as_secs(), "shazam throttled; circuit breaker open");
                 }
                 Err(Failure::Error(e)) => return Err(e),
             }
@@ -295,15 +276,9 @@ impl ShazamClient {
         let mut last_error = None;
         for attempt in 0..attempts {
             if attempt > 0 {
-                cancel
-                    .sleep(self.policy.retry_delays[attempt - 1])
-                    .await
-                    .map_err(Failure::Error)?;
+                cancel.sleep(self.policy.retry_delays[attempt - 1]).await.map_err(Failure::Error)?;
             }
-            self.limiter
-                .acquire(cancel, max_wait)
-                .await
-                .map_err(Failure::Error)?;
+            self.limiter.acquire(cancel, max_wait).await.map_err(Failure::Error)?;
             queue.last_sent = Some(Instant::now());
             match self.send_once(signature, cancel).await {
                 Attempt::Answer(result) => return Ok(result.map(|m| *m)),
@@ -312,9 +287,7 @@ impl ShazamClient {
                 Attempt::ServerError(status) => {
                     server_errors += 1;
                     tracing::debug!(status, attempt, "shazam server error");
-                    last_error = Some(MfError::network(format!(
-                        "Shazam is unavailable (HTTP {status})."
-                    )));
+                    last_error = Some(MfError::network(format!("Shazam is unavailable (HTTP {status}).")));
                 }
                 Attempt::Transient(e) => {
                     tracing::debug!(attempt, error = %e, "shazam request failed");
@@ -325,9 +298,7 @@ impl ShazamClient {
         if server_errors == attempts {
             return Err(Failure::Throttled(None));
         }
-        Err(Failure::Error(last_error.unwrap_or_else(|| {
-            MfError::network("Shazam did not answer.")
-        })))
+        Err(Failure::Error(last_error.unwrap_or_else(|| MfError::network("Shazam did not answer."))))
     }
 
     async fn send_once(&self, signature: &Signature, cancel: &CancelToken) -> Attempt {
@@ -342,10 +313,7 @@ impl ShazamClient {
         let request = self
             .http
             .post(url)
-            .header(
-                USER_AGENT,
-                USER_AGENTS[fastrand::usize(..USER_AGENTS.len())],
-            )
+            .header(USER_AGENT, USER_AGENTS[fastrand::usize(..USER_AGENTS.len())])
             .header(CONTENT_LANGUAGE, &self.content_language)
             .header(ACCEPT, "application/json")
             .json(&request_body(signature, crate::util::now_ms()))
@@ -408,49 +376,29 @@ fn transport_error(e: &reqwest::Error) -> MfError {
 
 /// `Retry-After` in seconds (HTTP dates are ignored).
 fn retry_after(headers: &HeaderMap) -> Option<Duration> {
-    let seconds = headers
-        .get(RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse::<u64>()
-        .ok()?;
+    let seconds = headers.get(RETRY_AFTER)?.to_str().ok()?.trim().parse::<u64>().ok()?;
     Some(Duration::from_secs(seconds))
 }
 
 /// `t + d` without overflow (waits are capped at a year).
 fn later(t: Instant, d: Duration) -> Instant {
-    t.checked_add(d.min(Duration::from_secs(365 * 24 * 60 * 60)))
-        .unwrap_or(t)
+    t.checked_add(d.min(Duration::from_secs(365 * 24 * 60 * 60))).unwrap_or(t)
 }
 
 fn random_up_to(max: Duration) -> Duration {
-    if max.is_zero() {
-        Duration::ZERO
-    } else {
-        Duration::from_millis(fastrand::u64(0..=max.as_millis() as u64))
-    }
+    if max.is_zero() { Duration::ZERO } else { Duration::from_millis(fastrand::u64(0..=max.as_millis() as u64)) }
 }
 
 fn normalize_country(country: &str) -> String {
     let country = country.trim().to_ascii_uppercase();
-    if country.len() == 2 && country.bytes().all(|b| b.is_ascii_uppercase()) {
-        country
-    } else {
-        "US".to_string()
-    }
+    if country.len() == 2 && country.bytes().all(|b| b.is_ascii_uppercase()) { country } else { "US".to_string() }
 }
 
 fn normalize_language(language: &str) -> String {
     let language = language.trim().replace('_', "-");
     let valid = (2..=16).contains(&language.len())
-        && language
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        && language
-            .bytes()
-            .next()
-            .is_some_and(|b| b.is_ascii_alphabetic());
+        && language.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        && language.bytes().next().is_some_and(|b| b.is_ascii_alphabetic());
     if valid { language } else { "en-US".to_string() }
 }
 
@@ -463,11 +411,7 @@ struct LruCache {
 
 impl LruCache {
     fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            map: HashMap::with_capacity(capacity),
-            order: VecDeque::with_capacity(capacity),
-        }
+        Self { capacity, map: HashMap::with_capacity(capacity), order: VecDeque::with_capacity(capacity) }
     }
 
     fn get(&mut self, key: &[u8; 32]) -> Option<Option<ShazamMatch>> {
@@ -520,35 +464,21 @@ mod tests {
     }
 
     fn client(server: &TestServer) -> ShazamClient {
-        ShazamClient::new(http_client(), "de", "de-DE")
-            .with_policy(policy())
-            .with_base_url(&server.url())
+        ShazamClient::new(http_client(), "de", "de-DE").with_policy(policy()).with_base_url(&server.url())
     }
 
     fn sig(seed: u8) -> Signature {
-        Signature {
-            bytes: vec![seed; 64],
-            sample_count: 192_000,
-        }
+        Signature { bytes: vec![seed; 64], sample_count: 192_000 }
     }
 
     #[tokio::test]
     async fn sends_songrec_shaped_request_and_parses_match() {
         let server = TestServer::start(vec![Reply::json(200, FIXTURE)]);
         let client = client(&server);
-        let m = client
-            .recognize(&sig(1), Priority::Interactive, &CancelToken::new())
-            .await
-            .unwrap()
-            .unwrap();
+        let m = client.recognize(&sig(1), Priority::Interactive, &CancelToken::new()).await.unwrap().unwrap();
         assert_eq!(m.track.title, "Get Lucky");
         assert_eq!(m.offset_ms, 47_996);
-        assert!(
-            m.track
-                .links
-                .iter()
-                .any(|l| l.url == "https://music.apple.com/de/song/617154366")
-        );
+        assert!(m.track.links.iter().any(|l| l.url == "https://music.apple.com/de/song/617154366"));
 
         let requests = server.requests();
         assert_eq!(requests.len(), 1);
@@ -556,18 +486,12 @@ mod tests {
         assert_eq!(r.method, "POST");
         let (path, query) = r.target.split_once('?').unwrap();
         assert_eq!(query, QUERY);
-        let rest = path
-            .strip_prefix("/discovery/v5/de-DE/DE/android/-/tag/")
-            .unwrap();
+        let rest = path.strip_prefix("/discovery/v5/de-DE/DE/android/-/tag/").unwrap();
         let (uuid1, uuid2) = rest.split_once('/').unwrap();
         assert_eq!(uuid1.len(), 36);
         assert_eq!(uuid1, uuid1.to_ascii_uppercase());
         assert!(uuid::Uuid::parse_str(uuid1).is_ok() && uuid::Uuid::parse_str(uuid2).is_ok());
-        assert!(
-            r.header("user-agent")
-                .unwrap()
-                .starts_with("Dalvik/2.1.0 (Linux; U; Android ")
-        );
+        assert!(r.header("user-agent").unwrap().starts_with("Dalvik/2.1.0 (Linux; U; Android "));
         assert_eq!(r.header("content-language"), Some("de_DE"));
         assert_eq!(r.header("content-type"), Some("application/json"));
 
@@ -585,49 +509,19 @@ mod tests {
         let server = TestServer::start(vec![Reply::json(200, NO_MATCH), Reply::json(200, FIXTURE)]);
         let client = client(&server);
         let cancel = CancelToken::new();
-        assert_eq!(
-            client
-                .recognize(&sig(2), Priority::Interactive, &cancel)
-                .await
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            client
-                .recognize(&sig(2), Priority::Interactive, &cancel)
-                .await
-                .unwrap(),
-            None
-        );
+        assert_eq!(client.recognize(&sig(2), Priority::Interactive, &cancel).await.unwrap(), None);
+        assert_eq!(client.recognize(&sig(2), Priority::Interactive, &cancel).await.unwrap(), None);
         assert_eq!(server.requests().len(), 1);
-        assert!(
-            client
-                .recognize(&sig(3), Priority::Interactive, &cancel)
-                .await
-                .unwrap()
-                .is_some()
-        );
-        assert!(
-            client
-                .recognize(&sig(3), Priority::Batch, &cancel)
-                .await
-                .unwrap()
-                .is_some()
-        );
+        assert!(client.recognize(&sig(3), Priority::Interactive, &cancel).await.unwrap().is_some());
+        assert!(client.recognize(&sig(3), Priority::Batch, &cancel).await.unwrap().is_some());
         assert_eq!(server.requests().len(), 2);
     }
 
     #[tokio::test]
     async fn rejects_too_short_clips_without_a_request() {
         let server = TestServer::start(vec![Reply::json(200, FIXTURE)]);
-        let short = Signature {
-            bytes: vec![1; 64],
-            sample_count: 47_999,
-        };
-        let err = client(&server)
-            .recognize(&short, Priority::Interactive, &CancelToken::new())
-            .await
-            .unwrap_err();
+        let short = Signature { bytes: vec![1; 64], sample_count: 47_999 };
+        let err = client(&server).recognize(&short, Priority::Interactive, &CancelToken::new()).await.unwrap_err();
         assert!(matches!(err, MfError::InvalidInput { .. }));
         assert!(server.requests().is_empty());
     }
@@ -643,33 +537,20 @@ mod tests {
         let client = client(&server).with_policy(spaced);
         let cancel = CancelToken::new();
         for seed in 10..13 {
-            client
-                .recognize(&sig(seed), Priority::Interactive, &cancel)
-                .await
-                .unwrap();
+            client.recognize(&sig(seed), Priority::Interactive, &cancel).await.unwrap();
         }
         for seed in 13..15 {
-            client
-                .recognize(&sig(seed), Priority::Batch, &cancel)
-                .await
-                .unwrap();
+            client.recognize(&sig(seed), Priority::Batch, &cancel).await.unwrap();
         }
         // Server-side timestamps carry some scheduling noise; allow 30 ms.
         let at: Vec<Instant> = server.requests().iter().map(|r| r.at).collect();
         assert_eq!(at.len(), 5);
         for pair in at[..3].windows(2) {
             let gap = pair[1] - pair[0];
-            assert!(
-                gap >= Duration::from_millis(90) && gap < Duration::from_millis(330),
-                "interactive gap {gap:?}"
-            );
+            assert!(gap >= Duration::from_millis(90) && gap < Duration::from_millis(330), "interactive gap {gap:?}");
         }
         for pair in at[2..].windows(2) {
-            assert!(
-                pair[1] - pair[0] >= Duration::from_millis(330),
-                "batch gap {:?}",
-                pair[1] - pair[0]
-            );
+            assert!(pair[1] - pair[0] >= Duration::from_millis(330), "batch gap {:?}", pair[1] - pair[0]);
         }
     }
 
@@ -678,23 +559,12 @@ mod tests {
         let server = TestServer::start(vec![Reply::new(429, ""), Reply::json(200, FIXTURE)]);
         let client = client(&server);
         let cancel = CancelToken::new();
-        let err = client
-            .recognize(&sig(20), Priority::Interactive, &cancel)
-            .await
-            .unwrap_err();
-        let MfError::RateLimited { retry_in_ms } = err else {
-            panic!("expected RateLimited, got {err:?}")
-        };
-        assert!(
-            (250..=340).contains(&retry_in_ms),
-            "retry_in_ms {retry_in_ms}"
-        );
+        let err = client.recognize(&sig(20), Priority::Interactive, &cancel).await.unwrap_err();
+        let MfError::RateLimited { retry_in_ms } = err else { panic!("expected RateLimited, got {err:?}") };
+        assert!((250..=340).contains(&retry_in_ms), "retry_in_ms {retry_in_ms}");
         assert!(client.cooldown().is_some());
         // While open, interactive requests fail without touching the network.
-        let err = client
-            .recognize(&sig(21), Priority::Interactive, &cancel)
-            .await
-            .unwrap_err();
+        let err = client.recognize(&sig(21), Priority::Interactive, &cancel).await.unwrap_err();
         assert!(matches!(err, MfError::RateLimited { .. }));
         assert_eq!(server.requests().len(), 1);
     }
@@ -704,10 +574,7 @@ mod tests {
         let server = TestServer::start(vec![Reply::new(429, ""), Reply::json(200, FIXTURE)]);
         let client = client(&server);
         let started = Instant::now();
-        let m = client
-            .recognize(&sig(22), Priority::Batch, &CancelToken::new())
-            .await
-            .unwrap();
+        let m = client.recognize(&sig(22), Priority::Batch, &CancelToken::new()).await.unwrap();
         assert!(m.is_some());
         let requests = server.requests();
         assert_eq!(requests.len(), 2);
@@ -720,17 +587,9 @@ mod tests {
     async fn retry_after_is_honoured() {
         let server = TestServer::start(vec![Reply::new(429, "").header("Retry-After", "1")]);
         let client = client(&server);
-        let err = client
-            .recognize(&sig(23), Priority::Interactive, &CancelToken::new())
-            .await
-            .unwrap_err();
-        let MfError::RateLimited { retry_in_ms } = err else {
-            panic!("expected RateLimited, got {err:?}")
-        };
-        assert!(
-            (990..=1200).contains(&retry_in_ms),
-            "retry_in_ms {retry_in_ms}"
-        );
+        let err = client.recognize(&sig(23), Priority::Interactive, &CancelToken::new()).await.unwrap_err();
+        let MfError::RateLimited { retry_in_ms } = err else { panic!("expected RateLimited, got {err:?}") };
+        assert!((990..=1200).contains(&retry_in_ms), "retry_in_ms {retry_in_ms}");
     }
 
     #[tokio::test]
@@ -738,10 +597,7 @@ mod tests {
         let server = TestServer::start(vec![Reply::new(429, "").header("Retry-After", "60")]);
         let client = client(&server);
         let started = Instant::now();
-        let err = client
-            .recognize(&sig(24), Priority::Batch, &CancelToken::new())
-            .await
-            .unwrap_err();
+        let err = client.recognize(&sig(24), Priority::Batch, &CancelToken::new()).await.unwrap_err();
         assert!(matches!(err, MfError::RateLimited { .. }));
         assert!(started.elapsed() < Duration::from_secs(2));
         assert_eq!(server.requests().len(), 1);
@@ -751,47 +607,28 @@ mod tests {
     async fn non_json_200_opens_the_breaker() {
         let server = TestServer::start(vec![Reply::new(200, "<html>Too many requests</html>")]);
         let client = client(&server);
-        let err = client
-            .recognize(&sig(25), Priority::Interactive, &CancelToken::new())
-            .await
-            .unwrap_err();
+        let err = client.recognize(&sig(25), Priority::Interactive, &CancelToken::new()).await.unwrap_err();
         assert!(matches!(err, MfError::RateLimited { .. }));
         assert!(client.cooldown().is_some());
     }
 
     #[tokio::test]
     async fn server_errors_are_retried() {
-        let server = TestServer::start(vec![
-            Reply::new(503, ""),
-            Reply::new(502, ""),
-            Reply::json(200, FIXTURE),
-        ]);
+        let server = TestServer::start(vec![Reply::new(503, ""), Reply::new(502, ""), Reply::json(200, FIXTURE)]);
         let client = client(&server);
-        let m = client
-            .recognize(&sig(26), Priority::Interactive, &CancelToken::new())
-            .await
-            .unwrap();
+        let m = client.recognize(&sig(26), Priority::Interactive, &CancelToken::new()).await.unwrap();
         assert!(m.is_some());
         let at: Vec<Instant> = server.requests().iter().map(|r| r.at).collect();
         assert_eq!(at.len(), 3);
-        assert!(
-            at[1] - at[0] >= Duration::from_millis(35),
-            "retries keep the spacing"
-        );
-        assert!(
-            at[2] - at[1] >= Duration::from_millis(55),
-            "second retry after 60 ms"
-        );
+        assert!(at[1] - at[0] >= Duration::from_millis(35), "retries keep the spacing");
+        assert!(at[2] - at[1] >= Duration::from_millis(55), "second retry after 60 ms");
     }
 
     #[tokio::test]
     async fn a_burst_of_server_errors_opens_the_breaker() {
         let server = TestServer::start(vec![Reply::new(500, "")]);
         let client = client(&server);
-        let err = client
-            .recognize(&sig(27), Priority::Interactive, &CancelToken::new())
-            .await
-            .unwrap_err();
+        let err = client.recognize(&sig(27), Priority::Interactive, &CancelToken::new()).await.unwrap_err();
         assert!(matches!(err, MfError::RateLimited { .. }));
         assert_eq!(server.requests().len(), 3);
         assert!(client.cooldown().is_some());
@@ -801,34 +638,20 @@ mod tests {
     async fn bad_request_is_not_retried() {
         let server = TestServer::start(vec![Reply::new(400, "")]);
         let client = client(&server);
-        let err = client
-            .recognize(&sig(28), Priority::Interactive, &CancelToken::new())
-            .await
-            .unwrap_err();
-        assert_eq!(
-            err,
-            MfError::network("Shazam rejected the request (HTTP 400).")
-        );
+        let err = client.recognize(&sig(28), Priority::Interactive, &CancelToken::new()).await.unwrap_err();
+        assert_eq!(err, MfError::network("Shazam rejected the request (HTTP 400)."));
         assert_eq!(server.requests().len(), 1);
         assert!(client.cooldown().is_none());
     }
 
     #[tokio::test]
     async fn timeouts_are_retried_then_reported() {
-        let server = TestServer::start(vec![
-            Reply::json(200, FIXTURE).delayed(Duration::from_millis(1500)),
-        ]);
+        let server = TestServer::start(vec![Reply::json(200, FIXTURE).delayed(Duration::from_millis(1500))]);
         let client = client(&server);
-        let err = client
-            .recognize(&sig(29), Priority::Interactive, &CancelToken::new())
-            .await
-            .unwrap_err();
+        let err = client.recognize(&sig(29), Priority::Interactive, &CancelToken::new()).await.unwrap_err();
         assert_eq!(err, MfError::network("Shazam did not answer in time."));
         assert_eq!(server.requests().len(), 3);
-        assert!(
-            client.cooldown().is_none(),
-            "timeouts do not open the breaker"
-        );
+        assert!(client.cooldown().is_none(), "timeouts do not open the breaker");
     }
 
     #[tokio::test]
@@ -837,22 +660,15 @@ mod tests {
             let server = TestServer::start(vec![]);
             server.url()
         };
-        let client = ShazamClient::new(http_client(), "US", "en-US")
-            .with_policy(policy())
-            .with_base_url(&url);
-        let err = client
-            .recognize(&sig(30), Priority::Interactive, &CancelToken::new())
-            .await
-            .unwrap_err();
+        let client = ShazamClient::new(http_client(), "US", "en-US").with_policy(policy()).with_base_url(&url);
+        let err = client.recognize(&sig(30), Priority::Interactive, &CancelToken::new()).await.unwrap_err();
         assert!(matches!(err, MfError::Network { .. }), "{err:?}");
     }
 
     #[tokio::test]
     async fn cancel_interrupts_breaker_wait_and_requests() {
-        let server = TestServer::start(vec![
-            Reply::new(429, ""),
-            Reply::json(200, FIXTURE).delayed(Duration::from_secs(5)),
-        ]);
+        let server =
+            TestServer::start(vec![Reply::new(429, ""), Reply::json(200, FIXTURE).delayed(Duration::from_secs(5))]);
         let client = client(&server);
         let cancel = CancelToken::new();
         let canceller = {
@@ -863,20 +679,11 @@ mod tests {
             })
         };
         let started = Instant::now();
-        let err = client
-            .recognize(&sig(31), Priority::Batch, &cancel)
-            .await
-            .unwrap_err();
+        let err = client.recognize(&sig(31), Priority::Batch, &cancel).await.unwrap_err();
         assert_eq!(err, MfError::Canceled);
         assert!(started.elapsed() < Duration::from_millis(250));
         canceller.await.unwrap();
-        assert_eq!(
-            client
-                .recognize(&sig(32), Priority::Batch, &cancel)
-                .await
-                .unwrap_err(),
-            MfError::Canceled
-        );
+        assert_eq!(client.recognize(&sig(32), Priority::Batch, &cancel).await.unwrap_err(), MfError::Canceled);
     }
 
     #[test]

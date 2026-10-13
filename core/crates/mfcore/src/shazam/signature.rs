@@ -38,9 +38,7 @@ const MIN_POWER: f32 = 1.0 / 64.0;
 const NEIGHBOUR_BINS: [isize; 8] = [-10, -7, -4, -3, 1, 2, 5, 8];
 /// Time neighbours as ring offsets from the newest slot: frames c−7, c+1, c−45,
 /// c−38, c−31, c−24, c−17, c−10, c+4, c+11, c+18, c+25, c+32, c+39.
-const NEIGHBOUR_FRAMES: [usize; 14] = [
-    203, 211, 165, 172, 179, 186, 193, 200, 214, 221, 228, 235, 242, 249,
-];
+const NEIGHBOUR_FRAMES: [usize; 14] = [203, 211, 165, 172, 179, 186, 193, 200, 214, 221, 228, 235, 242, 249];
 /// Frames of zeros fed after the input when `Options::pad_tail` is set.
 const TAIL_FRAMES: usize = DETECT_DELAY;
 
@@ -171,10 +169,7 @@ pub fn generate_with(samples: &[i16], options: &Options) -> Signature {
     let clip = middle(samples, MAX_SAMPLES);
     let bands = peaks(clip, options.pad_tail);
     let sample_count = u32::try_from(clip.len()).unwrap_or(u32::MAX);
-    Signature {
-        bytes: encode(&bands, sample_count),
-        sample_count,
-    }
+    Signature { bytes: encode(&bands, sample_count), sample_count }
 }
 
 /// The middle `max` samples of `samples`.
@@ -251,11 +246,7 @@ impl Fingerprinter {
         for (i, x) in self.frame_in.iter_mut().enumerate() {
             *x = self.ring[(self.ring_pos + i) % FFT_SIZE] as f32 * self.window[i];
         }
-        if self
-            .fft
-            .process_with_scratch(&mut self.frame_in, &mut self.spectrum, &mut self.scratch)
-            .is_err()
-        {
+        if self.fft.process_with_scratch(&mut self.frame_in, &mut self.spectrum, &mut self.scratch).is_err() {
             // Buffer sizes come from the plan itself, so this cannot happen.
             self.spectrum.fill(Complex::new(0.0, 0.0));
         }
@@ -269,17 +260,12 @@ impl Fingerprinter {
         // Spread over the next two bins, then back over frames −1, −3 and −6.
         self.current.copy_from_slice(power);
         for k in 0..BINS - 2 {
-            self.current[k] = self.current[k]
-                .max(self.current[k + 1])
-                .max(self.current[k + 2]);
+            self.current[k] = self.current[k].max(self.current[k + 1]).max(self.current[k + 2]);
         }
         self.spread[slot * BINS..(slot + 1) * BINS].copy_from_slice(&self.current);
         for back in [1, 3, 6] {
             let other = (slot + RING - back) % RING;
-            for (s, &c) in self.spread[other * BINS..(other + 1) * BINS]
-                .iter_mut()
-                .zip(&self.current)
-            {
+            for (s, &c) in self.spread[other * BINS..(other + 1) * BINS].iter_mut().zip(&self.current) {
                 *s = s.max(c);
             }
         }
@@ -303,10 +289,7 @@ impl Fingerprinter {
             if v < MIN_POWER || v < spread_b[k - 1] {
                 continue;
             }
-            let mut m = NEIGHBOUR_BINS
-                .iter()
-                .map(|&o| spread_b[k.wrapping_add_signed(o)])
-                .fold(f32::MIN, f32::max);
+            let mut m = NEIGHBOUR_BINS.iter().map(|&o| spread_b[k.wrapping_add_signed(o)]).fold(f32::MIN, f32::max);
             if v <= m {
                 continue;
             }
@@ -322,11 +305,7 @@ impl Fingerprinter {
             let before = log_magnitude(power[k - 1]);
             let after = log_magnitude(power[k + 1]);
             let curvature = 2.0 * mag - before - after;
-            let shift = if curvature > 0.0 {
-                (after - before) * 32.0 / curvature
-            } else {
-                0.0
-            };
+            let shift = if curvature > 0.0 { (after - before) * 32.0 / curvature } else { 0.0 };
             let fbin = (k as i32 * 64 + shift.trunc() as i32).clamp(0, u16::MAX as i32) as u32;
             // fbin × 16000 / 2 / 1024 / 64 == fbin × 125 / 1024 (exact).
             let Some(band) = Band::from_hz(fbin * 125 / 1024) else {
@@ -368,11 +347,7 @@ pub fn encode(bands: &BandPeaks, sample_count: u32) -> Vec<u8> {
     set_u32(&mut out, 8, body_len);
     set_u32(&mut out, 12, MAGIC2);
     set_u32(&mut out, 28, SAMPLE_RATE_ID_16K << 27);
-    set_u32(
-        &mut out,
-        40,
-        sample_count.saturating_add(sample_rate_samples),
-    );
+    set_u32(&mut out, 40, sample_count.saturating_add(sample_rate_samples));
     set_u32(&mut out, 44, FIXED_FIELD);
     set_u32(&mut out, 48, TLV_SIGNATURE);
     set_u32(&mut out, 52, body_len);
@@ -427,12 +402,8 @@ impl DecodedSignature {
 pub fn decode(bytes: &[u8]) -> Result<DecodedSignature> {
     let mut reader = Reader::new(bytes);
     let bytes = if reader.u32_at(0) == Some(APPLE_WRAPPER_MAGIC) {
-        let skip = reader
-            .u32_at(8)
-            .ok_or_else(|| invalid("truncated wrapper"))? as usize;
-        bytes
-            .get(skip..)
-            .ok_or_else(|| invalid("truncated wrapper"))?
+        let skip = reader.u32_at(8).ok_or_else(|| invalid("truncated wrapper"))? as usize;
+        bytes.get(skip..).ok_or_else(|| invalid("truncated wrapper"))?
     } else {
         bytes
     };
@@ -472,28 +443,17 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedSignature> {
     let mut bands: BandPeaks = Default::default();
     let mut pos = HEADER_LEN + 8;
     while pos < bytes.len() {
-        let tag = reader
-            .u32_at(pos)
-            .ok_or_else(|| invalid("truncated block"))?;
-        let len = reader
-            .u32_at(pos + 4)
-            .ok_or_else(|| invalid("truncated block"))? as usize;
+        let tag = reader.u32_at(pos).ok_or_else(|| invalid("truncated block"))?;
+        let len = reader.u32_at(pos + 4).ok_or_else(|| invalid("truncated block"))? as usize;
         let start = pos + 8;
-        let payload = start
-            .checked_add(len)
-            .and_then(|end| bytes.get(start..end))
-            .ok_or_else(|| invalid("truncated block"))?;
+        let payload =
+            start.checked_add(len).and_then(|end| bytes.get(start..end)).ok_or_else(|| invalid("truncated block"))?;
         if let Some(index) = tag.checked_sub(TLV_BAND_BASE).filter(|i| *i < 4) {
             bands[index as usize] = decode_peaks(payload)?;
         }
         pos = (start + len).next_multiple_of(4);
     }
-    Ok(DecodedSignature {
-        sample_rate,
-        sample_count,
-        apple,
-        bands,
-    })
+    Ok(DecodedSignature { sample_rate, sample_count, apple, bands })
 }
 
 fn decode_peaks(payload: &[u8]) -> Result<Vec<Peak>> {
@@ -504,26 +464,14 @@ fn decode_peaks(payload: &[u8]) -> Result<Vec<Peak>> {
     while pos < payload.len() {
         let delta = payload[pos];
         if delta == 0xFF {
-            last = reader
-                .u32_at(pos + 1)
-                .ok_or_else(|| invalid("truncated peak"))?;
+            last = reader.u32_at(pos + 1).ok_or_else(|| invalid("truncated peak"))?;
             pos += 5;
             continue;
         }
-        let magnitude = reader
-            .u16_at(pos + 1)
-            .ok_or_else(|| invalid("truncated peak"))?;
-        let fbin = reader
-            .u16_at(pos + 3)
-            .ok_or_else(|| invalid("truncated peak"))?;
-        let frame = last
-            .checked_add(delta as u32)
-            .ok_or_else(|| invalid("frame overflow"))?;
-        peaks.push(Peak {
-            frame,
-            magnitude,
-            fbin,
-        });
+        let magnitude = reader.u16_at(pos + 1).ok_or_else(|| invalid("truncated peak"))?;
+        let fbin = reader.u16_at(pos + 3).ok_or_else(|| invalid("truncated peak"))?;
+        let frame = last.checked_add(delta as u32).ok_or_else(|| invalid("frame overflow"))?;
+        peaks.push(Peak { frame, magnitude, fbin });
         last = frame;
         pos += 5;
     }
@@ -638,10 +586,7 @@ pub(crate) mod tests {
     fn roundtrip_decodes_own_encoding() {
         let samples = test_signal(12.0, 3);
         let bands = peaks(&samples, true);
-        assert!(
-            bands.iter().all(|b| !b.is_empty()),
-            "every band should have peaks"
-        );
+        assert!(bands.iter().all(|b| !b.is_empty()), "every band should have peaks");
         let sig = generate(&samples);
         let decoded = sig.decode().unwrap();
         assert_eq!(decoded.sample_rate, 16_000);
@@ -658,37 +603,13 @@ pub(crate) mod tests {
     fn roundtrip_handles_long_gaps_and_empty_bands() {
         let mut bands: BandPeaks = Default::default();
         bands[1] = vec![
-            Peak {
-                frame: 0,
-                magnitude: 7000,
-                fbin: 5000,
-            },
-            Peak {
-                frame: 254,
-                magnitude: 7001,
-                fbin: 5001,
-            },
-            Peak {
-                frame: 509,
-                magnitude: 7002,
-                fbin: 5002,
-            },
-            Peak {
-                frame: 509,
-                magnitude: 7003,
-                fbin: 5003,
-            },
-            Peak {
-                frame: 1400,
-                magnitude: 7004,
-                fbin: 5004,
-            },
+            Peak { frame: 0, magnitude: 7000, fbin: 5000 },
+            Peak { frame: 254, magnitude: 7001, fbin: 5001 },
+            Peak { frame: 509, magnitude: 7002, fbin: 5002 },
+            Peak { frame: 509, magnitude: 7003, fbin: 5003 },
+            Peak { frame: 1400, magnitude: 7004, fbin: 5004 },
         ];
-        bands[3] = vec![Peak {
-            frame: 300,
-            magnitude: 9000,
-            fbin: 40000,
-        }];
+        bands[3] = vec![Peak { frame: 300, magnitude: 9000, fbin: 40000 }];
         let bytes = encode(&bands, 64_000);
         let decoded = decode(&bytes).unwrap();
         assert_eq!(decoded.bands, bands);
@@ -707,15 +628,8 @@ pub(crate) mod tests {
     fn data_uri_is_base64_of_bytes() {
         let sig = generate(&test_signal(4.0, 5));
         let uri = sig.data_uri();
-        let payload = uri
-            .strip_prefix("data:audio/vnd.shazam.sig;base64,")
-            .unwrap();
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(payload)
-                .unwrap(),
-            sig.bytes
-        );
+        let payload = uri.strip_prefix("data:audio/vnd.shazam.sig;base64,").unwrap();
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(payload).unwrap(), sig.bytes);
     }
 
     #[test]
@@ -750,9 +664,7 @@ pub(crate) mod tests {
         let sig = generate_with(&samples, &Options { pad_tail: true });
         assert_eq!(sig.sample_count, 192_000);
         assert_eq!(sig, generate(&samples));
-        let decoded = generate_with(&samples, &Options { pad_tail: false })
-            .decode()
-            .unwrap();
+        let decoded = generate_with(&samples, &Options { pad_tail: false }).decode().unwrap();
         assert_eq!(decoded.bands, plain);
     }
 

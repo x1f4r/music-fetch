@@ -16,19 +16,13 @@ const SITE: &str = "TIDAL";
 pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Resolution> {
     let parts = canonical::segments(url);
     let kind = parts.first().copied().unwrap_or_default();
-    let has_id = parts
-        .get(1)
-        .is_some_and(|id| id.chars().all(|c| c.is_ascii_digit()));
+    let has_id = parts.get(1).is_some_and(|id| id.chars().all(|c| c.is_ascii_digit()));
     if !matches!(kind, "track" | "album") || !has_id {
-        return Err(MfError::UnsupportedLink {
-            message: "Only TIDAL tracks and albums are supported.".into(),
-        });
+        return Err(MfError::UnsupportedLink { message: "Only TIDAL tracks and albums are supported.".into() });
     }
     let page = fetch::get_page(ctx.http, url.as_str(), &PageRequest::new(SITE), ctx.cancel).await?;
     let page = fetch::require_success(page, SITE)?;
-    let unreadable = || MfError::MediaUnavailable {
-        message: "Couldn't read this TIDAL page.".into(),
-    };
+    let unreadable = || MfError::MediaUnavailable { message: "Couldn't read this TIDAL page.".into() };
     if kind == "track" {
         return parse_track_page(&page.body, url).ok_or_else(unreadable);
     }
@@ -58,14 +52,9 @@ pub(super) fn parse_track_page(html: &str, url: &Url) -> Option<Resolution> {
         Track {
             title: str_at(ld, "/name")?,
             artists: ld_names(ld.get("byArtist")),
-            album: ld
-                .pointer("/inAlbum/name")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            album: ld.pointer("/inAlbum/name").and_then(Value::as_str).map(str::to_string),
             isrc: str_at(ld, "/isrcCode"),
-            duration_ms: str_at(ld, "/duration")
-                .as_deref()
-                .and_then(parse_iso_duration),
+            duration_ms: str_at(ld, "/duration").as_deref().and_then(parse_iso_duration),
             artwork_url: str_at(ld, "/image"),
             ..Track::default()
         }
@@ -82,12 +71,7 @@ pub(super) fn parse_track_page(html: &str, url: &Url) -> Option<Resolution> {
             .strip_suffix(&title)
             .map(|a| a.trim().trim_end_matches('-').trim().to_string())
             .unwrap_or_default();
-        Track {
-            title,
-            artist,
-            artwork_url: doc.meta("og:image").map(str::to_string),
-            ..Track::default()
-        }
+        Track { title, artist, artwork_url: doc.meta("og:image").map(str::to_string), ..Track::default() }
     };
     track.release_year = doc.meta("music:release_date").and_then(year_of);
     track.links = vec![service_link(Service::Tidal, url.as_str())];
@@ -97,10 +81,7 @@ pub(super) fn parse_track_page(html: &str, url: &Url) -> Option<Resolution> {
     source.uploader = Some(track.artist.clone()).filter(|a| !a.is_empty());
     source.thumbnail_url.clone_from(&track.artwork_url);
     source.duration_ms = track.duration_ms;
-    Some(Resolution::Tracks {
-        source,
-        tracks: vec![track],
-    })
+    Some(Resolution::Tracks { source, tracks: vec![track] })
 }
 
 /// Album title, artist and image.
@@ -116,30 +97,12 @@ pub(super) fn parse_album_page(html: &str) -> Option<AlbumPage> {
     if let Some(ld) = doc.json_ld_of(&["MusicAlbum"]).next() {
         let title = str_at(ld, "/name")?;
         let artist = super::join_artists(&ld_names(ld.get("byArtist")));
-        return Some(AlbumPage {
-            title,
-            artist,
-            image: str_at(ld, "/image"),
-        });
+        return Some(AlbumPage { title, artist, image: str_at(ld, "/image") });
     }
     let og_title = doc.meta("og:title")?;
-    let title = doc
-        .meta("og:description")?
-        .strip_prefix("Listen to")?
-        .strip_suffix("on TIDAL")?
-        .trim()
-        .to_string();
-    let artist = og_title
-        .strip_suffix(&title)?
-        .trim()
-        .trim_end_matches('-')
-        .trim()
-        .to_string();
-    Some(AlbumPage {
-        title,
-        artist,
-        image: doc.meta("og:image").map(str::to_string),
-    })
+    let title = doc.meta("og:description")?.strip_prefix("Listen to")?.strip_suffix("on TIDAL")?.trim().to_string();
+    let artist = og_title.strip_suffix(&title)?.trim().trim_end_matches('-').trim().to_string();
+    Some(AlbumPage { title, artist, image: doc.meta("og:image").map(str::to_string) })
 }
 
 #[cfg(test)]
@@ -147,19 +110,13 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!(
-            "{}/tests/fixtures/links/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture")
+        std::fs::read_to_string(format!("{}/tests/fixtures/links/{name}", env!("CARGO_MANIFEST_DIR"))).expect("fixture")
     }
 
     #[test]
     fn parses_track_json_ld() {
         let url = Url::parse("https://tidal.com/track/1781887").unwrap();
-        let Some(Resolution::Tracks { tracks, source }) =
-            parse_track_page(&fixture("tidal_track.html"), &url)
-        else {
+        let Some(Resolution::Tracks { tracks, source }) = parse_track_page(&fixture("tidal_track.html"), &url) else {
             panic!("expected tracks");
         };
         let t = &tracks[0];
@@ -178,9 +135,7 @@ mod tests {
         let html = r#"<meta property="og:title" content="Michael Jackson - Billie Jean">
             <meta property="og:description" content="Listen to Billie Jean on TIDAL">"#;
         let url = Url::parse("https://tidal.com/track/1781887").unwrap();
-        let Some(Resolution::Tracks { tracks, .. }) = parse_track_page(html, &url) else {
-            panic!("expected tracks")
-        };
+        let Some(Resolution::Tracks { tracks, .. }) = parse_track_page(html, &url) else { panic!("expected tracks") };
         assert_eq!(tracks[0].title, "Billie Jean");
         assert_eq!(tracks[0].artist, "Michael Jackson");
     }
@@ -192,10 +147,7 @@ mod tests {
         assert_eq!(album.artist, "Michael Jackson");
         assert!(album.image.is_some());
         let og = r#"<meta property="og:title" content="A - B"><meta property="og:description" content="Listen to B on TIDAL">"#;
-        assert_eq!(
-            parse_album_page(og).map(|a| (a.title, a.artist)),
-            Some(("B".into(), "A".into()))
-        );
+        assert_eq!(parse_album_page(og).map(|a| (a.title, a.artist)), Some(("B".into(), "A".into())));
         assert!(parse_album_page("<html></html>").is_none());
     }
 }

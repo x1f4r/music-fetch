@@ -14,9 +14,7 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Duration;
 
 use regex::Regex;
-use reqwest::header::{
-    ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, COOKIE, LOCATION, RETRY_AFTER, USER_AGENT,
-};
+use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, COOKIE, LOCATION, RETRY_AFTER, USER_AGENT};
 use reqwest::{RequestBuilder, Response, StatusCode};
 use url::Url;
 
@@ -96,10 +94,9 @@ impl<'a> PageRequest<'a> {
     }
 
     fn apply(&self, builder: RequestBuilder) -> RequestBuilder {
-        let mut builder = builder.timeout(self.timeout).header(
-            ACCEPT,
-            "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
-        );
+        let mut builder = builder
+            .timeout(self.timeout)
+            .header(ACCEPT, "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8");
         builder = match self.agent {
             Agent::Neutral => builder,
             Agent::Browser => builder.header(USER_AGENT, BROWSER_UA),
@@ -127,9 +124,7 @@ pub(crate) struct Page {
 
 impl Page {
     pub(crate) fn is_html(&self) -> bool {
-        self.content_type
-            .as_deref()
-            .is_none_or(|ct| ct.contains("html") || ct.starts_with("text/plain"))
+        self.content_type.as_deref().is_none_or(|ct| ct.contains("html") || ct.starts_with("text/plain"))
     }
 }
 
@@ -141,10 +136,7 @@ pub(crate) struct Probe {
 }
 
 /// Runs `fut` unless `cancel` fires first.
-pub(crate) async fn cancellable<T>(
-    cancel: &CancelToken,
-    fut: impl Future<Output = T>,
-) -> Result<T> {
+pub(crate) async fn cancellable<T>(cancel: &CancelToken, fut: impl Future<Output = T>) -> Result<T> {
     tokio::select! {
         biased;
         _ = cancel.canceled() => Err(MfError::Canceled),
@@ -167,23 +159,13 @@ pub(crate) fn request_error(err: &reqwest::Error, site: &str) -> MfError {
 }
 
 /// Error for an unsuccessful HTTP status.
-pub(crate) fn status_error(
-    status: StatusCode,
-    retry_after: Option<Duration>,
-    site: &str,
-) -> MfError {
+pub(crate) fn status_error(status: StatusCode, retry_after: Option<Duration>, site: &str) -> MfError {
     match status.as_u16() {
-        404 | 410 => MfError::MediaUnavailable {
-            message: format!("This {site} link doesn't exist or was removed."),
-        },
+        404 | 410 => MfError::MediaUnavailable { message: format!("This {site} link doesn't exist or was removed.") },
         401 | 403 | 451 => MfError::MediaUnavailable {
-            message: format!(
-                "{site} refused the request. The content may be private or unavailable in your region."
-            ),
+            message: format!("{site} refused the request. The content may be private or unavailable in your region."),
         },
-        429 => MfError::RateLimited {
-            retry_in_ms: retry_after.unwrap_or(Duration::from_secs(30)).as_millis() as u64,
-        },
+        429 => MfError::RateLimited { retry_in_ms: retry_after.unwrap_or(Duration::from_secs(30)).as_millis() as u64 },
         500..=599 => MfError::network(format!("{site} is having problems right now")),
         code => MfError::network(format!("{site} answered with status {code}")),
     }
@@ -199,22 +181,12 @@ pub(crate) fn retry_after(response: &Response) -> Option<Duration> {
 }
 
 async fn send(builder: RequestBuilder, cancel: &CancelToken, site: &str) -> Result<Response> {
-    cancellable(cancel, builder.send())
-        .await?
-        .map_err(|e| request_error(&e, site))
+    cancellable(cancel, builder.send()).await?.map_err(|e| request_error(&e, site))
 }
 
-async fn read_body(
-    response: &mut Response,
-    max_bytes: usize,
-    cancel: &CancelToken,
-    site: &str,
-) -> Result<Vec<u8>> {
+async fn read_body(response: &mut Response, max_bytes: usize, cancel: &CancelToken, site: &str) -> Result<Vec<u8>> {
     let mut body = Vec::new();
-    while let Some(chunk) = cancellable(cancel, response.chunk())
-        .await?
-        .map_err(|e| request_error(&e, site))?
-    {
+    while let Some(chunk) = cancellable(cancel, response.chunk()).await?.map_err(|e| request_error(&e, site))? {
         let room = max_bytes.saturating_sub(body.len());
         if chunk.len() >= room {
             // Metadata lives near the top; a truncated page is still useful.
@@ -227,29 +199,15 @@ async fn read_body(
 }
 
 fn content_type(response: &Response) -> Option<String> {
-    response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_ascii_lowercase())
+    response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(|v| v.to_ascii_lowercase())
 }
 
-async fn into_page(
-    mut response: Response,
-    max_bytes: usize,
-    cancel: &CancelToken,
-    site: &str,
-) -> Result<Page> {
+async fn into_page(mut response: Response, max_bytes: usize, cancel: &CancelToken, site: &str) -> Result<Page> {
     let url = response.url().clone();
     let status = response.status();
     let content_type = content_type(&response);
     let body = read_body(&mut response, max_bytes, cancel, site).await?;
-    Ok(Page {
-        url,
-        status,
-        content_type,
-        body: String::from_utf8_lossy(&body).into_owned(),
-    })
+    Ok(Page { url, status, content_type, body: String::from_utf8_lossy(&body).into_owned() })
 }
 
 /// GET a page on a fixed public host with the shared client. Non-success
@@ -266,11 +224,7 @@ pub(crate) async fn get_page(
 
 /// `page` if its status is a success, else the matching error.
 pub(crate) fn require_success(page: Page, site: &str) -> Result<Page> {
-    if page.status.is_success() {
-        Ok(page)
-    } else {
-        Err(status_error(page.status, None, site))
-    }
+    if page.status.is_success() { Ok(page) } else { Err(status_error(page.status, None, site)) }
 }
 
 /// A JSON response with its status; `value` is None when the body is not JSON.
@@ -288,19 +242,12 @@ pub(crate) async fn fetch_json(
     site: &str,
     cancel: &CancelToken,
 ) -> Result<JsonResponse> {
-    let request = http
-        .get(url)
-        .timeout(API_TIMEOUT)
-        .header(ACCEPT, "application/json");
+    let request = http.get(url).timeout(API_TIMEOUT).header(ACCEPT, "application/json");
     let mut response = send(request, cancel, site).await?;
     let status = response.status();
     let retry_after = retry_after(&response);
     let body = read_body(&mut response, MAX_JSON_BYTES, cancel, site).await?;
-    Ok(JsonResponse {
-        status,
-        retry_after,
-        value: serde_json::from_slice(&body).ok(),
-    })
+    Ok(JsonResponse { status, retry_after, value: serde_json::from_slice(&body).ok() })
 }
 
 /// GET JSON from a fixed public host with the shared client; errors on failure statuses.
@@ -314,9 +261,7 @@ pub(crate) async fn get_json(
     if !response.status.is_success() {
         return Err(status_error(response.status, response.retry_after, site));
     }
-    response
-        .value
-        .ok_or_else(|| MfError::network(format!("{site} sent an unreadable response")))
+    response.value.ok_or_else(|| MfError::network(format!("{site} sent an unreadable response")))
 }
 
 static GUARDED: OnceLock<std::result::Result<reqwest::Client, String>> = OnceLock::new();
@@ -326,13 +271,11 @@ static GUARDED: OnceLock<std::result::Result<reqwest::Client, String>> = OnceLoc
 fn tls_config() -> std::result::Result<rustls::ClientConfig, String> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let mut tls = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .map_err(|e| e.to_string())?
-    .with_root_certificates(roots)
-    .with_no_client_auth();
+    let mut tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
     tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     Ok(tls)
 }
@@ -365,10 +308,7 @@ pub fn http_client(app_version: &str) -> Result<reqwest::Client> {
 }
 
 fn guarded_client() -> Result<&'static reqwest::Client> {
-    GUARDED
-        .get_or_init(build_guarded)
-        .as_ref()
-        .map_err(|e| MfError::internal(format!("http client: {e}")))
+    GUARDED.get_or_init(build_guarded).as_ref().map_err(|e| MfError::internal(format!("http client: {e}")))
 }
 
 /// Next hop of a redirect response, if any.
@@ -377,30 +317,18 @@ fn redirect_target(current: &Url, response: &Response) -> Result<Option<Url>> {
     if !status.is_redirection() || status == StatusCode::NOT_MODIFIED {
         return Ok(None);
     }
-    let Some(location) = response
-        .headers()
-        .get(LOCATION)
-        .and_then(|v| v.to_str().ok())
-    else {
+    let Some(location) = response.headers().get(LOCATION).and_then(|v| v.to_str().ok()) else {
         return Ok(None);
     };
-    let next = current
-        .join(location.trim())
-        .map_err(|_| MfError::network("the website sent a broken redirect"))?;
+    let next = current.join(location.trim()).map_err(|_| MfError::network("the website sent a broken redirect"))?;
     if !matches!(next.scheme(), "http" | "https") {
-        return Err(MfError::invalid(
-            "The link redirects to an unsupported address.",
-        ));
+        return Err(MfError::invalid("The link redirects to an unsupported address."));
     }
     Ok(Some(next))
 }
 
 /// GET a user-supplied URL: manual redirects, SSRF check on every hop.
-pub(crate) async fn guarded_get(
-    start: &Url,
-    req: &PageRequest<'_>,
-    cancel: &CancelToken,
-) -> Result<Page> {
+pub(crate) async fn guarded_get(start: &Url, req: &PageRequest<'_>, cancel: &CancelToken) -> Result<Page> {
     let client = guarded_client()?;
     let mut current = start.clone();
     for _ in 0..=MAX_REDIRECTS {
@@ -427,10 +355,7 @@ pub(crate) async fn guarded_head(start: &Url, cancel: &CancelToken) -> Result<Pr
             current = next;
             continue;
         }
-        return Ok(Probe {
-            status: response.status(),
-            content_type: content_type(&response),
-        });
+        return Ok(Probe { status: response.status(), content_type: content_type(&response) });
     }
     Err(MfError::network("the link redirects too many times"))
 }
@@ -462,9 +387,8 @@ fn landing_page_target(page: &Page) -> Option<Url> {
     });
     static ABSOLUTE_URL: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"https?://[^\s"'<>\\]+"#).expect("valid regex"));
-    if let Some(target) = META_REFRESH
-        .captures(&page.body)
-        .and_then(|c| page.url.join(&c[1].replace("&amp;", "&")).ok())
+    if let Some(target) =
+        META_REFRESH.captures(&page.body).and_then(|c| page.url.join(&c[1].replace("&amp;", "&")).ok())
     {
         return Some(target);
     }
@@ -484,9 +408,7 @@ fn landing_page_target(page: &Page) -> Option<Url> {
 /// media backend may still handle it); SSRF violations and cancellation are errors.
 pub(crate) async fn expand_short_url(start: &Url, cancel: &CancelToken) -> Result<Url> {
     let client = guarded_client()?;
-    let req = PageRequest::new("the short link")
-        .timeout(SHORTENER_TIMEOUT)
-        .max_bytes(512 * 1024);
+    let req = PageRequest::new("the short link").timeout(SHORTENER_TIMEOUT).max_bytes(512 * 1024);
     let mut current = start.clone();
     let mut hops = 0;
     loop {
@@ -556,9 +478,7 @@ pub(crate) fn test_client() -> reqwest::Client {
 #[cfg(test)]
 pub(crate) async fn mock_server(respond: fn(&str, &str, u16) -> (String, String, String)) -> u16 {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().expect("addr").port();
     ssrf::TEST_LOOPBACK_PORTS.lock().push(port);
     tokio::spawn(async move {
@@ -568,16 +488,9 @@ pub(crate) async fn mock_server(respond: fn(&str, &str, u16) -> (String, String,
                 let n = socket.read(&mut buf).await.unwrap_or(0);
                 let request = String::from_utf8_lossy(&buf[..n]).to_string();
                 let mut first = request.lines().next().unwrap_or_default().split(' ');
-                let (method, path) = (
-                    first.next().unwrap_or_default(),
-                    first.next().unwrap_or_default(),
-                );
+                let (method, path) = (first.next().unwrap_or_default(), first.next().unwrap_or_default());
                 let (status, headers, body) = respond(method, path, port);
-                let body = if method == "HEAD" {
-                    String::new()
-                } else {
-                    body
-                };
+                let body = if method == "HEAD" { String::new() } else { body };
                 let response = format!(
                     "HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -609,9 +522,7 @@ mod tests {
             "/tests/fixtures/links/spotify_branch_landing.html"
         ))
         .expect("fixture");
-        let target =
-            landing_page_target(&page("https://spotify.app.link/6tpneu0iVIb?_p=c11c", &body))
-                .expect("target");
+        let target = landing_page_target(&page("https://spotify.app.link/6tpneu0iVIb?_p=c11c", &body)).expect("target");
         assert_eq!(target.host_str(), Some("open.spotify.com"));
         assert_eq!(target.path(), "/playlist/37i9dQZF1DXcBWIGoYBM5M");
     }
@@ -622,37 +533,21 @@ mod tests {
             "https://short.example/x",
             r#"<meta http-equiv="refresh" content="0; url=https://open.spotify.com/track/abc?x=1&amp;y=2">"#,
         );
-        assert_eq!(
-            landing_page_target(&p).unwrap().as_str(),
-            "https://open.spotify.com/track/abc?x=1&y=2"
-        );
+        assert_eq!(landing_page_target(&p).unwrap().as_str(), "https://open.spotify.com/track/abc?x=1&y=2");
         assert!(
-            landing_page_target(&page(
-                "https://example.com/",
-                "<a href=\"https://open.spotify.com/track/x\">"
-            ))
-            .is_none()
+            landing_page_target(&page("https://example.com/", "<a href=\"https://open.spotify.com/track/x\">"))
+                .is_none()
         );
     }
 
     #[test]
     fn status_errors_are_short() {
-        assert!(matches!(
-            status_error(StatusCode::NOT_FOUND, None, "Deezer"),
-            MfError::MediaUnavailable { .. }
-        ));
+        assert!(matches!(status_error(StatusCode::NOT_FOUND, None, "Deezer"), MfError::MediaUnavailable { .. }));
         assert_eq!(
-            status_error(
-                StatusCode::TOO_MANY_REQUESTS,
-                Some(Duration::from_secs(5)),
-                "Deezer"
-            ),
+            status_error(StatusCode::TOO_MANY_REQUESTS, Some(Duration::from_secs(5)), "Deezer"),
             MfError::RateLimited { retry_in_ms: 5000 }
         );
-        assert!(matches!(
-            status_error(StatusCode::BAD_GATEWAY, None, "Deezer"),
-            MfError::Network { .. }
-        ));
+        assert!(matches!(status_error(StatusCode::BAD_GATEWAY, None, "Deezer"), MfError::Network { .. }));
     }
 
     #[test]
@@ -664,51 +559,32 @@ mod tests {
     async fn guarded_get_blocks_private_hosts_before_connecting() {
         let cancel = CancelToken::new();
         let url = Url::parse("http://169.254.169.254/latest/meta-data/").unwrap();
-        let err = guarded_get(&url, &PageRequest::new("the website"), &cancel)
-            .await
-            .unwrap_err();
+        let err = guarded_get(&url, &PageRequest::new("the website"), &cancel).await.unwrap_err();
         assert_eq!(err, ssrf::private_address_error());
-        let err = expand_short_url(&Url::parse("http://127.0.0.1/x").unwrap(), &cancel)
-            .await
-            .unwrap_err();
+        let err = expand_short_url(&Url::parse("http://127.0.0.1/x").unwrap(), &cancel).await.unwrap_err();
         assert_eq!(err, ssrf::private_address_error());
     }
 
     fn redirect(location: &str) -> (String, String, String) {
-        (
-            "302 Found".into(),
-            format!("Location: {location}\r\n"),
-            String::new(),
-        )
+        ("302 Found".into(), format!("Location: {location}\r\n"), String::new())
     }
 
     fn ok(content_type: &str, body: &str) -> (String, String, String) {
-        (
-            "200 OK".into(),
-            format!("Content-Type: {content_type}\r\n"),
-            body.into(),
-        )
+        ("200 OK".into(), format!("Content-Type: {content_type}\r\n"), body.into())
     }
 
     #[tokio::test]
     async fn shortener_redirect_to_private_host_is_blocked() {
-        let port =
-            mock_server(|_, _, _| redirect("http://169.254.169.254/latest/meta-data/")).await;
+        let port = mock_server(|_, _, _| redirect("http://169.254.169.254/latest/meta-data/")).await;
         let start = Url::parse(&format!("http://127.0.0.1:{port}/demo")).unwrap();
-        let err = expand_short_url(&start, &CancelToken::new())
-            .await
-            .unwrap_err();
+        let err = expand_short_url(&start, &CancelToken::new()).await.unwrap_err();
         assert_eq!(err, ssrf::private_address_error());
     }
 
     #[tokio::test]
     async fn shortener_falls_back_to_get_and_follows_hops() {
         let port = mock_server(|method, path, port| match (method, path) {
-            ("HEAD", "/demo") => (
-                "405 Method Not Allowed".into(),
-                String::new(),
-                String::new(),
-            ),
+            ("HEAD", "/demo") => ("405 Method Not Allowed".into(), String::new(), String::new()),
             ("GET", "/demo") => redirect("/hop"),
             (_, "/hop") => redirect(&format!("http://127.0.0.1:{port}/final?si=x")),
             _ => ok("text/html", "<html></html>"),
@@ -727,17 +603,9 @@ mod tests {
         })
         .await;
         let start = Url::parse(&format!("http://127.0.0.1:{port}/r0")).unwrap();
-        let err = expand_short_url(&start, &CancelToken::new())
-            .await
-            .unwrap_err();
+        let err = expand_short_url(&start, &CancelToken::new()).await.unwrap_err();
         assert!(matches!(err, MfError::Network { .. }), "{err:?}");
-        let err = guarded_get(
-            &start,
-            &PageRequest::new("the website"),
-            &CancelToken::new(),
-        )
-        .await
-        .unwrap_err();
+        let err = guarded_get(&start, &PageRequest::new("the website"), &CancelToken::new()).await.unwrap_err();
         assert!(matches!(err, MfError::Network { .. }), "{err:?}");
     }
 
@@ -752,24 +620,13 @@ mod tests {
         let cancel = CancelToken::new();
         let page = Url::parse(&format!("http://127.0.0.1:{port}/page")).unwrap();
         assert_eq!(
-            guarded_get(&page, &PageRequest::new("the website"), &cancel)
-                .await
-                .unwrap_err(),
+            guarded_get(&page, &PageRequest::new("the website"), &cancel).await.unwrap_err(),
             ssrf::private_address_error()
         );
         let file = Url::parse(&format!("http://127.0.0.1:{port}/file")).unwrap();
-        assert!(matches!(
-            guarded_head(&file, &cancel).await,
-            Err(MfError::InvalidInput { .. })
-        ));
+        assert!(matches!(guarded_head(&file, &cancel).await, Err(MfError::InvalidInput { .. })));
         let fine = Url::parse(&format!("http://127.0.0.1:{port}/ok")).unwrap();
-        let got = guarded_get(
-            &fine,
-            &PageRequest::new("the website").max_bytes(5),
-            &cancel,
-        )
-        .await
-        .unwrap();
+        let got = guarded_get(&fine, &PageRequest::new("the website").max_bytes(5), &cancel).await.unwrap();
         assert_eq!(got.body, "<titl");
         assert!(got.is_html());
     }

@@ -36,22 +36,13 @@ pub fn run(command: LinksCommand) -> anyhow::Result<()> {
             println!("{}", links::canonicalize(&url)?);
             Ok(())
         }
-        LinksCommand::Resolve {
-            url,
-            country,
-            enrich,
-        } => runtime()?.block_on(resolve(&url, &country, enrich)),
-        LinksCommand::Enrich { query, country } => {
-            runtime()?.block_on(enrich_query(&query, &country))
-        }
+        LinksCommand::Resolve { url, country, enrich } => runtime()?.block_on(resolve(&url, &country, enrich)),
+        LinksCommand::Enrich { query, country } => runtime()?.block_on(enrich_query(&query, &country)),
     }
 }
 
 fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("starting the async runtime")
+    tokio::runtime::Builder::new_multi_thread().enable_all().build().context("starting the async runtime")
 }
 
 async fn resolve(url: &str, country: &str, enrich: bool) -> anyhow::Result<()> {
@@ -65,26 +56,15 @@ async fn resolve(url: &str, country: &str, enrich: bool) -> anyhow::Result<()> {
                 for track in tracks {
                     enriched.push(catalog::enrich(&http, track, country, &cancel).await);
                 }
-                Resolution::Tracks {
-                    source,
-                    tracks: enriched,
-                }
+                Resolution::Tracks { source, tracks: enriched }
             }
-            Resolution::Media {
-                mut source,
-                url,
-                direct,
-            } => {
+            Resolution::Media { mut source, url, direct } => {
                 let mut hints = Vec::with_capacity(source.hints.len());
                 for hint in std::mem::take(&mut source.hints) {
                     hints.push(catalog::enrich(&http, hint, country, &cancel).await);
                 }
                 source.hints = hints;
-                Resolution::Media {
-                    source,
-                    url,
-                    direct,
-                }
+                Resolution::Media { source, url, direct }
             }
         };
     }
@@ -100,11 +80,7 @@ async fn enrich_query(query: &str, country: &str) -> anyhow::Result<()> {
         None => ("", query.trim()),
     };
     anyhow::ensure!(!title.is_empty(), "enter \"Artist - Title\"");
-    let track = Track {
-        title: title.to_string(),
-        artist: artist.to_string(),
-        ..Track::default()
-    };
+    let track = Track { title: title.to_string(), artist: artist.to_string(), ..Track::default() };
     let enriched = catalog::enrich(&http, track, country, &cancel).await;
     println!("{}", serde_json::to_string_pretty(&enriched)?);
     Ok(())

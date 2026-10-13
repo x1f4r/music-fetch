@@ -39,7 +39,12 @@ pub trait PlatformDecoder: Send + Sync {
 pub trait SpeechToText: Send + Sync {
     /// Transcribe a 16 kHz mono 16-bit WAV. Return up to 5 hypotheses, best first;
     /// an empty list when there is no speech.
-    fn transcribe(&self, wav_path: String, language: String, task: Arc<TaskHandle>) -> Result<Vec<String>, PlatformError>;
+    fn transcribe(
+        &self,
+        wav_path: String,
+        language: String,
+        task: Arc<TaskHandle>,
+    ) -> Result<Vec<String>, PlatformError>;
 }
 
 /// Receives session events. Called from engine threads; hop to the UI thread yourself.

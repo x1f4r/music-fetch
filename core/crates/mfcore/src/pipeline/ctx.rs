@@ -74,10 +74,10 @@ impl SessionCtx {
 
     /// Remove the work directory (best effort).
     pub fn cleanup(&self) {
-        if self.work_dir.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&self.work_dir) {
-                tracing::warn!("could not remove {}: {e}", self.work_dir.display());
-            }
+        if self.work_dir.exists()
+            && let Err(e) = std::fs::remove_dir_all(&self.work_dir)
+        {
+            tracing::warn!("could not remove {}: {e}", self.work_dir.display());
         }
     }
 }

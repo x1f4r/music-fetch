@@ -1,1 +1,3 @@
-fn main() { uniffi::uniffi_bindgen_swift() }
+fn main() {
+    uniffi::uniffi_bindgen_swift()
+}

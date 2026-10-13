@@ -1,13 +1,12 @@
 //! `mf`: developer CLI for the Music Fetch engine.
 
-mod lyrics;
-
 use clap::Parser;
 
 mod library;
+mod links;
+mod lyrics;
 mod media;
 mod shazam;
-mod links;
 
 #[derive(Parser)]
 #[command(name = "mf", version, about = "Music Fetch engine CLI")]
@@ -16,9 +15,13 @@ enum Cli {
     Version,
     #[command(flatten)]
     Library(library::Command),
+    #[command(flatten)]
     Media(media::Command),
+    #[command(flatten)]
     Shazam(shazam::Command),
+    #[command(flatten)]
     Links(links::LinksCommand),
+    #[command(flatten)]
     Lyrics(lyrics::Command),
 }
 

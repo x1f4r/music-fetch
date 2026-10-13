@@ -8,8 +8,8 @@ use std::borrow::Cow;
 use serde::Deserialize;
 
 use crate::model::{
-    Candidate, CandidateTier, MelodyAlignment, Segment, SegmentKind, SessionKind, SessionStatus,
-    SourceInfo, Tier, Track,
+    Candidate, CandidateTier, MelodyAlignment, Segment, SegmentKind, SessionKind, SessionStatus, SourceInfo, Tier,
+    Track,
 };
 
 /// An enum stored as a fixed text value.
@@ -157,8 +157,7 @@ struct StoredAlignment {
 
 impl From<StoredAlignment> for MelodyAlignment {
     fn from(stored: StoredAlignment) -> Self {
-        let restore =
-            |frames: Vec<Option<f32>>| frames.into_iter().map(|f| f.unwrap_or(f32::NAN)).collect();
+        let restore = |frames: Vec<Option<f32>>| frames.into_iter().map(|f| f.unwrap_or(f32::NAN)).collect();
         MelodyAlignment {
             frame_ms: stored.frame_ms,
             query: restore(stored.query),
@@ -169,10 +168,7 @@ impl From<StoredAlignment> for MelodyAlignment {
 
 pub(crate) fn decode_candidate(json: &str) -> serde_json::Result<Candidate> {
     let mut value: serde_json::Value = serde_json::from_str(json)?;
-    let alignment = value
-        .get_mut("alignment")
-        .map(serde_json::Value::take)
-        .filter(|a| !a.is_null());
+    let alignment = value.get_mut("alignment").map(serde_json::Value::take).filter(|a| !a.is_null());
     let mut candidate: Candidate = serde_json::from_value(value)?;
     if let Some(alignment) = alignment {
         candidate.alignment = Some(serde_json::from_value::<StoredAlignment>(alignment)?.into());
@@ -198,36 +194,12 @@ mod tests {
     #[test]
     fn enum_text_round_trips() {
         use SessionKind as K;
-        round_trip(&[
-            K::Listen,
-            K::SystemAudio,
-            K::Hum,
-            K::Link,
-            K::File,
-            K::Lyrics,
-        ]);
+        round_trip(&[K::Listen, K::SystemAudio, K::Hum, K::Link, K::File, K::Lyrics]);
         use SessionStatus as S;
-        round_trip(&[
-            S::Running,
-            S::Matched,
-            S::Candidates,
-            S::Completed,
-            S::NoMatch,
-            S::Failed,
-            S::Canceled,
-        ]);
-        round_trip(&[
-            SegmentKind::Track,
-            SegmentKind::Unidentified,
-            SegmentKind::Speech,
-            SegmentKind::Silence,
-        ]);
+        round_trip(&[S::Running, S::Matched, S::Candidates, S::Completed, S::NoMatch, S::Failed, S::Canceled]);
+        round_trip(&[SegmentKind::Track, SegmentKind::Unidentified, SegmentKind::Speech, SegmentKind::Silence]);
         round_trip(&[Tier::Confirmed, Tier::Likely, Tier::Possible, Tier::Unknown]);
-        round_trip(&[
-            CandidateTier::Strong,
-            CandidateTier::Possible,
-            CandidateTier::LongShot,
-        ]);
+        round_trip(&[CandidateTier::Strong, CandidateTier::Possible, CandidateTier::LongShot]);
     }
 
     #[test]
@@ -248,18 +220,10 @@ mod tests {
 
     fn candidate() -> Candidate {
         Candidate {
-            track: Track {
-                title: "Song".into(),
-                artist: "Artist".into(),
-                ..Default::default()
-            },
+            track: Track { title: "Song".into(), artist: "Artist".into(), ..Default::default() },
             score: 0.7,
             tier: CandidateTier::Possible,
-            sources: vec![CandidateSource {
-                kind: CandidateSourceKind::Melody,
-                score: 0.7,
-                detail: None,
-            }],
+            sources: vec![CandidateSource { kind: CandidateSourceKind::Melody, score: 0.7, detail: None }],
             alignment: Some(MelodyAlignment {
                 frame_ms: 50,
                 query: vec![0.0, f32::NAN, 1.5],
@@ -308,12 +272,7 @@ mod tests {
             track: None,
             confidence: f32::NAN,
             tier: Tier::Unknown,
-            evidence: vec![Evidence {
-                source: EvidenceSource::Shazam,
-                at_ms: 0,
-                score: f32::NAN,
-                detail: None,
-            }],
+            evidence: vec![Evidence { source: EvidenceSource::Shazam, at_ms: 0, score: f32::NAN, detail: None }],
             alternates: vec![],
             source_url: None,
         };

@@ -22,12 +22,7 @@ impl Reply {
     }
 
     pub fn new(status: u16, body: &str) -> Self {
-        Self {
-            status,
-            headers: Vec::new(),
-            body: body.as_bytes().to_vec(),
-            delay: Duration::ZERO,
-        }
+        Self { status, headers: Vec::new(), body: body.as_bytes().to_vec(), delay: Duration::ZERO }
     }
 
     pub fn header(mut self, name: &str, value: &str) -> Self {
@@ -52,10 +47,7 @@ pub(crate) struct Recorded {
 
 impl Recorded {
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
     }
 }
 
@@ -83,22 +75,13 @@ impl TestServer {
                     }
                     let Ok(stream) = stream else { continue };
                     let index = next.fetch_add(1, Ordering::SeqCst);
-                    let reply = replies
-                        .get(index)
-                        .or(replies.last())
-                        .cloned()
-                        .unwrap_or_else(|| Reply::new(500, ""));
+                    let reply = replies.get(index).or(replies.last()).cloned().unwrap_or_else(|| Reply::new(500, ""));
                     let recorded = recorded.clone();
                     std::thread::spawn(move || serve(stream, reply, &recorded));
                 }
             })
         };
-        Self {
-            addr,
-            recorded,
-            stop,
-            accept: Some(accept),
-        }
+        Self { addr, recorded, stop, accept: Some(accept) }
     }
 
     pub fn url(&self) -> String {
@@ -146,12 +129,7 @@ fn serve(stream: TcpStream, reply: Reply, recorded: &Mutex<Vec<Recorded>>) {
             headers.push((k.trim().to_string(), v.trim().to_string()));
         }
     }
-    let header = |name: &str| {
-        headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.clone())
-    };
+    let header = |name: &str| headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone());
     let mut body = Vec::new();
     if let Some(len) = header("content-length").and_then(|v| v.parse::<usize>().ok()) {
         body.resize(len, 0);
@@ -162,8 +140,7 @@ fn serve(stream: TcpStream, reply: Reply, recorded: &Mutex<Vec<Recorded>>) {
             if reader.read_line(&mut line).unwrap_or(0) == 0 {
                 break;
             }
-            let size = usize::from_str_radix(line.trim().split(';').next().unwrap_or("0"), 16)
-                .unwrap_or(0);
+            let size = usize::from_str_radix(line.trim().split(';').next().unwrap_or("0"), 16).unwrap_or(0);
             if size == 0 {
                 let _ = reader.read_line(&mut line);
                 break;
@@ -175,20 +152,11 @@ fn serve(stream: TcpStream, reply: Reply, recorded: &Mutex<Vec<Recorded>>) {
             let _ = reader.read_exact(&mut crlf);
         }
     }
-    recorded.lock().unwrap().push(Recorded {
-        method,
-        target,
-        headers,
-        body,
-        at: Instant::now(),
-    });
+    recorded.lock().unwrap().push(Recorded { method, target, headers, body, at: Instant::now() });
 
     std::thread::sleep(reply.delay);
-    let mut out = format!(
-        "HTTP/1.1 {} Test\r\nContent-Length: {}\r\nConnection: close\r\n",
-        reply.status,
-        reply.body.len()
-    );
+    let mut out =
+        format!("HTTP/1.1 {} Test\r\nContent-Length: {}\r\nConnection: close\r\n", reply.status, reply.body.len());
     for (k, v) in &reply.headers {
         out.push_str(&format!("{k}: {v}\r\n"));
     }

@@ -29,6 +29,12 @@ impl TaskHandle {
 
 #[uniffi::export]
 impl TaskHandle {
+    /// A handle that is never canceled and ignores progress; for platform tests.
+    #[uniffi::constructor]
+    pub fn detached() -> Arc<Self> {
+        Self::new(CancelToken::new())
+    }
+
     /// True once the session was canceled; stop work and return `PlatformError::Canceled`.
     pub fn is_canceled(&self) -> bool {
         self.token.is_canceled()

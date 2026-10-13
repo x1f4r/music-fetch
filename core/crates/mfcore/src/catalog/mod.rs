@@ -51,12 +51,7 @@ static APPLE_MATCHES: LazyLock<TtlCache<Option<Track>>> =
 /// Fills ISRC, duration, album, release year, genre, artwork and preview where
 /// missing, adds direct Deezer and Apple Music links when a confident match is
 /// found and search links for every other service.
-pub async fn enrich(
-    http: &reqwest::Client,
-    track: Track,
-    country: &str,
-    cancel: &CancelToken,
-) -> Track {
+pub async fn enrich(http: &reqwest::Client, track: Track, country: &str, cancel: &CancelToken) -> Track {
     let mut track = crate::links::finish_track(track);
     if track.title.is_empty() {
         return finish(track);
@@ -100,17 +95,13 @@ pub async fn find(
     if cancel.is_canceled() {
         return None;
     }
-    apple_match(http, &probe, country, FIND_ITUNES_QUEUE, cancel)
-        .await
-        .map(finish)
+    apple_match(http, &probe, country, FIND_ITUNES_QUEUE, cancel).await.map(finish)
 }
 
 /// Search links for every major service (`LINK_SERVICES`), in display order.
 pub fn search_links(track: &Track) -> Vec<ServiceLink> {
     let artist = primary_artist(track);
-    let query = format!("{artist} {}", track.title.trim())
-        .trim()
-        .to_string();
+    let query = format!("{artist} {}", track.title.trim()).trim().to_string();
     if track.title.trim().is_empty() {
         return Vec::new();
     }
@@ -119,26 +110,16 @@ pub fn search_links(track: &Track) -> Vec<ServiceLink> {
         .filter_map(|&service| {
             let url = match service {
                 Service::Spotify => path_search("https://open.spotify.com/search", &query),
-                Service::AppleMusic => {
-                    query_search("https://music.apple.com/search", "term", &query)
-                }
-                Service::YouTubeMusic => {
-                    query_search("https://music.youtube.com/search", "q", &query)
-                }
-                Service::YouTube => {
-                    query_search("https://www.youtube.com/results", "search_query", &query)
-                }
+                Service::AppleMusic => query_search("https://music.apple.com/search", "term", &query),
+                Service::YouTubeMusic => query_search("https://music.youtube.com/search", "q", &query),
+                Service::YouTube => query_search("https://www.youtube.com/results", "search_query", &query),
                 Service::Deezer => path_search("https://www.deezer.com/search", &query),
                 Service::Tidal => query_search("https://tidal.com/search", "q", &query),
                 Service::AmazonMusic => path_search("https://music.amazon.com/search", &query),
                 Service::SoundCloud => query_search("https://soundcloud.com/search", "q", &query),
                 _ => None,
             }?;
-            Some(ServiceLink {
-                service,
-                url,
-                is_search: true,
-            })
+            Some(ServiceLink { service, url, is_search: true })
         })
         .collect()
 }
@@ -150,42 +131,21 @@ fn path_search(base: &str, query: &str) -> Option<String> {
 }
 
 fn query_search(base: &str, key: &str, query: &str) -> Option<String> {
-    Url::parse_with_params(base, &[(key, query)])
-        .ok()
-        .map(|u| u.to_string())
+    Url::parse_with_params(base, &[(key, query)]).ok().map(|u| u.to_string())
 }
 
 /// First credited artist, used for searching.
 fn primary_artist(track: &Track) -> String {
-    track
-        .artists
-        .first()
-        .cloned()
-        .unwrap_or_else(|| track.artist.clone())
-        .trim()
-        .to_string()
+    track.artists.first().cloned().unwrap_or_else(|| track.artist.clone()).trim().to_string()
 }
 
 fn query_key(track: &Track) -> String {
-    let seconds = track
-        .duration_ms
-        .map(|d| (d / 1000).to_string())
-        .unwrap_or_default();
-    format!(
-        "{}|{seconds}",
-        identity::fuzzy_key(&track.title, &primary_artist(track))
-    )
+    let seconds = track.duration_ms.map(|d| (d / 1000).to_string()).unwrap_or_default();
+    format!("{}|{seconds}", identity::fuzzy_key(&track.title, &primary_artist(track)))
 }
 
-async fn deezer_match(
-    http: &reqwest::Client,
-    track: &Track,
-    cancel: &CancelToken,
-) -> Option<Track> {
-    let key = match (
-        track.ids.get("deezer"),
-        track.isrc.as_deref().and_then(normalize_isrc),
-    ) {
+async fn deezer_match(http: &reqwest::Client, track: &Track, cancel: &CancelToken) -> Option<Track> {
+    let key = match (track.ids.get("deezer"), track.isrc.as_deref().and_then(normalize_isrc)) {
         (Some(id), _) => format!("id:{id}"),
         (None, Some(isrc)) => format!("isrc:{isrc}|{}", query_key(track)),
         (None, None) => format!("q:{}", query_key(track)),
@@ -205,11 +165,7 @@ async fn deezer_match(
     }
 }
 
-async fn deezer_lookup(
-    http: &reqwest::Client,
-    track: &Track,
-    cancel: &CancelToken,
-) -> Result<Option<Track>> {
+async fn deezer_lookup(http: &reqwest::Client, track: &Track, cancel: &CancelToken) -> Result<Option<Track>> {
     if let Some(id) = track.ids.get("deezer").filter(|id| !id.trim().is_empty()) {
         return deezer::track(http, id.trim(), cancel).await.map(Some);
     }
@@ -233,10 +189,7 @@ async fn deezer_lookup(
 fn plausible_title(track: &Track, found: &Track) -> bool {
     let a = identity::normalize_title(&track.title);
     let b = identity::normalize_title(&found.title);
-    a.is_empty()
-        || a.contains(&b)
-        || b.contains(&a)
-        || strsim::normalized_levenshtein(&a, &b) >= 0.5
+    a.is_empty() || a.contains(&b) || b.contains(&a) || strsim::normalized_levenshtein(&a, &b) >= 0.5
 }
 
 async fn apple_match(
@@ -273,12 +226,7 @@ async fn apple_lookup(
     max_queue: usize,
     cancel: &CancelToken,
 ) -> Result<Option<Track>> {
-    if let Some(id) = track
-        .ids
-        .get("apple")
-        .map(|id| id.trim())
-        .filter(|id| !id.is_empty())
-    {
+    if let Some(id) = track.ids.get("apple").map(|id| id.trim()).filter(|id| !id.is_empty()) {
         let items = itunes::lookup(http, id, country, false, max_queue, cancel).await?;
         return Ok(items.iter().find_map(itunes::track_from_json));
     }
@@ -312,10 +260,7 @@ fn merge(target: &mut Track, found: &Track) {
     fill(&mut target.artwork_url, &found.artwork_url);
     fill(&mut target.preview_url, &found.preview_url);
     for (key, value) in &found.ids {
-        target
-            .ids
-            .entry(key.clone())
-            .or_insert_with(|| value.clone());
+        target.ids.entry(key.clone()).or_insert_with(|| value.clone());
     }
     for link in &found.links {
         add_link(&mut target.links, link.clone());
@@ -333,10 +278,7 @@ fn add_link(links: &mut Vec<ServiceLink>, link: ServiceLink) {
 }
 
 fn service_rank(service: Service) -> usize {
-    LINK_SERVICES
-        .iter()
-        .position(|s| *s == service)
-        .unwrap_or(LINK_SERVICES.len())
+    LINK_SERVICES.iter().position(|s| *s == service).unwrap_or(LINK_SERVICES.len())
 }
 
 fn finish(mut track: Track) -> Track {
@@ -353,11 +295,7 @@ mod tests {
     use super::*;
 
     fn track(title: &str, artist: &str) -> Track {
-        crate::links::finish_track(Track {
-            title: title.into(),
-            artist: artist.into(),
-            ..Track::default()
-        })
+        crate::links::finish_track(Track { title: title.into(), artist: artist.into(), ..Track::default() })
     }
 
     #[test]
@@ -365,13 +303,7 @@ mod tests {
         let links = search_links(&track("Harder, Better, Faster, Stronger", "Daft Punk"));
         assert_eq!(links.len(), LINK_SERVICES.len());
         assert!(links.iter().all(|l| l.is_search));
-        let url = |s: Service| {
-            links
-                .iter()
-                .find(|l| l.service == s)
-                .map(|l| l.url.clone())
-                .unwrap()
-        };
+        let url = |s: Service| links.iter().find(|l| l.service == s).map(|l| l.url.clone()).unwrap();
         assert_eq!(
             url(Service::Spotify),
             "https://open.spotify.com/search/Daft%20Punk%20Harder,%20Better,%20Faster,%20Stronger"
@@ -389,17 +321,11 @@ mod tests {
             "https://music.apple.com/search?term=Daft+Punk+Harder%2C+Better%2C+Faster%2C+Stronger"
         );
         assert!(url(Service::Deezer).starts_with("https://www.deezer.com/search/Daft%20Punk"));
-        assert!(
-            url(Service::AmazonMusic).starts_with("https://music.amazon.com/search/Daft%20Punk")
-        );
+        assert!(url(Service::AmazonMusic).starts_with("https://music.amazon.com/search/Daft%20Punk"));
         assert!(url(Service::Tidal).starts_with("https://tidal.com/search?q=Daft+Punk"));
         assert!(url(Service::SoundCloud).starts_with("https://soundcloud.com/search?q=Daft+Punk"));
         assert!(search_links(&track("", "Daft Punk")).is_empty());
-        assert!(
-            search_links(&track("Song/With?Odd#Chars", ""))
-                .iter()
-                .all(|l| Url::parse(&l.url).is_ok())
-        );
+        assert!(search_links(&track("Song/With?Odd#Chars", "")).iter().all(|l| Url::parse(&l.url).is_ok()));
     }
 
     #[test]
@@ -422,16 +348,8 @@ mod tests {
         found.duration_ms = Some(1000);
         found.ids.insert("deezer".into(), "1".into());
         found.links = vec![
-            ServiceLink {
-                service: Service::Deezer,
-                url: "https://www.deezer.com/track/1".into(),
-                is_search: false,
-            },
-            ServiceLink {
-                service: Service::Spotify,
-                url: "https://open.spotify.com/search/x".into(),
-                is_search: true,
-            },
+            ServiceLink { service: Service::Deezer, url: "https://www.deezer.com/track/1".into(), is_search: false },
+            ServiceLink { service: Service::Spotify, url: "https://open.spotify.com/search/x".into(), is_search: true },
         ];
         merge(&mut target, &found);
         assert_eq!(target.title, "Song");
@@ -439,17 +357,9 @@ mod tests {
         assert_eq!(target.isrc.as_deref(), Some("GBX"));
         assert_eq!(target.duration_ms, Some(1000));
         assert_eq!(target.ids.get("deezer").map(String::as_str), Some("1"));
-        let deezer = target
-            .links
-            .iter()
-            .find(|l| l.service == Service::Deezer)
-            .unwrap();
+        let deezer = target.links.iter().find(|l| l.service == Service::Deezer).unwrap();
         assert!(!deezer.is_search);
-        let spotify = target
-            .links
-            .iter()
-            .find(|l| l.service == Service::Spotify)
-            .unwrap();
+        let spotify = target.links.iter().find(|l| l.service == Service::Spotify).unwrap();
         assert_eq!(spotify.url, "https://open.spotify.com/track/a");
     }
 
@@ -457,11 +367,7 @@ mod tests {
     fn finish_orders_links_and_refreshes_identity() {
         let mut t = track("Song", "Artist");
         t.isrc = Some("usx1".into());
-        t.links.push(ServiceLink {
-            service: Service::Web,
-            url: "https://example.com".into(),
-            is_search: false,
-        });
+        t.links.push(ServiceLink { service: Service::Web, url: "https://example.com".into(), is_search: false });
         let t = finish(t);
         assert_eq!(t.links.len(), LINK_SERVICES.len() + 1);
         assert_eq!(t.links[0].service, Service::Spotify);
@@ -471,14 +377,8 @@ mod tests {
 
     #[test]
     fn plausible_isrc_titles() {
-        assert!(plausible_title(
-            &track("Billie Jean", "MJ"),
-            &track("Billie Jean (Single Version)", "MJ")
-        ));
-        assert!(!plausible_title(
-            &track("Billie Jean", "MJ"),
-            &track("Thriller", "MJ")
-        ));
+        assert!(plausible_title(&track("Billie Jean", "MJ"), &track("Billie Jean (Single Version)", "MJ")));
+        assert!(!plausible_title(&track("Billie Jean", "MJ"), &track("Thriller", "MJ")));
     }
 
     #[tokio::test]
@@ -490,11 +390,7 @@ mod tests {
         let out = enrich(&http, input.clone(), "us", &cancel).await;
         assert_eq!(out.title, "Some Song");
         assert_eq!(out.links.len(), LINK_SERVICES.len());
-        assert!(
-            find(&http, "Some Song", "Some Artist", None, "us", &cancel)
-                .await
-                .is_none()
-        );
+        assert!(find(&http, "Some Song", "Some Artist", None, "us", &cancel).await.is_none());
         let empty = enrich(&http, Track::default(), "us", &cancel).await;
         assert!(empty.links.is_empty());
     }

@@ -12,11 +12,7 @@ use crate::model::{Service, ServiceLink, Track};
 use crate::shazam::client::ShazamMatch;
 
 /// Characters kept as-is in search URL paths and queries.
-const QUERY: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~');
+const QUERY: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove(b'_').remove(b'~');
 
 /// Separators between credited artists in Shazam's `subtitle`.
 const ARTIST_SEPARATORS: [&str; 7] = [", ", " & ", " feat. ", " ft. ", " featuring ", " x ", " × "];
@@ -31,11 +27,7 @@ pub(crate) fn parse_match(body: &Value, country: &str) -> Option<ShazamMatch> {
     let title = text(track, "title")?;
     let artist = text(track, "subtitle").unwrap_or_default();
 
-    let actions = track
-        .pointer("/hub/actions")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+    let actions = track.pointer("/hub/actions").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     let apple_id = actions
         .iter()
         .find(|a| a.get("type").and_then(Value::as_str) == Some("applemusicplay"))
@@ -45,13 +37,7 @@ pub(crate) fn parse_match(body: &Value, country: &str) -> Option<ShazamMatch> {
         .iter()
         .filter(|a| a.get("type").and_then(Value::as_str) == Some("uri"))
         .filter_map(|a| text(a, "uri"))
-        .find(|uri| {
-            is_https(uri)
-                && uri
-                    .split(['?', '#'])
-                    .next()
-                    .is_some_and(|p| p.ends_with(".m4a"))
-        });
+        .find(|uri| is_https(uri) && uri.split(['?', '#']).next().is_some_and(|p| p.ends_with(".m4a")));
 
     let mut ids = HashMap::new();
     if let Some(key) = text(track, "key") {
@@ -94,10 +80,7 @@ pub(crate) fn parse_match(body: &Value, country: &str) -> Option<ShazamMatch> {
             .filter(|s| s.is_finite())
             .map_or(0, |s| (s * 1000.0).round() as i64),
         timeskew: first.get("timeskew").and_then(Value::as_f64).unwrap_or(0.0) as f32,
-        frequency_skew: first
-            .get("frequencyskew")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0) as f32,
+        frequency_skew: first.get("frequencyskew").and_then(Value::as_f64).unwrap_or(0.0) as f32,
     })
 }
 
@@ -131,19 +114,12 @@ fn song_metadata(track: &Value, title: &str) -> Option<String> {
 fn year(text: &str) -> Option<u16> {
     let bytes = text.as_bytes();
     bytes.windows(4).enumerate().find_map(|(i, w)| {
-        let before = i
-            .checked_sub(1)
-            .map(|j| bytes[j].is_ascii_digit())
-            .unwrap_or(false);
+        let before = i.checked_sub(1).map(|j| bytes[j].is_ascii_digit()).unwrap_or(false);
         let after = bytes.get(i + 4).is_some_and(u8::is_ascii_digit);
         if before || after || !w.iter().all(u8::is_ascii_digit) {
             return None;
         }
-        std::str::from_utf8(w)
-            .ok()?
-            .parse::<u16>()
-            .ok()
-            .filter(|y| (1000..=2999).contains(y))
+        std::str::from_utf8(w).ok()?.parse::<u16>().ok().filter(|y| (1000..=2999).contains(y))
     })
 }
 
@@ -160,9 +136,9 @@ fn lead_artist(track: &Value, title: &str, subtitle: &str) -> Option<String> {
         .filter_map(|p| text(p, "caption"))
         .find(|caption| {
             caption != title
-                && subtitle.strip_prefix(caption.as_str()).is_some_and(|rest| {
-                    rest.is_empty() || ARTIST_SEPARATORS.iter().any(|sep| rest.starts_with(sep))
-                })
+                && subtitle
+                    .strip_prefix(caption.as_str())
+                    .is_some_and(|rest| rest.is_empty() || ARTIST_SEPARATORS.iter().any(|sep| rest.starts_with(sep)))
         })
 }
 
@@ -193,10 +169,8 @@ pub(crate) fn upgrade_artwork(url: &str) -> String {
     let Some((base, last)) = url.rsplit_once('/') else {
         return url.to_string();
     };
-    let host_ok = url
-        .strip_prefix("https://")
-        .and_then(|r| r.split('/').next())
-        .is_some_and(|h| h.ends_with(".mzstatic.com"));
+    let host_ok =
+        url.strip_prefix("https://").and_then(|r| r.split('/').next()).is_some_and(|h| h.ends_with(".mzstatic.com"));
     let Some((size, ext)) = last.split_once('.') else {
         return url.to_string();
     };
@@ -213,40 +187,20 @@ pub(crate) fn upgrade_artwork(url: &str) -> String {
         && crop.bytes().all(|b| b.is_ascii_lowercase())
         && matches!(ext, "jpg" | "jpeg" | "png" | "webp");
     let small = w.parse::<u32>().is_ok_and(|w| w < ARTWORK_SIZE);
-    if valid && small {
-        format!("{base}/{ARTWORK_SIZE}x{ARTWORK_SIZE}{crop}.{ext}")
-    } else {
-        url.to_string()
-    }
+    if valid && small { format!("{base}/{ARTWORK_SIZE}x{ARTWORK_SIZE}{crop}.{ext}") } else { url.to_string() }
 }
 
 fn links(track: &Value, apple_id: Option<&str>, country: &str) -> Vec<ServiceLink> {
     let mut links = Vec::new();
-    let shazam_url =
-        text(track, "url").or_else(|| track.get("share").and_then(|s| text(s, "href")));
+    let shazam_url = text(track, "url").or_else(|| track.get("share").and_then(|s| text(s, "href")));
     if let Some(url) = shazam_url.filter(|u| is_https(u)) {
-        links.push(ServiceLink {
-            service: Service::Shazam,
-            url,
-            is_search: false,
-        });
+        links.push(ServiceLink { service: Service::Shazam, url, is_search: false });
     }
     if let Some(id) = apple_id {
-        let url = format!(
-            "https://music.apple.com/{}/song/{id}",
-            country.to_ascii_lowercase()
-        );
-        links.push(ServiceLink {
-            service: Service::AppleMusic,
-            url,
-            is_search: false,
-        });
+        let url = format!("https://music.apple.com/{}/song/{id}", country.to_ascii_lowercase());
+        links.push(ServiceLink { service: Service::AppleMusic, url, is_search: false });
     }
-    let providers = track
-        .pointer("/hub/providers")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+    let providers = track.pointer("/hub/providers").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     for provider in providers {
         let service = match provider.get("type").and_then(Value::as_str) {
             Some("SPOTIFY") => Service::Spotify,
@@ -257,16 +211,8 @@ fn links(track: &Value, apple_id: Option<&str>, country: &str) -> Vec<ServiceLin
         if links.iter().any(|l: &ServiceLink| l.service == service) {
             continue;
         }
-        let actions = provider
-            .get("actions")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        if let Some(link) = actions
-            .iter()
-            .filter_map(|a| text(a, "uri"))
-            .find_map(|uri| provider_link(service, &uri))
-        {
+        let actions = provider.get("actions").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+        if let Some(link) = actions.iter().filter_map(|a| text(a, "uri")).find_map(|uri| provider_link(service, &uri)) {
             links.push(link);
         }
     }
@@ -277,11 +223,7 @@ fn links(track: &Value, apple_id: Option<&str>, country: &str) -> Vec<ServiceLin
 pub(crate) fn provider_link(service: Service, uri: &str) -> Option<ServiceLink> {
     if is_https(uri) {
         let is_search = uri.contains("/search");
-        return Some(ServiceLink {
-            service,
-            url: uri.to_string(),
-            is_search,
-        });
+        return Some(ServiceLink { service, url: uri.to_string(), is_search });
     }
     let query = match service {
         Service::Spotify => decode_component(uri.strip_prefix("spotify:search:")?),
@@ -297,21 +239,13 @@ pub(crate) fn provider_link(service: Service, uri: &str) -> Option<ServiceLink> 
         Service::Spotify => format!("https://open.spotify.com/search/{encoded}"),
         _ => format!("https://www.deezer.com/search/{encoded}"),
     };
-    Some(ServiceLink {
-        service,
-        url,
-        is_search: true,
-    })
+    Some(ServiceLink { service, url, is_search: true })
 }
 
 /// `deezer-query://www.deezer.com/play?query={track:'T' artist:'A'}` → "T A".
 fn deezer_query(uri: &str) -> Option<String> {
     let rest = uri.strip_prefix("deezer-query://")?;
-    let raw = rest
-        .split_once('?')?
-        .1
-        .split('&')
-        .find_map(|kv| kv.strip_prefix("query="))?;
+    let raw = rest.split_once('?')?.1.split('&').find_map(|kv| kv.strip_prefix("query="))?;
     let query = decode_component(raw);
     let field = |name: &str| {
         let start = query.find(&format!("{name}:'"))? + name.len() + 2;
@@ -327,9 +261,7 @@ fn deezer_query(uri: &str) -> Option<String> {
 
 /// Percent-decode a query component, treating `+` as a space.
 fn decode_component(raw: &str) -> String {
-    percent_decode_str(&raw.replace('+', " "))
-        .decode_utf8_lossy()
-        .into_owned()
+    percent_decode_str(&raw.replace('+', " ")).decode_utf8_lossy().into_owned()
 }
 
 fn collapse_whitespace(s: &str) -> String {
@@ -350,10 +282,7 @@ mod tests {
         let t = &m.track;
         assert_eq!(t.title, "Get Lucky");
         assert_eq!(t.artist, "Daft Punk, Pharrell Williams & Nile Rodgers");
-        assert_eq!(
-            t.artists,
-            ["Daft Punk", "Pharrell Williams", "Nile Rodgers"]
-        );
+        assert_eq!(t.artists, ["Daft Punk", "Pharrell Williams", "Nile Rodgers"]);
         assert_eq!(t.album.as_deref(), Some("Random Access Memories"));
         assert_eq!(t.isrc.as_deref(), Some("USQX91300108"));
         assert_eq!(t.genre.as_deref(), Some("Pop"));
@@ -365,36 +294,18 @@ mod tests {
                 "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/e8/43/5f/e8435ffa-b6b9-b171-40ab-4ff3959ab661/886443919266.jpg/1000x1000cc.jpg"
             )
         );
-        assert!(
-            t.preview_url
-                .as_deref()
-                .unwrap()
-                .ends_with("mzaf_2937358213989499437.plus.aac.ep.m4a")
-        );
+        assert!(t.preview_url.as_deref().unwrap().ends_with("mzaf_2937358213989499437.plus.aac.ep.m4a"));
         assert_eq!(t.ids.get("shazam").map(String::as_str), Some("105842472"));
         assert_eq!(t.ids.get("apple").map(String::as_str), Some("617154366"));
 
         let link = |s: Service| t.links.iter().find(|l| l.service == s).unwrap();
-        assert_eq!(
-            link(Service::Shazam).url,
-            "https://www.shazam.com/track/105842472/get-lucky"
-        );
+        assert_eq!(link(Service::Shazam).url, "https://www.shazam.com/track/105842472/get-lucky");
         assert!(!link(Service::Shazam).is_search);
-        assert_eq!(
-            link(Service::AppleMusic).url,
-            "https://music.apple.com/us/song/617154366"
-        );
+        assert_eq!(link(Service::AppleMusic).url, "https://music.apple.com/us/song/617154366");
         assert!(!link(Service::AppleMusic).is_search);
-        assert_eq!(
-            link(Service::Spotify).url,
-            "https://open.spotify.com/search/Get%20Lucky%20Daft%20Punk"
-        );
+        assert_eq!(link(Service::Spotify).url, "https://open.spotify.com/search/Get%20Lucky%20Daft%20Punk");
         assert!(link(Service::Spotify).is_search);
-        assert!(
-            link(Service::YouTubeMusic)
-                .url
-                .starts_with("https://music.youtube.com/search?q=Get+Lucky")
-        );
+        assert!(link(Service::YouTubeMusic).url.starts_with("https://music.youtube.com/search?q=Get+Lucky"));
         assert!(link(Service::YouTubeMusic).is_search);
         assert_eq!(
             link(Service::Deezer).url,
@@ -412,12 +323,7 @@ mod tests {
     fn apple_music_link_uses_storefront() {
         let body: Value = serde_json::from_str(FIXTURE).unwrap();
         let m = parse_match(&body, "DE").unwrap();
-        assert!(
-            m.track
-                .links
-                .iter()
-                .any(|l| l.url == "https://music.apple.com/de/song/617154366")
-        );
+        assert!(m.track.links.iter().any(|l| l.url == "https://music.apple.com/de/song/617154366"));
     }
 
     #[test]
@@ -473,33 +379,17 @@ mod tests {
     #[test]
     fn artists_split_only_after_a_known_lead() {
         assert_eq!(split_artists("Adele", Some("Adele")), ["Adele"]);
+        assert_eq!(split_artists("Earth, Wind & Fire", None), ["Earth, Wind & Fire"]);
+        assert_eq!(split_artists("Earth, Wind & Fire", Some("Earth, Wind & Fire")), ["Earth, Wind & Fire"]);
         assert_eq!(
-            split_artists("Earth, Wind & Fire", None),
-            ["Earth, Wind & Fire"]
-        );
-        assert_eq!(
-            split_artists("Earth, Wind & Fire", Some("Earth, Wind & Fire")),
-            ["Earth, Wind & Fire"]
-        );
-        assert_eq!(
-            split_artists(
-                "Tyler, The Creator & Kali Uchis",
-                Some("Tyler, The Creator")
-            ),
+            split_artists("Tyler, The Creator & Kali Uchis", Some("Tyler, The Creator")),
             ["Tyler, The Creator", "Kali Uchis"]
         );
-        assert_eq!(
-            split_artists("Calvin Harris feat. Rihanna", Some("Calvin Harris")),
-            ["Calvin Harris", "Rihanna"]
-        );
+        assert_eq!(split_artists("Calvin Harris feat. Rihanna", Some("Calvin Harris")), ["Calvin Harris", "Rihanna"]);
         assert!(split_artists("", Some("x")).is_empty());
 
         let track = json!({"sections": [{"type": "SONG", "metapages": [{"caption": "Daft"}, {"caption": "Song"}]}]});
-        assert_eq!(
-            lead_artist(&track, "Song", "Daft Punk"),
-            None,
-            "prefix must end at an artist boundary"
-        );
+        assert_eq!(lead_artist(&track, "Song", "Daft Punk"), None, "prefix must end at an artist boundary");
     }
 
     #[test]
@@ -527,28 +417,16 @@ mod tests {
     #[test]
     fn provider_uris_become_web_links() {
         let l = provider_link(Service::Spotify, "spotify:search:Hello%20Adele").unwrap();
-        assert_eq!(
-            (l.url.as_str(), l.is_search),
-            ("https://open.spotify.com/search/Hello%20Adele", true)
-        );
-        let l = provider_link(Service::Deezer, "deezer-query://www.deezer.com/play?query=%7Btrack%3A%27Hello%27%20artist%3A%27Adele%27%7D").unwrap();
-        assert_eq!(
-            (l.url.as_str(), l.is_search),
-            ("https://www.deezer.com/search/Hello%20Adele", true)
-        );
+        assert_eq!((l.url.as_str(), l.is_search), ("https://open.spotify.com/search/Hello%20Adele", true));
         let l = provider_link(
-            Service::Spotify,
-            "https://open.spotify.com/track/4aebBr4JAihzJQR0CiIZJv",
+            Service::Deezer,
+            "deezer-query://www.deezer.com/play?query=%7Btrack%3A%27Hello%27%20artist%3A%27Adele%27%7D",
         )
         .unwrap();
+        assert_eq!((l.url.as_str(), l.is_search), ("https://www.deezer.com/search/Hello%20Adele", true));
+        let l = provider_link(Service::Spotify, "https://open.spotify.com/track/4aebBr4JAihzJQR0CiIZJv").unwrap();
         assert!(!l.is_search);
-        assert!(
-            provider_link(
-                Service::YouTubeMusic,
-                "intent://music.youtube.com#Intent;end"
-            )
-            .is_none()
-        );
+        assert!(provider_link(Service::YouTubeMusic, "intent://music.youtube.com#Intent;end").is_none());
         assert!(provider_link(Service::Deezer, "deezer-query://www.deezer.com/play").is_none());
         assert!(provider_link(Service::Spotify, "spotify:search:%20").is_none());
     }

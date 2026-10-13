@@ -125,10 +125,7 @@ fn library(args: LibraryArgs) -> Result<()> {
         eprintln!("No sessions.");
         return Ok(());
     }
-    let id_width = entries
-        .iter()
-        .map(|e| e.id.chars().count())
-        .fold(2, usize::max);
+    let id_width = entries.iter().map(|e| e.id.chars().count()).fold(2, usize::max);
     let mut out = format!(
         "{:<id_width$}  {:<16}  {:<12}  {:<10}  {:>6}  TITLE\n",
         "ID", "CREATED (UTC)", "KIND", "STATUS", "TRACKS"
@@ -163,8 +160,7 @@ fn export(args: ExportArgs) -> Result<()> {
     let id = resolve_id(&store, &args.id)?;
     let text = store.export(&id, args.format.into())?;
     match args.output {
-        Some(path) => std::fs::write(&path, text)
-            .with_context(|| format!("could not write {}", path.display())),
+        Some(path) => std::fs::write(&path, text).with_context(|| format!("could not write {}", path.display())),
         None => emit(&text),
     }
 }
@@ -178,19 +174,9 @@ fn resolve_id(store: &Store, id: &str) -> Result<String> {
     if store.session_detail(id)?.is_some() {
         return Ok(id.to_string());
     }
-    let all = LibraryQuery {
-        kinds: vec![],
-        search: None,
-        pinned_only: false,
-        limit: 0,
-        offset: 0,
-    };
-    let mut matches: Vec<String> = store
-        .library(&all)?
-        .into_iter()
-        .map(|e| e.id)
-        .filter(|e| e.starts_with(id))
-        .collect();
+    let all = LibraryQuery { kinds: vec![], search: None, pinned_only: false, limit: 0, offset: 0 };
+    let mut matches: Vec<String> =
+        store.library(&all)?.into_iter().map(|e| e.id).filter(|e| e.starts_with(id)).collect();
     match matches.len() {
         0 => bail!("no session matches {id:?}"),
         1 => Ok(matches.remove(0)),
@@ -214,9 +200,7 @@ fn default_db_path() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("MF_DB") {
         return Ok(PathBuf::from(path));
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set; pass --db")?;
+    let home = std::env::var_os("HOME").map(PathBuf::from).context("HOME is not set; pass --db")?;
     let dir = if cfg!(target_os = "macos") {
         home.join("Library/Application Support/Music Fetch")
     } else {
@@ -231,10 +215,7 @@ fn default_db_path() -> Result<PathBuf> {
 /// Writes to stdout; a closed pipe (`mf library | head`) is not an error.
 fn emit(text: &str) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
-    match stdout
-        .write_all(text.as_bytes())
-        .and_then(|()| stdout.flush())
-    {
+    match stdout.write_all(text.as_bytes()).and_then(|()| stdout.flush()) {
         Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(()),
         result => Ok(result?),
     }
@@ -277,11 +258,7 @@ fn utc(ms: i64) -> String {
     let secs = ms.div_euclid(1000);
     let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
     let day_secs = secs.rem_euclid(86_400);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
-        day_secs / 3600,
-        day_secs / 60 % 60
-    )
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", day_secs / 3600, day_secs / 60 % 60)
 }
 
 /// Proleptic Gregorian date for days since 1970-01-01 (H. Hinnant's algorithm).
