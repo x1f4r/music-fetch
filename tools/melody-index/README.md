@@ -85,9 +85,10 @@ most-played top 100 for 39 storefronts and Deezer (global chart, genre charts, t
 <country>" playlists of the Deezer Charts account). Entries are merged when they share a
 normalized title (feat./with credits, remaster/version/live decorations and " - …" suffixes
 removed; a looser key also drops every bracketed group) and any credited artist. Popularity is
-a noisy-or `1 - Π(1 - w·s)` of per-source strengths, each monotone in its signal (Billboard
-points with a recency factor, log streams, chart rank), then turned into a rank percentile.
-The top 60k songs are kept.
+a noisy-or `1 - Π(1 - w·s)` of per-source strengths, each monotone in its signal: Billboard
+points with a recency factor, log global streams, the best country (log streams) and best
+Apple/Deezer rank plus a breadth term per source (number of markets). The score is turned into
+a rank percentile and the top 60k songs are kept.
 
 **2. Deezer.** The fielded search syntax (`artist:"…" track:"…"`) returns nothing any more, so
 the resolver issues plain queries (artist + title, then without brackets, then title alone) and
@@ -109,14 +110,16 @@ Notes: voicing at confidence > 0.04, single-frame confidence dips (< 0.72 × the
 sides) become breaks so repeated notes survive, voiced islands < 50 ms dropped, 5-frame median,
 octave errors folded against a 0.5 s local median, stable-pitch segmentation (0.75 semitone
 change sustained for 30 ms), notes < 80 ms absorbed by a touching neighbour or dropped,
-touching notes within 0.5 semitone merged. Phrases split at rests ≥ 400 ms, phrases > 20 s
-split at their longest rest, phrases need ≥ 6 notes, exact repeats removed. `start_ms` is the
+touching notes within 0.5 semitone merged. Phrases split at rests ≥ 400 ms, notes more than
+15 semitones from the phrase median dropped (bass or riff pickups), phrases > 20 s split at
+their longest rest, phrases need ≥ 6 notes, exact repeats removed. `start_ms` is the
 phrase start inside the preview (the preview's offset in the song is not known).
 
 **4. MIDI.** clean_midi (artist/title from the path) and lmd_matched (MSD id ->
 `unique_tracks.txt`, best match score per file) are linked to universe songs by the same keys.
-Songs that are not in the universe but have ≥ 3 distinct MIDI transcriptions are added as
-MIDI-only songs. The melody track is chosen per file by: karaoke syllables aligned with note
+Songs that are not in the universe but have ≥ 2 distinct clean_midi transcriptions are added
+as MIDI-only songs (lmd_matched counts are not used for this: its automatic matching assigns
+hundreds of files to some obscure tracks). The melody track is chosen per file by: karaoke syllables aligned with note
 onsets, track-name regex (melody/vocal/lead/… vs bass/drum/pad/chord/…), monophony, register
 (median pitch near 67), range ≤ 24, 1–8 notes/s, share of stepwise motion (arpeggios and riffs
 leap), activity, General MIDI program. lmd_matched files need an alignment score ≥ 0.6. A
@@ -133,9 +136,17 @@ dropped, and the best-agreeing file/track is exported. `mfidx famous` reports ag
 well-known songs next to the chance level.
 
 **Vocal separation** is not used by default. `mfidx separation` compares RMVPE on the mix
-with RMVPE on a separated vocal stem (audio-separator in its own venv,
-`~/melody-build/sepenv`) against MIDI melodies; see the report numbers in `out/` before
-turning it on, it costs ~2–3 GPU-seconds per preview.
+with RMVPE on a separated vocal stem against MIDI melodies for well-known songs. It needs
+audio-separator in its own venv:
+
+```sh
+cd ~/melody-build && uv venv sepenv --python 3.12
+uv pip install --python sepenv/bin/python "audio-separator[gpu]" audioread
+```
+
+On 20 songs the stem raised mean agreement from 0.74 to 0.76–0.78 (better for 12 of 20) at
+2–4 GPU-seconds per preview with audio-separator's per-file processing, i.e. 35–70 GPU-hours
+for the whole universe, so the default build runs on the mix.
 
 **5. Export.** One line per song with at least one phrase (preview phrases first, then MIDI),
 popularity re-ranked over the exported songs. `stats.json` has counts by source and origin,
