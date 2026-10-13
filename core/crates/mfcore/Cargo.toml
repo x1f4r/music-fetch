@@ -22,5 +22,12 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "gzip", "brotli", "multipart", "http2", "charset", "query", "form"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
+# links, catalog, identity
+url = "2.5"
+scraper = { version = "0.27", default-features = false }
+regex = "1.11"
+unicode-normalization = "0.1.24"
+lru = "0.18"
+strsim = "0.11"
 
 [dev-dependencies]
