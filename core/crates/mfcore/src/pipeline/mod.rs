@@ -1,0 +1,9 @@
+//! Session pipelines. Each session runs on the engine runtime, emits events to
+//! its observer and persists its results.
+
+pub mod analyze;
+pub mod emitter;
+pub mod hum;
+pub mod live;
+pub mod mix;
+pub mod stitch;

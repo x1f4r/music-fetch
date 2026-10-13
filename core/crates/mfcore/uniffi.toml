@@ -1,0 +1,8 @@
+[bindings.kotlin]
+package_name = "app.musicfetch.core"
+android = true
+
+[bindings.swift]
+ffi_module_name = "MfCoreFFI"
+ffi_module_filename = "MfCoreFFI"
+module_name = "MusicFetchCore"
