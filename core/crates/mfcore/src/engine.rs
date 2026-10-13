@@ -134,6 +134,7 @@ impl Drop for InstallGuard {
     }
 }
 
+/// The Music Fetch engine: one per app, shared by every session.
 #[derive(uniffi::Object)]
 pub struct Engine {
     ctx: Arc<EngineCtx>,
@@ -718,6 +719,7 @@ pub struct LiveSession {
 
 #[uniffi::export]
 impl LiveSession {
+    /// The session id (also the library entry id).
     pub fn id(&self) -> String {
         self.id.clone()
     }
@@ -732,6 +734,7 @@ impl LiveSession {
         self.input.finish();
     }
 
+    /// Stop at once; the session emits `Canceled` and is stored as canceled.
     pub fn cancel(&self) {
         cancel_running(&self.runtime, &self.cancel, &self.emitter, Some(&self.input));
     }
@@ -772,10 +775,12 @@ pub struct AnalysisSession {
 
 #[uniffi::export]
 impl AnalysisSession {
+    /// The session id (the library entry id, except for melody index downloads).
     pub fn id(&self) -> String {
         self.id.clone()
     }
 
+    /// Stop at once; the session emits `Canceled`.
     pub fn cancel(&self) {
         cancel_running(&self.runtime, &self.cancel, &self.emitter, None);
     }

@@ -100,6 +100,7 @@ pub struct LiveInput {
 }
 
 impl LiveInput {
+    /// An empty input queue.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }

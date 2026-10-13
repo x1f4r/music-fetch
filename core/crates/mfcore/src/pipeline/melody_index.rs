@@ -17,7 +17,9 @@ use crate::model::{MelodyIndexStatus, Phase};
 use crate::pipeline::ctx::{EngineCtx, SessionCtx};
 use crate::util::cancel::CancelToken;
 
+/// The installed index, in `data_dir/melody/`.
 pub const INDEX_FILE: &str = "melody-index.mfi";
+/// The manifest the installed index came with.
 pub const MANIFEST_FILE: &str = "manifest.json";
 const DOWNLOAD_FILE: &str = ".download";
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -86,10 +88,12 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
+/// `data_dir/melody`.
 pub fn melody_dir(engine: &EngineCtx) -> PathBuf {
     PathBuf::from(&engine.config.data_dir).join("melody")
 }
 
+/// `data_dir/melody/melody-index.mfi`.
 pub fn index_path(engine: &EngineCtx) -> PathBuf {
     melody_dir(engine).join(INDEX_FILE)
 }
