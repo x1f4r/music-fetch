@@ -2,6 +2,20 @@
 package_name = "app.musicfetch.core"
 android = true
 
+# A variant field named `message` clashes with Throwable.message in the generated
+# Kotlin exceptions (UniFFI 0.32.2), so it is `reason` on Android.
+[bindings.kotlin.rename]
+"MfError.InvalidInput.message" = "reason"
+"MfError.UnsupportedLink.message" = "reason"
+"MfError.Network.message" = "reason"
+"MfError.MediaUnavailable.message" = "reason"
+"MfError.Decode.message" = "reason"
+"MfError.Platform.message" = "reason"
+"MfError.Storage.message" = "reason"
+"MfError.Internal.message" = "reason"
+"PlatformError.Failed.message" = "reason"
+"PlatformError.Unavailable.message" = "reason"
+
 [bindings.swift]
 ffi_module_name = "MfCoreFFI"
 ffi_module_filename = "MfCoreFFI"
