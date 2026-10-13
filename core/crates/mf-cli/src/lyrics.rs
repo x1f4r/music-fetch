@@ -14,7 +14,8 @@ pub enum Command {
     /// Find songs from typed or transcribed lyrics.
     Lyrics(LyricsArgs),
     /// Measure recognition quality on built-in query sets.
-    #[command(subcommand)]
+    /// Dispatched through the shared `mf eval` command.
+    #[command(skip)]
     Eval(EvalCommand),
 }
 

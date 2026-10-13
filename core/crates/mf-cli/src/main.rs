@@ -1,11 +1,12 @@
 //! `mf`: developer CLI for the Music Fetch engine.
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 mod library;
 mod links;
 mod lyrics;
 mod media;
+mod melody;
 mod shazam;
 
 #[derive(Parser)]
@@ -23,6 +24,19 @@ enum Cli {
     Links(links::LinksCommand),
     #[command(flatten)]
     Lyrics(lyrics::Command),
+    #[command(flatten)]
+    Melody(melody::MelodyCommand),
+    /// Measure recognition quality on evaluation sets.
+    #[command(subcommand)]
+    Eval(EvalCommand),
+}
+
+#[derive(Subcommand)]
+enum EvalCommand {
+    #[command(flatten)]
+    Lyrics(lyrics::EvalCommand),
+    #[command(flatten)]
+    Melody(melody::EvalCommand),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -33,6 +47,9 @@ fn main() -> anyhow::Result<()> {
         Cli::Shazam(command) => shazam::run(command)?,
         Cli::Links(command) => links::run(command)?,
         Cli::Lyrics(command) => lyrics::run(command)?,
+        Cli::Melody(command) => melody::run(command)?,
+        Cli::Eval(EvalCommand::Lyrics(command)) => lyrics::run(lyrics::Command::Eval(command))?,
+        Cli::Eval(EvalCommand::Melody(command)) => melody::run(melody::MelodyCommand::Eval(command))?,
     }
     Ok(())
 }
