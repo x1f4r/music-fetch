@@ -130,7 +130,15 @@ class AudioCapture private constructor(
                         .setBufferSizeInBytes(bufferSize(AudioFormat.CHANNEL_IN_MONO))
                         .build()
                 }
-                if (record != null) return AudioCapture(record, SAMPLE_RATE, 1, name)
+                if (record != null) {
+                    // The first connected microphone of the user's order (Settings); null
+                    // keeps the system's choice of built-in microphone.
+                    val preferred = MicrophonePriority(context).preferredDevice()
+                    if (preferred != null && !record.setPreferredDevice(preferred)) {
+                        Log.w(TAG, "could not route to ${preferred.productName}")
+                    }
+                    return AudioCapture(record, SAMPLE_RATE, 1, preferred?.productName?.toString() ?: name)
+                }
             }
             return null
         }

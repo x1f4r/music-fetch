@@ -294,4 +294,12 @@
         <item quantity="one">%d track so far</item>
         <item quantity="other">%d tracks so far</item>
     </plurals>
+    <string name="settings_microphone">Microphone</string>
+    <string name="settings_microphone_builtin">This phone</string>
+    <string name="settings_microphone_in_use">In use</string>
+    <string name="settings_microphone_not_connected">Not connected</string>
+    <string name="settings_microphone_up">Move %1$s up</string>
+    <string name="settings_microphone_down">Move %1$s down</string>
+    <string name="settings_microphone_forget">Forget %1$s</string>
+    <string name="settings_microphone_footer">Music Fetch listens with the first connected microphone. Bluetooth headset microphones record only in call quality, so they aren\'t used. Phone audio is captured before it reaches your speakers or headphones and works with any output.</string>
 </resources>
