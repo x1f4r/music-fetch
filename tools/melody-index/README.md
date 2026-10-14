@@ -4,7 +4,7 @@ Offline builder for the Music Fetch melody index. It produces the JSONL describe
 [`docs/CORE_API.md`](../../docs/CORE_API.md) ("Melody builder input"), which `mf index build`
 turns into the shipped `melody-index.mfi`, plus `stats.json` and two evaluation sets.
 
-It runs on a Linux GPU host (default `legion-cachy`, RTX 3080 16 GB). Data never goes into git.
+It runs on a Linux GPU host (any CUDA GPU with ≥ 8 GB; set `MFIDX_HOST` to its ssh name). Data never goes into git.
 
 ## Layout on the GPU host
 
@@ -45,12 +45,12 @@ inside `data/chad/`.
 Everything:
 
 ```sh
-ssh legion-cachy
+ssh "$MFIDX_HOST"
 cd ~/melody-build/code
 setsid nohup scripts/pipeline.sh > ~/melody-build/logs/pipeline.out 2>&1 < /dev/null &
 ```
 
-From the Mac:
+From your workstation:
 
 ```sh
 scripts/status.sh                       # counts, songs/min, ETA per stage, last log lines, GPU

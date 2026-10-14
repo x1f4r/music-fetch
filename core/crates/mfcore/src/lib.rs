@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod config;
 pub mod engine;
 pub mod error;
+pub mod fingerprint;
 pub mod identity;
 pub mod links;
 pub mod lyrics;

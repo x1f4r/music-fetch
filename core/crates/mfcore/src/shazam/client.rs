@@ -1,7 +1,7 @@
 //! Shazam HTTP client with a serial queue, spacing, circuit breaker and cache.
 //!
 //! Every request of one client goes through a single queue. Interactive
-//! requests are spaced at least 3.5 s apart and batch requests 8 s (plus up to
+//! requests are spaced at least 3.5 s apart and batch requests 9 s (plus up to
 //! 1 s jitter); batch requests wait for their slot outside the queue, so an
 //! interactive request that arrives meanwhile goes first. HTTP 429, a burst of
 //! 5xx answers or a 200 with a non-JSON body opens a circuit breaker (30 s,
@@ -83,7 +83,7 @@ impl Default for QueuePolicy {
     fn default() -> Self {
         Self {
             interactive_spacing: Duration::from_millis(3500),
-            batch_spacing: Duration::from_secs(8),
+            batch_spacing: Duration::from_secs(9),
             jitter: Duration::from_secs(1),
             interactive_max_wait: Duration::from_secs(10),
             batch_max_wait: Duration::from_secs(10 * 60),

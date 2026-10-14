@@ -11,6 +11,10 @@
 # SDK in ~/Library/Android/sdk (macOS) or ~/Android/Sdk (Linux) with NDK r29.
 set -euo pipefail
 
+# Keep local paths out of the binaries.
+# shellcheck source=lib/rust-env.sh
+source "$(dirname "$0")/lib/rust-env.sh"
+
 NDK_VERSION="29.0.14206865"
 MIN_SDK=29
 ALIGN_MIN=16384
