@@ -79,13 +79,17 @@ best impression candidate ("Best guess: … · See all"), or the no-match reason
 ## Opening links
 
 The user picks **one preferred provider**; every result's primary button opens the track
-there ("Open in YouTube Music"). There is no built-in default and the app never assumes
-Spotify.
+there ("Open in YouTube Music").
 
-- **First use:** the first time a result's primary button is used without a preference,
-  a compact "Where do you listen?" picker appears (pre-selecting an installed app:
-  Android via `PackageManager`, macOS via installed apps such as Music, Spotify,
-  YouTube Music PWA). The choice is stored and editable in Settings → General → "Open
+- **Startup panel:** on launch, while no provider decision is stored, the app shows a
+  "Where do you listen?" panel with the most common services (Spotify, YouTube Music,
+  Apple Music, Tidal, Amazon Music, Deezer, SoundCloud; "More…" for the full list and a
+  custom provider), pre-selecting an installed app when one is detected (Android via
+  `PackageManager`; macOS via installed apps such as Music, Spotify). Choosing stores the
+  provider. **Skip** stores the decision with Spotify as the provider. Either way the panel
+  never appears again. The decision is written only when the user chooses or skips, so a
+  crash, quit or restart before that (e.g. around permission prompts) shows the panel
+  again on the next launch. The provider stays editable in Settings → General → "Open
   songs in".
 - **Switch per tap:** the primary button is a split button. Its chevron opens a menu of
   all other providers; choosing one opens the track there once without changing the
