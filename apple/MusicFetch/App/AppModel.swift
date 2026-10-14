@@ -429,6 +429,23 @@ final class AppModel {
         listenNow(.hum)
     }
 
+    /// Space: play or pause the selected track's preview; a mix segment without one
+    /// opens the source at its cue. Returns false when there is nothing to play.
+    @discardableResult
+    func playSelection() -> Bool {
+        guard let session = currentSession else { return false }
+        let segment = session.presentation == .timeline || session.presentation == .collection ? session.selectedSegment : nil
+        if let track = selectedTrack, let link = track.previewUrl, let url = URL(string: link) {
+            self.preview.toggle(id: track.identityKey, url: url)
+            return true
+        }
+        if let segment, let source = segment.sourceUrl {
+            LinkOpener.openSource(source)
+            return true
+        }
+        return false
+    }
+
     // MARK: - Export and copy
 
     func export(_ model: SessionModel, format: ExportFormat) {

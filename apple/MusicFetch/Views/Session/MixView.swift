@@ -46,11 +46,6 @@ struct MixView: View {
             }
             .onAppear { selectFirstWhenFinished() }
             .onChange(of: model.isRunning) { _, _ in selectFirstWhenFinished() }
-            .onKeyPress(.space) {
-                guard let segment = model.selectedSegment else { return .ignored }
-                playOrOpen(segment)
-                return .handled
-            }
             .onKeyPress(.return) {
                 guard let track = model.selectedSegment?.track else { return .ignored }
                 LinkOpener.openPreferred(track, defaultService: app.defaultService)
@@ -66,14 +61,6 @@ struct MixView: View {
         }
     }
 
-    /// Space: the track preview, or the source at the cue.
-    private func playOrOpen(_ segment: Segment) {
-        if let track = segment.track, let preview = track.previewUrl, let url = URL(string: preview) {
-            app.preview.toggle(id: track.identityKey, url: url)
-        } else {
-            LinkOpener.openSource(segment.sourceUrl)
-        }
-    }
 }
 
 /// Thumbnail, title, subtitle and status (progress + Stop, or the identified count).

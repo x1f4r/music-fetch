@@ -41,11 +41,6 @@ struct CandidatesView: View {
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
             .animation(AppModel.spring(.chrome), value: model.candidates.map(\.track.identityKey))
-            .onKeyPress(.space) {
-                guard let candidate = model.selectedCandidate else { return .ignored }
-                togglePreview(candidate.track)
-                return .handled
-            }
         }
         .onAppear {
             if model.selectedCandidateID == nil { model.selectedCandidateID = model.candidates.first?.track.identityKey }

@@ -25,12 +25,6 @@ struct ResultView: View {
                 }
                 .scrollBounceBehavior(.basedOnSize)
             }
-            .focusable()
-            .focusEffectDisabled()
-            .onKeyPress(.space) {
-                togglePreview(track)
-                return .handled
-            }
             .onAppear {
                 if reduceMotion {
                     withAnimation(.easeInOut(duration: 0.15)) { revealed = true }

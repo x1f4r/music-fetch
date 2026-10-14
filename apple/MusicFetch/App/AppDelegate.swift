@@ -12,16 +12,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await AppModel.shared?.start() }
         // Esc stops listening wherever focus is (a menu key equivalent alone is not
         // reliable for Escape).
-        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == 53, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
-                let listen = AppModel.shared?.listen, listen.stage == .listening || listen.stage == .matching
+        // Space plays the selected preview unless text is being edited.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty, let app = AppModel.shared,
+                event.window?.attachedSheet == nil
             else { return event }
-            listen.escape()
-            return nil
+            switch event.keyCode {
+            case 53 where app.listen.stage == .listening || app.listen.stage == .matching:
+                app.listen.escape()
+                return nil
+            case 49 where !(event.window?.firstResponder is NSText) && event.window?.identifier?.rawValue.hasPrefix("main") == true:
+                return app.playSelection() ? nil : event
+            default:
+                return event
+            }
         }
     }
 
-    private var escapeMonitor: Any?
+    private var keyMonitor: Any?
 
     /// Keep running after the last window closes only while the menu bar extra shows.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
