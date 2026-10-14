@@ -63,6 +63,10 @@ const BEFORE_START_MS: u64 = 20_000;
 const UNRELIABLE_WINDOW: usize = 6;
 /// ...and how many of them the audio must have overruled.
 const UNRELIABLE_CONTRADICTIONS: usize = 3;
+/// Largest DJ speed change taken at face value.
+const MAX_DJ_SKEW: f32 = 0.085;
+/// How far speed and pitch (or pitch and zero) may differ in one answer.
+const SKEW_TOLERANCE: f32 = 0.0015;
 /// An end and a start this close describe a hard cut.
 const HARD_CUT_MS: i64 = 8_000;
 /// Transitions longer than this get a refining probe in their middle...
@@ -159,6 +163,9 @@ struct Anchor {
     /// Latest media time the recording can last to (needs its duration).
     end_est: Option<i64>,
     kind: AnchorKind,
+    /// The recognizer reported a speed/pitch change no turntable or key-locked
+    /// player produces: typical of a sample inside another record.
+    odd: bool,
 }
 
 impl Anchor {
@@ -420,6 +427,7 @@ impl<S: Services> Mix<'_, S> {
             start_est,
             end_est,
             kind: AnchorKind::Recognizer,
+            odd: !plausible_skew(hit.timeskew, hit.frequency_skew),
         }
     }
 
@@ -549,6 +557,7 @@ impl<S: Services> Mix<'_, S> {
             start_est: a.start_est,
             end_est: a.end_est,
             kind: AnchorKind::Local,
+            odd: false,
         }))
     }
 
@@ -613,6 +622,7 @@ impl<S: Services> Mix<'_, S> {
             start_est,
             end_est,
             kind: AnchorKind::Local,
+            odd: false,
         }))
     }
 
@@ -694,6 +704,11 @@ impl<S: Services> Mix<'_, S> {
             // Not verified locally: one probe inside the entry.
             let mut anchor = self.probe(probe_point(start, end)).await?;
             let mut heard: Vec<Anchor> = anchor.iter().cloned().collect();
+            // Another song at a speed/pitch no player produces is a sample: not evidence.
+            if let Some(a) = anchor.clone().filter(|a| a.odd && !hints::same_song(&a.track, &hint_track)) {
+                piece.alternates.push(a.track);
+                anchor = None;
+            }
             let neighbour = |a: &Anchor| {
                 [i.checked_sub(1), Some(i + 1)]
                     .into_iter()
@@ -1102,15 +1117,18 @@ impl<S: Services> Mix<'_, S> {
             let before = a.at_ms.saturating_sub(lo).min(CONFIRM_REACH_MS);
             let after = hi.saturating_sub(a.at_ms + a.len_ms).min(CONFIRM_REACH_MS);
             let at = if after >= before && after >= CONFIRM_ROOM_MS {
-                a.at_ms + a.len_ms + after / 2 - PROBE_MS / 2
+                Some(a.at_ms + a.len_ms + after / 2 - PROBE_MS / 2)
             } else if before >= CONFIRM_ROOM_MS {
-                (a.at_ms - before / 2).saturating_sub(PROBE_MS / 2)
+                Some((a.at_ms - before / 2).saturating_sub(PROBE_MS / 2))
             } else {
+                None
+            };
+            let Some(at) = at.filter(|at| self.music_share(*at, *at + PROBE_MS) >= 0.4) else {
+                if a.odd {
+                    self.drop_answer(a, "implausible speed and pitch");
+                }
                 continue;
             };
-            if self.music_share(at, at + PROBE_MS) < 0.4 {
-                continue;
-            }
             match self.probe(at).await? {
                 Some(b) if hints::same_recording(&b.track, &a.track) && consistent_start(a, &b) => {
                     self.anchors.push(b);
@@ -1120,11 +1138,15 @@ impl<S: Services> Mix<'_, S> {
                     if hints::same_song(&b.track, &a.track) {
                         self.log(format!("replaced {} – {} by {}", a.track.artist, a.track.title, b.track.title));
                         self.refuted.insert(a.id.clone());
+                    } else if a.odd {
+                        self.drop_answer(a, "implausible speed and pitch, not heard again");
                     }
                     self.anchors.push(b.clone());
                     self.learn(&b).await?;
                 }
-                // Nothing recognized there (a breakdown, a transition): keep the answer.
+                // Nothing recognized there (a breakdown, a transition): keep a
+                // plausible answer, drop one that sounds like a sample.
+                None if a.odd => self.drop_answer(a, "implausible speed and pitch, not heard again"),
                 None => {}
             }
         }
@@ -1138,14 +1160,17 @@ impl<S: Services> Mix<'_, S> {
             .collect();
         for a in lone {
             if let Some(other) = self.overlapped_by(&a) {
-                self.log(format!(
-                    "dropped {} – {} (would overlap {} for minutes)",
-                    a.track.artist, a.track.title, other
-                ));
-                self.refuted.insert(a.id.clone());
+                self.drop_answer(&a, &format!("would overlap {other} for minutes"));
+            } else if a.odd {
+                self.drop_answer(&a, "implausible speed and pitch");
             }
         }
         Ok(())
+    }
+
+    fn drop_answer(&mut self, a: &Anchor, why: &str) {
+        self.log(format!("dropped {} – {} ({why})", a.track.artist, a.track.title));
+        self.refuted.insert(a.id.clone());
     }
 
     /// Another answer or a local match backs this recording up.
@@ -1541,6 +1566,13 @@ fn next_probe(a: &Anchor) -> u64 {
         }
         _ => t + UNKNOWN_STEP_MS,
     }
+}
+
+/// Speed and pitch changes playback can produce: none, both together (a
+/// turntable or pitch fader), or tempo alone (key lock), within ±8.5 %. A
+/// recognizer answer outside these usually heard a sample inside another record.
+fn plausible_skew(speed: f32, pitch: f32) -> bool {
+    speed.abs() <= MAX_DJ_SKEW && ((speed - pitch).abs() <= SKEW_TOLERANCE || pitch.abs() <= SKEW_TOLERANCE)
 }
 
 /// `a` (played to its end) stops where `b` (played from its beginning) starts:

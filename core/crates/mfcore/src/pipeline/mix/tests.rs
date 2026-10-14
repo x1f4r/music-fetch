@@ -209,6 +209,7 @@ fn next_probe_goes_past_the_end() {
         start_est: Some(0),
         end_est: end_s.map(|e| e * 1000),
         kind: AnchorKind::Recognizer,
+        odd: false,
     };
     assert_eq!(next_probe(&anchor(10, Some(100))), 110_000);
     assert_eq!(next_probe(&anchor(10, Some(400))), 160_000);
@@ -217,6 +218,18 @@ fn next_probe_goes_past_the_end() {
     assert_eq!(next_probe(&anchor(10, None)), 100_000);
     // Heard after its supposed end: the duration is wrong.
     assert_eq!(next_probe(&anchor(200, Some(100))), 290_000);
+}
+
+#[test]
+fn plausible_speed_and_pitch() {
+    // Values the recognizer reported for real plays in the evaluation mixes...
+    assert!(plausible_skew(0.0, 0.0));
+    assert!(plausible_skew(-0.0369, -0.0370)); // turntable / pitch fader
+    assert!(plausible_skew(0.0532, -0.0006)); // key lock
+    // ...and for samples inside other records.
+    assert!(!plausible_skew(0.0519, 0.0433));
+    assert!(!plausible_skew(-0.0066, 0.0099));
+    assert!(!plausible_skew(0.1009, -0.0004)); // beyond any pitch fader
 }
 
 #[test]

@@ -291,6 +291,13 @@ Never decide by duration alone. A single song must never be split.
      before Sᵧ, where a short hidden track would sit; T₂ − T₁ > 4 min → probe the
      middle. Repeat until nothing qualifies or the budget (duration / 45 s + 10 probes)
      is spent.
+   - Shazam reports how fast (timeskew) and how high (frequencyskew) the query plays
+     against its reference. Playback produces neither, both together (turntable,
+     pitch fader) or tempo alone (key lock), within ±8.5 %; any other combination
+     (within 0.15 %) means the recognizer heard a sample inside another record. Such
+     an answer never overrules a tracklist entry and, when nothing else backs it up,
+     is dropped (measured on the evaluation mixes: 11 of 16 wrong answers, 1 of ~60
+     right ones).
    - A recording heard once and not confirmed locally is dropped without a probe when
      its own start estimate would make it overlap an established recording (heard twice
      or found locally) for over a minute — longer than any transition; that is how
