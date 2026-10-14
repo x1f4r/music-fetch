@@ -78,7 +78,7 @@ nonisolated final class SystemAudioCapture: AudioCapture, @unchecked Sendable {
         try check(AudioHardwareCreateProcessTap(description, &tap), "create the audio tap")
         tapID = tap
 
-        let outputUID = try Self.defaultOutputDeviceUID()
+        let outputUID = try AudioDevices.preferredOutputUID() ?? Self.defaultOutputDeviceUID()
         let aggregate: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Music Fetch Capture",
             kAudioAggregateDeviceUIDKey: "local.musicfetch.capture.\(UUID().uuidString)",
