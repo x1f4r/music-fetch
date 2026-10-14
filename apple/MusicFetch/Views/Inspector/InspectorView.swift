@@ -206,7 +206,8 @@ struct SegmentInspector: View {
     }
 }
 
-/// "Not this": pick an alternate, or hum the part.
+/// "Not this": the segment becomes unidentified (its track stays as an alternate). The
+/// full form's menu also offers the alternates, humming the part and typing a lyric.
 struct NotThisMenu: View {
     @Environment(AppModel.self) private var app
     var model: SessionModel
@@ -214,24 +215,33 @@ struct NotThisMenu: View {
     var iconOnly = false
 
     var body: some View {
-        Menu {
-            ForEach(segment.alternates, id: \.identityKey) { alternate in
-                Button(Copy.useAlternate(alternate)) { app.correct(segmentID: segment.id, in: model.id, with: alternate) }
+        if iconOnly {
+            Button(action: reject) {
+                Image(systemName: "xmark").frame(width: 14, height: 14)
             }
-            if !segment.alternates.isEmpty { Divider() }
-            Button(Copy.humPart) { app.humSegment(segment, in: model) }
-            Button(Copy.typeLyric) { app.presentLyricSearch() }
-        } label: {
-            if iconOnly {
-                Image(systemName: "xmark")
-            } else {
+            .help(Copy.notThis)
+            .accessibilityLabel(Copy.notThis)
+        } else {
+            Menu {
+                ForEach(segment.alternates, id: \.identityKey) { alternate in
+                    Button(Copy.useAlternate(alternate)) { app.correct(segmentID: segment.id, in: model.id, with: alternate) }
+                }
+                if !segment.alternates.isEmpty { Divider() }
+                Button(Copy.humPart) { app.humSegment(segment, in: model) }
+                Button(Copy.typeLyric) { app.presentLyricSearch() }
+            } label: {
                 Text(Copy.notThis)
+            } primaryAction: {
+                reject()
             }
+            .fixedSize()
+            .help(Copy.notThis)
+            .accessibilityLabel(Copy.notThis)
         }
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(Copy.notThis)
-        .accessibilityLabel(Copy.notThis)
+    }
+
+    private func reject() {
+        app.reject(segmentID: segment.id, in: model.id)
     }
 }
 

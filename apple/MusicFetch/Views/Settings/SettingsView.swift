@@ -265,6 +265,7 @@ struct ServicesPane: View {
 struct MelodyPane: View {
     @Environment(AppModel.self) private var app
     @AppStorage(PreferenceKey.searchSungLyrics) private var searchSungLyrics = true
+    @AppStorage(PreferenceKey.autoStopAfterPause) private var autoStop = true
 
     var body: some View {
         let settings = app.settings!
@@ -322,6 +323,7 @@ struct MelodyPane: View {
             }
             Section(Copy.whileHumming) {
                 Toggle(Copy.alsoSearchLyrics, isOn: $searchSungLyrics)
+                Toggle(Copy.autoStopAfterPause, isOn: $autoStop)
             }
         }
         .formStyle(.grouped)

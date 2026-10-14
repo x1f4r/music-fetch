@@ -80,14 +80,14 @@ struct LibraryGroupingTests {
         let sections = LibraryModel.group(DemoFixtures.entries)
         #expect(sections.count == 3)
         #expect(sections[0].title == "Today")
-        #expect(sections[0].entries.count == 3)
+        #expect(sections[0].entries.count == 4)
         #expect(sections[1].title == "Yesterday")
         #expect(sections[2].entries.count == 3)
     }
 
     @Test func filters() {
         let entries = DemoFixtures.entries
-        #expect(entries.filter(LibraryModel.Filter.heard.includes).count == 3)
+        #expect(entries.filter(LibraryModel.Filter.heard.includes).count == 4)
         #expect(entries.filter(LibraryModel.Filter.hummed.includes).count == 1)
         #expect(entries.filter(LibraryModel.Filter.mixes.includes).map(\.title) == ["Fred again.. | Boiler Room: London", "Short n' Sweet"])
     }

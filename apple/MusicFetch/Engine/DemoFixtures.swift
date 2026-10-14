@@ -87,6 +87,7 @@ nonisolated enum DemoFixtures {
     static let blindingID = "00000000-0000-4000-8000-000000000006"
     static let collectionID = "00000000-0000-4000-8000-000000000007"
     static let dreamsID = "00000000-0000-4000-8000-000000000008"
+    static let waitingID = "00000000-0000-4000-8000-000000000009"
 
     static func at(daysAgo: Int, hour: Int, minute: Int) -> Int64 {
         let calendar = Calendar.current
@@ -183,6 +184,8 @@ nonisolated enum DemoFixtures {
                   pinned: true),
             entry(humID, .hum, .candidates, at(daysAgo: 0, hour: 11, minute: 48), title: "Take On Me", subtitle: "a-ha",
                   artwork: candidateTracks[0].artworkUrl, track: nil),
+            entry(waitingID, .listen, .waiting, at(daysAgo: 0, hour: 9, minute: 20), title: "", subtitle: nil, artwork: nil,
+                  track: nil),
             entry(espressoID, .link, .completed, at(daysAgo: 1, hour: 21, minute: 10), title: "Espresso",
                   subtitle: "Sabrina Carpenter", artwork: espresso.artworkUrl, track: espresso, count: 1,
                   url: "https://www.tiktok.com/@demo/video/1"),

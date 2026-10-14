@@ -68,6 +68,8 @@ final class AppModel {
     /// A mix segment waiting for a hum ("Hum it" on an ID row).
     @ObservationIgnored private var segmentHum: (sessionID: String, segmentID: String)?
     @ObservationIgnored private let host = EngineHost()
+    @ObservationIgnored private let lowPower = LowPowerMonitor()
+    @ObservationIgnored private var waiting: WaitingSessions?
     @ObservationIgnored private var melodyPromptDeclined = false
     @ObservationIgnored let demo: DemoState?
     /// Scene actions captured from the SwiftUI environment (`openSettings`, `openWindow`).
@@ -113,6 +115,12 @@ final class AppModel {
                 engineError = Copy.engineUnavailable
                 return
             }
+        }
+        if !isDemo, let engine {
+            lowPower.start(engine: engine)
+            let waiting = WaitingSessions(app: self)
+            waiting.start(engine: engine)
+            self.waiting = waiting
         }
         await library.refresh()
         settings.refreshMelody()
@@ -430,6 +438,18 @@ final class AppModel {
             sessions[sessionID]?.replace(segment)
         } catch {
             Log.app.error("Correction failed: \(String(describing: error), privacy: .public)")
+        }
+        library.scheduleRefresh()
+    }
+
+    /// "Not this" on a mix segment: it becomes unidentified and its track an alternate.
+    func reject(segmentID: String, in sessionID: String) {
+        guard let engine else { return }
+        do {
+            let segment = try engine.rejectSegment(sessionID: sessionID, segmentID: segmentID)
+            withAnimation(motion(.chrome)) { sessions[sessionID]?.replace(segment) }
+        } catch {
+            Log.app.error("Rejecting a segment failed: \(String(describing: error), privacy: .public)")
         }
         library.scheduleRefresh()
     }

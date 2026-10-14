@@ -69,6 +69,7 @@ extension Copy {
         case .continueSystemAudio: continueAction
         case .openMicrophoneSettings: openSystemSettings
         case .stop: stop
+        case .dismiss: ok
         }
     }
 
@@ -190,6 +191,7 @@ extension Copy {
 
     static let confirm = String(localized: "Confirm")
     static let notThis = String(localized: "Not this")
+    static let notThisMenu = String(localized: "Not This")
     static let humPart = String(localized: "Hum This Part")
     static let match = String(localized: "Match")
     static let evidenceLabel = String(localized: "Evidence")
@@ -199,6 +201,7 @@ extension Copy {
     static let analyzing = String(localized: "Analyzing")
     static let stoppedPlain = String(localized: "Stopped")
     static let didNotFinish = String(localized: "Didn't finish")
+    static let waitingForConnection = String(localized: "Waiting for connection")
 
     static func useAlternate(_ track: Track) -> String {
         String(localized: "Use “\(track.title)” by \(track.artist)")
@@ -336,6 +339,7 @@ extension Copy {
     static let melodyFooter = String(localized: "Needed to recognize humming, whistling and singing. Stays on this Mac.")
     static let whileHumming = String(localized: "While humming")
     static let alsoSearchLyrics = String(localized: "Also search lyrics you sing")
+    static let autoStopAfterPause = String(localized: "Stop automatically after a pause")
     static let onDisk = String(localized: "On disk")
     static let cachedAudio = String(localized: "Cached audio")
     static let clearCache = String(localized: "Clear Cache")

@@ -192,6 +192,7 @@ struct SegmentRow: View {
             if segment.tier == .possible {
                 Button(Copy.confirm) { app.correct(segmentID: segment.id, in: model.id, with: track) }
             }
+            Button(Copy.notThisMenu) { app.reject(segmentID: segment.id, in: model.id) }
             ForEach(segment.alternates, id: \.identityKey) { alternate in
                 Button(Copy.useAlternate(alternate)) { app.correct(segmentID: segment.id, in: model.id, with: alternate) }
             }

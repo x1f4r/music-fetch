@@ -22,6 +22,8 @@ final class ListenModel {
         case link
         case noMatch(NoMatchReason)
         case failed(ErrorCode, String?)
+        /// No connection: the capture was saved and is identified once online.
+        case offline
     }
 
     /// Transient state-line notices while capturing.
@@ -34,7 +36,7 @@ final class ListenModel {
 
     /// Buttons in the action row (§5.4).
     enum Action: Hashable {
-        case tryAgain, humIt, typeLyric, useMicrophone, continueSystemAudio, openMicrophoneSettings, stop
+        case tryAgain, humIt, typeLyric, useMicrophone, continueSystemAudio, openMicrophoneSettings, stop, dismiss
     }
 
     private(set) var stage: Stage = .idle
@@ -113,6 +115,8 @@ final class ListenModel {
             return Copy.noMatch(reason)
         case .failed(let code, let message):
             return Copy.failure(code, message: message)
+        case .offline:
+            return Copy.offline
         }
     }
 
@@ -154,6 +158,8 @@ final class ListenModel {
             }
         case .failed:
             return [.tryAgain]
+        case .offline:
+            return [.dismiss]
         }
     }
 
@@ -228,7 +234,8 @@ final class ListenModel {
         let bridge = ObserverBridge()
         let handle: LiveSessionHandle
         do {
-            handle = try engine.startListening(source: source.capture, mode: source.mode, observer: bridge)
+            handle = try engine.startListening(
+                source: source.capture, mode: source.mode, options: Preferences.listenOptions(), observer: bridge)
         } catch {
             bridge.close()
             fail(error)
@@ -334,6 +341,8 @@ final class ListenModel {
         case .openMicrophoneSettings: app.openPrivacySettings(.microphone)
         case .stop:
             if stage == .link { linkSession?.cancel() } else { cancel() }
+        case .dismiss:
+            stage = .idle
         }
     }
 
@@ -342,7 +351,7 @@ final class ListenModel {
         app.preview.stop()
         shown = nil
         switch stage {
-        case .noMatch, .failed, .systemAudioPrePrompt, .microphoneDenied: stage = .idle
+        case .noMatch, .failed, .offline, .systemAudioPrePrompt, .microphoneDenied: stage = .idle
         default: break
         }
     }
@@ -394,6 +403,7 @@ final class ListenModel {
                 stage = .noMatch(reason)
                 announce(Copy.noMatchAnnouncement(reason))
                 app.sessionFinished(model)
+                showOfflineIfSaved(model)
             case .completed:
                 stage = .idle
             }
@@ -402,12 +412,30 @@ final class ListenModel {
             handle = nil
             stage = .failed(code, message)
             announce(Copy.failure(code, message: message))
+            if code == .network { showOfflineIfSaved(model) }
         case .canceled:
             stopCapture()
             handle = nil
             if stage == .listening || stage == .matching { stage = .idle }
         default:
             break
+        }
+    }
+
+    /// A capture without a connection is stored as `Waiting`: say so instead of the
+    /// no-match or network failure.
+    private func showOfflineIfSaved(_ model: SessionModel) {
+        guard let engine = app.engine else { return }
+        let id = model.id
+        let shownStage = stage
+        Task {
+            guard let detail = try? await offMain({ try engine.session(id: id) }), detail.entry.status == .waiting,
+                liveSession === model, stage == shownStage
+            else { return }
+            model.apply(detail: detail)
+            stage = .offline
+            announce(Copy.offline)
+            app.library.scheduleRefresh()
         }
     }
 
