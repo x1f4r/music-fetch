@@ -10,3 +10,8 @@
 # must not be merged into one class (mf_ytdlp.py calls report() / isCanceled()).
 -keep interface app.musicfetch.platform.PythonCallbacks$* { *; }
 -keep class * implements app.musicfetch.platform.PythonCallbacks$* { *; }
+
+# Glance updates widgets through WorkManager 2.7, which creates its Room database
+# (WorkDatabase_Impl) reflectively. Room 2.2's rule keeps RoomDatabase subclasses but not
+# their constructors, which R8 full mode then removes and the app crashes at startup.
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
