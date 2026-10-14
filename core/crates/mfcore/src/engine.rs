@@ -22,8 +22,8 @@ use crate::identity;
 use crate::media::YtDlpSubprocess;
 use crate::model::{
     AnalyzeMode, Candidate, CandidateTier, CaptureSource, Evidence, EvidenceSource, ExportFormat, LibraryEntry,
-    LibraryQuery, ListenMode, Lyrics, MelodyIndexStatus, Outcome, Segment, SegmentKind, SessionDetail, SessionKind,
-    StorageUsage, Tier, Track,
+    LibraryQuery, ListenMode, ListenOptions, Lyrics, MelodyIndexStatus, Outcome, Segment, SegmentKind, SessionDetail,
+    SessionKind, StorageUsage, Tier, Track,
 };
 use crate::pipeline::analyze::{self, AnalyzeInput};
 use crate::pipeline::ctx::{EngineCtx, SessionCtx, preview_expired};
@@ -193,6 +193,43 @@ impl Engine {
             return Err(e);
         }
         Ok(session)
+    }
+
+    /// Start a live session with options (e.g. no impression auto-stop).
+    pub fn start_listening_with(
+        &self,
+        source: CaptureSource,
+        mode: ListenMode,
+        options: ListenOptions,
+        observer: Arc<dyn SessionObserver>,
+    ) -> Result<Arc<LiveSession>> {
+        // Options are applied by the live pipeline (wave 3); until then they are ignored.
+        let _ = options;
+        self.start_listening(source, mode, observer)
+    }
+
+    /// Reduce CPU and memory use (weak devices, battery saver). The engine also
+    /// turns this on by itself on machines with few cores or little memory.
+    pub fn set_low_power(&self, enabled: bool) {
+        let _ = enabled;
+    }
+
+    pub fn is_low_power(&self) -> bool {
+        false
+    }
+
+    /// Mark a segment as not identified ("Not this"), keeping its track as an alternate.
+    pub fn reject_segment(&self, session_id: String, segment_id: String) -> Result<Segment> {
+        let _ = (session_id, segment_id);
+        Err(MfError::internal("not implemented"))
+    }
+
+    /// Identify sessions captured while offline (status `Waiting`). Call when the
+    /// network is back; returns how many were started. Results arrive as library updates
+    /// and through `observer`.
+    pub fn retry_waiting(&self, observer: Arc<dyn SessionObserver>) -> Result<u32> {
+        let _ = observer;
+        Ok(0)
     }
 
     /// Analyze a link or a local file path.

@@ -430,3 +430,36 @@ mod tests {
         assert!(empty.links.is_empty());
     }
 }
+
+/// See `crate::custom_provider_link`.
+pub fn custom_link(track: &Track, template: &str) -> Option<String> {
+    fn enc(value: &str) -> String {
+        percent_encoding::utf8_percent_encode(value.trim(), percent_encoding::NON_ALPHANUMERIC).to_string()
+    }
+    let artist = track.artists.first().cloned().unwrap_or_else(|| track.artist.clone());
+    let query = format!("{} {}", artist.trim(), track.title.trim()).trim().to_string();
+    let url = template
+        .trim()
+        .replace("{artist}", &enc(&artist))
+        .replace("{title}", &enc(&track.title))
+        .replace("{query}", &enc(&query))
+        .replace("{isrc}", &enc(track.isrc.as_deref().unwrap_or("")));
+    let parsed = url::Url::parse(&url).ok()?;
+    matches!(parsed.scheme(), "http" | "https").then_some(url)
+}
+
+#[cfg(test)]
+mod custom_link_tests {
+    use super::*;
+
+    #[test]
+    fn fills_placeholders_and_rejects_other_schemes() {
+        let track = Track { title: "Take On Me".into(), artist: "a-ha".into(), ..Default::default() };
+        assert_eq!(
+            custom_link(&track, "https://example.com/search?q={query}").as_deref(),
+            Some("https://example.com/search?q=a%2Dha%20Take%20On%20Me")
+        );
+        assert_eq!(custom_link(&track, "javascript:alert({title})"), None);
+        assert_eq!(custom_link(&track, "not a url {title}"), None);
+    }
+}

@@ -250,6 +250,7 @@ fn status_name(status: SessionStatus) -> &'static str {
         SessionStatus::NoMatch => "no-match",
         SessionStatus::Failed => "failed",
         SessionStatus::Canceled => "canceled",
+        SessionStatus::Waiting => "waiting",
     }
 }
 
