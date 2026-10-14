@@ -133,7 +133,7 @@ struct ListenPane: View {
     var body: some View {
         let listen = app.listen!
         // Spacing 0: neighbors must not blend; the container only carries the button-to-result morph.
-        GlassEffectContainer(spacing: 0) {
+        GlassContainer(spacing: 0) {
             Group {
                 if let shown = listen.shown {
                     SessionContentView(model: shown, glass: glass)
@@ -187,8 +187,10 @@ struct SessionScreen: View {
         .navigationTitle(model?.title ?? "")
         .toolbar(removing: .title)
         .toolbar {
-            // Without a title nothing pushes the actions to the trailing edge.
-            ToolbarSpacer(.flexible)
+            // Without a title nothing pushes the actions to the trailing edge (macOS 26).
+            if #available(macOS 26, *) {
+                ToolbarSpacer(.flexible)
+            }
             if let model, model.presentation == .timeline || model.presentation == .collection || model.presentation == .result {
                 ToolbarItem(placement: .automatic) { ExportMenu(model: model) }
             }
@@ -221,7 +223,8 @@ struct LinkField: View {
     }
 }
 
-/// [Listen ▸] in the toolbar (prominent; the SDK has no `.glassProminent` yet).
+/// [Listen ▸] in the toolbar (prominent; the SDK has no `.glassProminent` yet, and
+/// `.borderedProminent` is the native style before macOS 26 too).
 struct ListenToolbarButton: View {
     @Environment(AppModel.self) private var app
 

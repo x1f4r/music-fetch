@@ -3,8 +3,10 @@
 name: MusicFetch
 
 options:
+  # macOS 15 runs on every Mac from 2020 on, Intel and Apple silicon; macOS 26 APIs
+  # are gated with #available and have native fallbacks.
   deploymentTarget:
-    macOS: "26.0"
+    macOS: "15.0"
   developmentLanguage: en
   createIntermediateGroups: true
   groupSortPosition: top

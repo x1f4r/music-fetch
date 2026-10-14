@@ -66,8 +66,7 @@ struct OpenInButton: View {
                 .accessibilityLabel(Copy.openInMenu)
             }
             .foregroundStyle(.white)
-            .glassEffect(.regular.tint(.accentColor).interactive(), in: .capsule)
-            .modifier(GlassID(namespace: glassNamespace))
+            .prominentGlass(tint: .accentColor, in: Capsule(), id: glassNamespace)
             .fixedSize(horizontal: !fillsWidth, vertical: true)
         case .bordered:
             Button(title, action: openPrimary)

@@ -49,8 +49,7 @@ struct ListenButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(PressScaleStyle())
-        .glassEffect(.regular.tint(tint).interactive(), in: .circle)
-        .modifier(GlassID(namespace: glassNamespace))
+        .prominentGlass(tint: tint, in: Circle(), id: glassNamespace)
         .scaleEffect(targeted ? 1.04 : 1)
         .animation(app.motion(.press), value: targeted)
         .disabled(app.engine == nil)
@@ -126,19 +125,6 @@ struct PressScaleStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(AppModel.spring(.press), value: configuration.isPressed)
-    }
-}
-
-/// `glassEffectID("primary")` when a namespace is available.
-struct GlassID: ViewModifier {
-    var namespace: Namespace.ID?
-
-    func body(content: Content) -> some View {
-        if let namespace {
-            content.glassEffectID("primary", in: namespace)
-        } else {
-            content
-        }
     }
 }
 

@@ -53,7 +53,7 @@ struct PossibleTag: View {
     }
 }
 
-/// A small icon-only glass button with a 28 pt hit target.
+/// A small icon-only glass (bordered before macOS 26) button with a 28 pt hit target.
 struct IconButton: View {
     var symbol: String
     var label: String
@@ -65,7 +65,7 @@ struct IconButton: View {
             Image(systemName: symbol)
                 .frame(width: 16, height: 16)
         }
-        .buttonStyle(.glass)
+        .glassButtonStyle()
         .buttonBorderShape(.circle)
         .controlSize(.large)
         .help(label)

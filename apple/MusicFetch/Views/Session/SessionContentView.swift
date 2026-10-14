@@ -38,15 +38,15 @@ struct EmptySessionView: View {
                 .multilineTextAlignment(.center)
             HStack(spacing: 12) {
                 Button(Copy.tryAgain) { retry() }
-                    .buttonStyle(.glass)
+                    .glassButtonStyle()
                     .controlSize(.large)
                 if model.kind == .listen || model.kind == .systemAudio || model.kind == .hum {
                     Button(Copy.humIt) { app.listenNow(.hum) }
-                        .buttonStyle(.glass)
+                        .glassButtonStyle()
                         .controlSize(.large)
                 }
                 Button(Copy.typeLyric) { app.presentLyricSearch() }
-                    .buttonStyle(.glass)
+                    .glassButtonStyle()
                     .controlSize(.large)
             }
         }

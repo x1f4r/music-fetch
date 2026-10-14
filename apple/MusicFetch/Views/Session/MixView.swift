@@ -29,7 +29,7 @@ struct MixView: View {
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
             .animation(AppModel.spring(.chrome), value: model.listedSegments.map(\.id))
-            .safeAreaBar(edge: .top, spacing: 0) {
+            .pinnedTopBar {
                 VStack(spacing: 0) {
                     MixHeader(model: model)
                     if showsTimeline {
@@ -39,7 +39,6 @@ struct MixView: View {
                     }
                 }
             }
-            .scrollEdgeEffectStyle(.hard, for: .top)
             .onChange(of: model.selectedSegmentID) { _, id in
                 guard let id else { return }
                 withAnimation(AppModel.spring(.chrome)) { proxy.scrollTo(id) }

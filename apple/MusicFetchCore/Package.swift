@@ -9,7 +9,7 @@ import PackageDescription
 
 let package = Package(
     name: "MusicFetchCore",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v15)],
     products: [
         .library(name: "MusicFetchCore", targets: ["MusicFetchCore"])
     ],
