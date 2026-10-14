@@ -4,4 +4,18 @@
     <style name="Theme.MusicFetch" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/window_background</item>
     </style>
+
+    <!-- The share sheet: a bottom sheet drawn by Compose over the app that shared. -->
+    <style name="Theme.MusicFetch.Translucent">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+
+    <!-- The tile trampoline: never visible, only hosts permission and consent dialogs. -->
+    <style name="Theme.MusicFetch.Invisible" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

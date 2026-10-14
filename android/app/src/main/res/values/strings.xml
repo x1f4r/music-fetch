@@ -30,10 +30,8 @@
     <string name="state_mostly_speech">Mostly talking, not music</string>
     <string name="state_capture_silent">This app blocks audio capture. Use the microphone instead.</string>
     <string name="state_rate_limited">Too many requests. Trying again in %1$d s.</string>
-    <string name="state_offline">You\'re offline. Saved to identify later.</string>
     <string name="state_mic_off">Microphone access is off.</string>
     <string name="state_phone_audio_pre_prompt">Android will ask to allow capture for this session.</string>
-    <string name="state_starting">Starting</string>
     <string name="action_try_again">Try again</string>
     <string name="action_hum_it">Hum it</string>
     <string name="action_type_lyric">Type a lyric</string>
@@ -41,23 +39,16 @@
     <string name="action_continue">Continue</string>
     <string name="action_open_settings">Open settings</string>
     <string name="action_stop">Stop</string>
-    <string name="action_cancel">Cancel</string>
     <string name="action_ok">OK</string>
     <string name="action_ask_google">Ask Google</string>
     <string name="source_microphone">Microphone</string>
     <string name="source_phone">Phone</string>
     <string name="source_hum">Hum</string>
     <string name="field_link">Paste a link</string>
-    <string name="field_link_suggestion">%1$s — Identify</string>
     <string name="field_attach">Open a file</string>
     <string name="field_identify">Identify</string>
     <string name="your_pitch">Your pitch</string>
-    <string name="seconds_hummed">%1$d seconds hummed</string>
-    <string name="recent_subtitle">%1$s · %2$s</string>
 
-    <!-- Microphone pre-prompt -->
-    <string name="mic_prompt_title">Listen with the microphone</string>
-    <string name="mic_prompt_message">Music Fetch listens only while you ask it to. A short fingerprint of the sound is sent to identify the song; the recording stays on this phone.</string>
 
     <!-- Melody library -->
     <string name="melody_prompt_title">Download the melody library?</string>
@@ -74,12 +65,10 @@
     <string name="melody_error">Couldn\'t download. Check your connection.</string>
     <string name="melody_footer">Needed to recognize humming, whistling and singing. Stays on this phone.</string>
     <string name="melody_check_for_updates">Check for updates</string>
-    <string name="melody_up_to_date">Up to date</string>
     <string name="melody_remove">Remove</string>
     <string name="melody_update">Update</string>
     <string name="melody_try_again">Try again</string>
     <string name="melody_updated">Version %1$s</string>
-    <string name="melody_size_default">48 MB</string>
 
     <!-- Results -->
     <string name="result_open_in">Open in %1$s</string>
@@ -87,7 +76,6 @@
     <string name="result_search_web">Search the web</string>
     <string name="result_more_services">More services</string>
     <string name="result_share">Share</string>
-    <string name="result_copy">Copy</string>
     <string name="result_copied">Copied</string>
     <string name="result_copy_title_artist">Copy title and artist</string>
     <string name="result_copy_link">Copy link</string>
@@ -98,9 +86,6 @@
     <string name="result_play_preview">Play preview</string>
     <string name="result_pause_preview">Pause preview</string>
     <string name="result_artwork">Artwork</string>
-    <string name="result_found">Found %1$s by %2$s</string>
-    <string name="result_meta">%1$s · %2$s</string>
-    <string name="result_listen_again">Listen again</string>
 
     <!-- Candidates -->
     <string name="cand_your_hum">Your hum · %1$d s</string>
@@ -111,7 +96,6 @@
     <string name="cand_this_is_it">This is it</string>
     <string name="cand_not_here">Not here?</string>
     <string name="cand_legend_you">You</string>
-    <string name="cand_announce">%1$d possible matches. Best: %2$s by %3$s, %4$s</string>
     <string name="cand_overlay_description">Your hum compared with %1$s</string>
     <string name="lyrics_prompt">Type a lyric you remember</string>
     <string name="lyrics_empty">No songs with that lyric.</string>
@@ -119,14 +103,11 @@
     <string name="lyrics_searching">Searching</string>
 
     <!-- Mix and collections -->
-    <string name="mix_subtitle">%1$s · %2$s</string>
-    <string name="mix_eta">About %1$d min left</string>
     <string name="mix_eta_under_minute">Less than a minute left</string>
     <string name="mix_analyzing">Analyzing</string>
     <string name="mix_identified">%1$d of %2$d identified</string>
     <string name="mix_identified_only">%1$d identified</string>
     <string name="mix_stopped">Stopped · %1$d identified</string>
-    <string name="mix_tracks_so_far">%1$d tracks so far</string>
     <string name="mix_id">ID</string>
     <string name="mix_possible">Possible</string>
     <string name="mix_confirm">Confirm</string>
@@ -141,17 +122,11 @@
     <string name="mix_tier_possible">Possible</string>
     <string name="mix_tier_unknown">Unknown</string>
     <string name="mix_row_description">%1$s, %2$s by %3$s, %4$s</string>
-    <string name="mix_evidence_shazam">Shazam</string>
     <string name="mix_evidence_audd">AudD</string>
     <string name="mix_evidence_acr">ACRCloud, score %1$d</string>
     <string name="mix_evidence_metadata">Link metadata</string>
     <string name="mix_evidence_hint">Page attribution only</string>
-    <string name="mix_evidence_melody">Melody</string>
-    <string name="mix_evidence_lyrics">Sung lyrics</string>
-    <string name="mix_evidence_acr_humming">ACRCloud humming</string>
     <string name="mix_evidence_user">You</string>
-    <string name="mix_announce_progress">%1$d of %2$d identified</string>
-    <string name="collection_subtitle">%1$s · %2$d tracks · %3$s</string>
     <string name="export_menu">Export</string>
     <string name="export_copy_tracklist">Copy tracklist</string>
     <string name="export_text">Text</string>
@@ -162,7 +137,6 @@
     <string name="export_saved">Saved</string>
 
     <!-- Library -->
-    <string name="library_title">Library</string>
     <string name="library_search">Search</string>
     <string name="library_filter_all">All</string>
     <string name="library_filter_heard">Heard</string>
@@ -171,9 +145,6 @@
     <string name="library_filter_mixes">Mixes</string>
     <string name="library_today">Today</string>
     <string name="library_yesterday">Yesterday</string>
-    <string name="library_candidates">%1$s · %2$d candidates</string>
-    <string name="library_tracks">%1$s · %2$d tracks</string>
-    <string name="library_waiting">Waiting for connection</string>
     <string name="library_empty_title">Nothing identified yet</string>
     <string name="library_empty_message">Songs you identify will show up here.</string>
     <string name="library_no_results">No matches</string>
@@ -201,8 +172,6 @@
     <string name="settings_open_songs_in">Open songs in</string>
     <string name="settings_notify">Notify when a result arrives in the background</string>
     <string name="settings_notifications">Notifications</string>
-    <string name="settings_notifications_off">Off</string>
-    <string name="settings_notifications_on">On</string>
     <string name="settings_audd">AudD</string>
     <string name="settings_audd_token">API token</string>
     <string name="settings_audd_footer">Optional. Tried when the free match fails.</string>
@@ -224,12 +193,9 @@
     <string name="settings_version">Version</string>
     <string name="settings_version_value">%1$s (%2$d) · engine %3$s</string>
     <string name="settings_qs_tile">Quick Settings tiles</string>
-    <string name="settings_qs_tile_summary">Identify songs from the quick settings shade</string>
     <string name="settings_add_tile">Add tile</string>
     <string name="settings_widget">Home screen widget</string>
     <string name="settings_add_widget">Add widget</string>
-    <string name="settings_tile_song">Identify song</string>
-    <string name="settings_tile_phone">Identify phone audio</string>
 
     <!-- Quick Settings tiles and widget -->
     <string name="tile_song">Identify song</string>
@@ -237,7 +203,6 @@
     <string name="tile_listening">Listening</string>
     <string name="widget_listen">Listen</string>
     <string name="widget_description">Identify a song from your home screen</string>
-    <string name="widget_last_result">Last result</string>
 
     <!-- Notifications -->
     <string name="channel_listening">Listening</string>
@@ -249,22 +214,17 @@
     <string name="notif_listening_mic">Listening with the microphone</string>
     <string name="notif_listening_phone">Listening to phone audio</string>
     <string name="notif_matching">Matching</string>
-    <string name="notif_tap_to_stop">Play, hum, whistle or sing</string>
-    <string name="notif_tap_to_stop_phone">Play a song on this phone</string>
     <string name="notif_result_title">%1$s — %2$s</string>
     <string name="notif_open">Open</string>
     <string name="notif_best_guess">Best guess: %1$s — %2$s</string>
     <string name="notif_see_all">See all</string>
     <string name="notif_analyzing">Analyzing %1$s</string>
-    <string name="notif_analyzing_detail">%1$s of %2$s · %3$d tracks</string>
+    <string name="notif_analyzing_detail">%1$s of %2$s · %3$s</string>
     <string name="notif_analyzing_file">Analyzing a file</string>
     <string name="notif_analyzing_link">Analyzing a link</string>
-    <string name="notif_tracks_found">%1$d tracks found</string>
-    <string name="notif_analysis_done">%1$s</string>
 
     <!-- Share sheet -->
     <string name="share_open_in_app">Open in Music Fetch</string>
-    <string name="share_tracks_found">%1$d tracks found so far</string>
     <string name="share_nothing">Nothing to identify here.</string>
     <string name="share_analyzing_eta">Analyzing · %1$s</string>
 
@@ -276,7 +236,6 @@
     <string name="error_decode">Couldn\'t read this file.</string>
     <string name="error_index_unavailable">The melody library isn\'t installed.</string>
     <string name="error_generic">Something went wrong.</string>
-    <string name="error_engine">Music Fetch couldn\'t start. Restart the app.</string>
 
     <!-- Kinds for accessibility -->
     <string name="kind_listen">Heard</string>
@@ -289,4 +248,49 @@
     <!-- Licenses -->
     <string name="licenses_title">Licenses</string>
     <string name="licenses_app">Music Fetch is open source. Third-party components and their licenses:</string>
+
+    <!-- Added for the app shell -->
+    <string name="error_no_browser">No app can open this link.</string>
+    <string name="field_clipboard_link">Identify the link you copied</string>
+    <string name="melody_prompt_message_no_size">Humming needs a library that stays on this phone.</string>
+    <string name="mix_hum_part">Hum this part</string>
+    <string name="notif_hint_mic">Play, hum, whistle or sing</string>
+    <string name="notif_hint_phone">Play a song on this phone</string>
+    <string name="notif_more_running">%1$s · %2$d more</string>
+    <string name="result_album">Album</string>
+    <string name="settings_notifications_summary">Results and progress of links you share</string>
+    <string name="settings_tile_manual">Edit the quick settings panel to add it</string>
+    <string name="settings_widget_manual">Long-press the home screen to add it</string>
+    <string name="share_label">Identify song</string>
+    <string name="tile_matching">Matching</string>
+    <string name="widget_label">Music Fetch</string>
+
+    <plurals name="mix_eta">
+        <item quantity="one">About %d min left</item>
+        <item quantity="other">About %d min left</item>
+    </plurals>
+    <plurals name="mix_evidence_shazam">
+        <item quantity="one">%d Shazam match</item>
+        <item quantity="other">%d Shazam matches</item>
+    </plurals>
+    <plurals name="notif_tracks_found">
+        <item quantity="one">%d track found</item>
+        <item quantity="other">%d tracks found</item>
+    </plurals>
+    <plurals name="seconds_hummed">
+        <item quantity="one">%d second hummed</item>
+        <item quantity="other">%d seconds hummed</item>
+    </plurals>
+    <plurals name="share_tracks_found">
+        <item quantity="one">%d track found so far</item>
+        <item quantity="other">%d tracks found so far</item>
+    </plurals>
+    <plurals name="tracks">
+        <item quantity="one">%d track</item>
+        <item quantity="other">%d tracks</item>
+    </plurals>
+    <plurals name="tracks_so_far">
+        <item quantity="one">%d track so far</item>
+        <item quantity="other">%d tracks so far</item>
+    </plurals>
 </resources>

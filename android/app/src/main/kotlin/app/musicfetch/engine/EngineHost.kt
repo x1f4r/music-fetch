@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Lifecycle of the process-wide engine. */
 sealed interface EngineState {
@@ -54,8 +55,7 @@ class EngineHost(
 
     /** Create the engine in the background. Idempotent. */
     fun start() {
-        if (started) return
-        started = true
+        if (!started.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
             val result = runCatching { create() }
             val engine = result.getOrElse { error ->
@@ -71,8 +71,7 @@ class EngineHost(
         }
     }
 
-    @Volatile
-    private var started = false
+    private val started = AtomicBoolean(false)
 
     /** The engine, waiting for it if it is still starting. */
     suspend fun engine(): EngineInterface {
@@ -95,15 +94,29 @@ class EngineHost(
             language = Locale.getDefault().toLanguageTag(),
             appVersion = BuildConfig.VERSION_NAME,
             mediaTools = null,
-            melodyIndexManifestUrl = MELODY_MANIFEST_URL,
+            melodyIndexManifestUrl = melodyManifestUrl(),
         )
-        DebugEngines.override(appContext, config)?.let { return it }
         val speech = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) AndroidSpeechToText(appContext) else null
         return Engine(config, mediaBackend, MediaCodecDecoder(), speech)
     }
 
+    /**
+     * The melody-index manifest. Debug builds read an override from
+     * `files/debug-melody-manifest-url.txt` so a locally served index can be tested.
+     */
+    private fun melodyManifestUrl(): String {
+        if (BuildConfig.DEBUG) {
+            val override = File(appContext.filesDir, DEBUG_MANIFEST_FILE)
+            if (override.isFile) {
+                override.readText().trim().takeIf { it.isNotEmpty() }?.let { return it }
+            }
+        }
+        return MELODY_MANIFEST_URL
+    }
+
     companion object {
         private const val TAG = "EngineHost"
+        private const val DEBUG_MANIFEST_FILE = "debug-melody-manifest-url.txt"
         private const val DEFAULT_COUNTRY = "US"
 
         /** Manifest of the downloadable melody index (docs/CORE_API.md, "Melody index"). */
