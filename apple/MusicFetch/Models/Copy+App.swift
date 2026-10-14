@@ -53,7 +53,6 @@ extension Copy {
     static let zoomIn = String(localized: "Zoom In")
     static let zoomOut = String(localized: "Zoom Out")
     static let actualSize = String(localized: "Actual Size")
-    static let openInDefault = String(localized: "Open in Default Service")
     static let openInMenu = String(localized: "Open in")
     static let openMusicFetch = String(localized: "Open Music Fetch")
     static let settingsTitle = String(localized: "Settings")
@@ -291,6 +290,21 @@ extension Copy {
     static func notificationTitle(_ track: Track) -> String {
         track.artist.isEmpty ? track.title : "\(track.title) — \(track.artist)"
     }
+
+    // MARK: Providers
+
+    static let providerPanelTitle = String(localized: "Where do you listen?")
+    static let providerPanelMessage = String(localized: "Songs you identify open there. You can change this in Settings.")
+    static let moreProviders = String(localized: "More…")
+    static let skip = String(localized: "Skip")
+    static let providerService = String(localized: "Service")
+    static let customProviderEllipsis = String(localized: "Custom…")
+    static let providerName = String(localized: "Name")
+    static let providerNamePrompt = String(localized: "Name of the app or site")
+    static let providerAddress = String(localized: "Web address")
+    static let providerAddressPrompt = "https://example.com/search?q={query}"
+    static let providerAddressHelp = String(localized: "{query} becomes the artist and title. {artist}, {title} and {isrc} work too.")
+    static let providerAddressInvalid = String(localized: "Enter a web address with {query}, {artist}, {title} or {isrc} in it.")
 
     // MARK: Settings
 

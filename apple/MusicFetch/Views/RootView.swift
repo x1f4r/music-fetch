@@ -22,6 +22,9 @@ struct RootView: View {
         .sheet(item: $app.lyricSearch) { model in
             LyricSearchSheet(model: model)
         }
+        .sheet(isPresented: $app.showProviderPanel) {
+            ProviderPanel(suggested: app.suggestedProvider, startsWithCustom: app.providerPanelStartsWithCustom)
+        }
         .alert(Copy.melodyPromptTitle, isPresented: $app.showMelodyPrompt) {
             Button(Copy.melodyDownload) {
                 app.settings.downloadMelody()

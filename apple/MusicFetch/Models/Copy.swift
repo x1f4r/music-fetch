@@ -70,12 +70,14 @@ nonisolated enum Copy {
 
     // MARK: Results
 
-    static func openIn(_ service: Service) -> String {
-        String(localized: "Open in \(name(of: service))")
+    static func openIn(_ name: String) -> String {
+        String(localized: "Open in \(name)")
     }
 
-    static func menuTitle(for link: ServiceLink) -> String {
-        link.isSearch ? String(localized: "\(name(of: link.service)) (search)") : name(of: link.service)
+    /// A provider in the "Open in" menus; search links are marked.
+    static func menuTitle(for link: ProviderLink, custom: CustomProvider) -> String {
+        let name = name(of: link.provider, custom: custom)
+        return link.isSearch ? String(localized: "\(name) (search)") : name
     }
 
     static let searchWeb = String(localized: "Search the web")
@@ -181,6 +183,16 @@ nonisolated enum Copy {
     }
 
     // MARK: Services
+
+    /// A provider's display name; the custom provider shows the name the user gave it.
+    static func name(of provider: Provider, custom: CustomProvider) -> String {
+        switch provider {
+        case .service(let service): name(of: service)
+        case .custom: custom.trimmedName.isEmpty ? customProvider : custom.trimmedName
+        }
+    }
+
+    static let customProvider = String(localized: "Custom")
 
     static func name(of service: Service) -> String {
         switch service {

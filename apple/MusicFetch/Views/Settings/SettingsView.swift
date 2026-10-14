@@ -38,29 +38,64 @@ enum SettingsPane: String {
 
 struct GeneralPane: View {
     @Environment(AppModel.self) private var app
-    @AppStorage(PreferenceKey.defaultService) private var defaultService = ServiceKey.spotify.rawValue
     @AppStorage(PreferenceKey.showMenuBarExtra) private var showMenuBar = true
     @AppStorage(PreferenceKey.notifyInBackground) private var notify = true
 
     var body: some View {
+        let preference = app.providerPreference
+        let selected = preference.key.flatMap(Provider.init(storageKey:)) ?? Providers.fallback
         Form {
-            Picker(Copy.openSongsIn, selection: $defaultService) {
-                ForEach(LinkOpener.defaultChoices, id: \.self) { service in
-                    Text(Copy.name(of: service)).tag(ServiceKey(service).rawValue)
+            Section {
+                Picker(Copy.openSongsIn, selection: Binding(get: { selected }, set: { app.setPreferredProvider($0) })) {
+                    ForEach(Providers.common, id: \.self) { service in
+                        Text(Copy.name(of: service)).tag(Provider.service(service))
+                    }
+                    Divider()
+                    ForEach(Providers.more, id: \.self) { service in
+                        Text(Copy.name(of: service)).tag(Provider.service(service))
+                    }
+                    Divider()
+                    Text(Copy.customProviderEllipsis).tag(Provider.custom)
+                }
+                if selected == .custom {
+                    TextField(
+                        Copy.providerName,
+                        text: Binding(
+                            get: { preference.custom.name },
+                            set: { app.setCustomProvider(CustomProvider(name: $0, template: app.providerPreference.custom.template)) }),
+                        prompt: Text(Copy.providerNamePrompt))
+                    TextField(
+                        Copy.providerAddress,
+                        text: Binding(
+                            get: { preference.custom.template },
+                            set: { app.setCustomProvider(CustomProvider(name: app.providerPreference.custom.name, template: $0)) }),
+                        prompt: Text(verbatim: Copy.providerAddressPrompt))
+                }
+            } footer: {
+                if selected == .custom {
+                    CustomTemplateHint(template: preference.custom.template)
                 }
             }
-            Toggle(Copy.showInMenuBar, isOn: $showMenuBar)
-            Toggle(Copy.launchAtLogin, isOn: Binding(get: { app.settings.launchAtLogin }, set: { app.settings.setLaunchAtLogin($0) }))
-            if let error = app.settings.loginItemError {
-                Text(error).font(.callout).foregroundStyle(.secondary)
+            .autocorrectionDisabled()
+            Section {
+                generalToggles
             }
-            Toggle(Copy.notifyInBackground, isOn: $notify)
-                .onChange(of: notify) { _, enabled in
-                    if enabled { Task { _ = await app.notifier.requestAuthorization() } }
-                }
         }
         .formStyle(.grouped)
         .frame(minHeight: 260)
+    }
+
+    @ViewBuilder
+    private var generalToggles: some View {
+        Toggle(Copy.showInMenuBar, isOn: $showMenuBar)
+        Toggle(Copy.launchAtLogin, isOn: Binding(get: { app.settings.launchAtLogin }, set: { app.settings.setLaunchAtLogin($0) }))
+        if let error = app.settings.loginItemError {
+            Text(error).font(.callout).foregroundStyle(.secondary)
+        }
+        Toggle(Copy.notifyInBackground, isOn: $notify)
+            .onChange(of: notify) { _, enabled in
+                if enabled { Task { _ = await app.notifier.requestAuthorization() } }
+            }
     }
 }
 

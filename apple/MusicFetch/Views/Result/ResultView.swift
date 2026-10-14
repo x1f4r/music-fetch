@@ -128,7 +128,7 @@ struct ResultView: View {
     }
 
     private func shareText(_ track: Track) -> String {
-        let link = LinkOpener.preferredLink(in: track.links, defaultService: app.defaultService)?.url
+        let link = TrackLinks(track: track, preference: app.providerPreference).primary?.url
         return [Format.artistTitle(track), link].compactMap { $0 }.joined(separator: "\n")
     }
 

@@ -1,8 +1,9 @@
 import MusicFetchCore
 import SwiftUI
 
-/// "Open in ‹service› ▾" (§5.11): the primary part opens the default service, the
-/// menu lists every available link, then "Search the web".
+/// "Open in ‹provider› ▾" (§5.11, docs/APPS.md "Opening links"): the big part opens the
+/// user's provider; the chevron opens the track once in any other provider without
+/// changing the setting.
 struct OpenInButton: View {
     enum Style {
         /// Prominent and large: the result hero and the inspector.
@@ -11,99 +12,118 @@ struct OpenInButton: View {
         case bordered
     }
 
+    @Environment(AppModel.self) private var app
+
     var track: Track
     var style: Style = .prominent
     var fillsWidth = false
     var glassNamespace: Namespace.ID?
 
-    @AppStorage(PreferenceKey.defaultService) private var defaultServiceKey = ServiceKey.spotify.rawValue
-
-    private var defaultService: Service {
-        (ServiceKey(rawValue: defaultServiceKey) ?? .spotify).service
-    }
-
-    private var primary: ServiceLink? {
-        LinkOpener.preferredLink(in: track.links, defaultService: defaultService)
-    }
-
-    private var title: String {
-        primary.map { Copy.openIn($0.service) } ?? Copy.searchWeb
-    }
-
     var body: some View {
+        let preference = app.providerPreference
+        let links = TrackLinks(track: track, preference: preference)
+        let title = links.primary.map { Copy.openIn(Copy.name(of: $0.provider, custom: preference.custom)) } ?? Copy.searchWeb
         switch style {
         case .prominent:
             // A split button on accent-tinted glass (the same material as the listen
             // button, so the two can morph). Menus ignore button styles on macOS, so the
-            // two halves are drawn on one glass capsule.
+            // two halves are drawn on one capsule.
             HStack(spacing: 0) {
-                Button(action: openPrimary) {
+                Button {
+                    open(links.primary)
+                } label: {
                     Text(title)
                         .lineLimit(1)
                         .padding(.leading, 16)
-                        .padding(.trailing, 12)
+                        .padding(.trailing, links.others.isEmpty ? 16 : 12)
                         .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: 32)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(title)
-                Rectangle()
-                    .fill(.white.opacity(0.35))
-                    .frame(width: 1, height: 16)
-                    .accessibilityHidden(true)
-                Menu {
-                    menuItems
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 34, height: 32)
-                        .contentShape(Rectangle())
+                if !links.others.isEmpty {
+                    Rectangle()
+                        .fill(.white.opacity(0.35))
+                        .frame(width: 1, height: 16)
+                        .accessibilityHidden(true)
+                    Menu {
+                        ProviderMenuItems(menu: links.menu, custom: preference.custom)
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 34, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help(Copy.openInMenu)
+                    .accessibilityLabel(Copy.openInMenu)
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .accessibilityLabel(Copy.openInMenu)
             }
             .foregroundStyle(.white)
             .prominentGlass(tint: .accentColor, in: Capsule(), id: glassNamespace)
             .fixedSize(horizontal: !fillsWidth, vertical: true)
         case .bordered:
-            Button(title, action: openPrimary)
+            Button(title) { open(links.primary) }
                 .buttonStyle(.bordered)
                 .lineLimit(1)
                 .fixedSize()
         }
     }
 
-    @ViewBuilder
-    private var menuItems: some View {
-        ForEach(LinkOpener.menuLinks(track.links), id: \.url) { link in
-            Button(Copy.menuTitle(for: link)) { LinkOpener.open(link) }
+    private func open(_ link: ProviderLink?) {
+        if let link {
+            LinkOpener.open(link)
+        } else if let url = LinkOpener.webSearchURL(for: track) {
+            NSWorkspace.shared.open(url)
         }
-        if !LinkOpener.menuLinks(track.links).isEmpty { Divider() }
-        Button(Copy.searchWeb) {
-            if let url = LinkOpener.webSearchURL(for: track) { NSWorkspace.shared.open(url) }
-        }
-    }
-
-    private func openPrimary() {
-        LinkOpener.openPreferred(track, defaultService: defaultService)
     }
 }
 
-/// The "Open in ‹service›" submenu for context menus.
+/// The provider sections of an "Open in" menu, separated by dividers: exact links,
+/// searches (the less common providers in "More…"), the custom provider.
+struct ProviderMenuItems: View {
+    var menu: ProviderMenu
+    var custom: CustomProvider
+
+    var body: some View {
+        items(menu.exact)
+        if !menu.exact.isEmpty, !menu.searches.isEmpty || !menu.more.isEmpty { Divider() }
+        items(menu.searches)
+        if !menu.more.isEmpty {
+            Menu(Copy.moreProviders) { items(menu.more) }
+        }
+        if !menu.custom.isEmpty, menu.custom.count < menu.all.count { Divider() }
+        items(menu.custom)
+    }
+
+    private func items(_ links: [ProviderLink]) -> some View {
+        ForEach(links, id: \.self) { link in
+            Button(Copy.menuTitle(for: link, custom: custom)) { LinkOpener.open(link) }
+        }
+    }
+}
+
+/// The "Open in" submenu for context menus: the user's provider first, then the rest.
 struct OpenInMenu: View {
+    @Environment(AppModel.self) private var app
     var track: Track
 
     var body: some View {
+        let preference = app.providerPreference
+        let links = TrackLinks(track: track, preference: preference)
         Menu(Copy.openInMenu) {
-            ForEach(LinkOpener.menuLinks(track.links), id: \.url) { link in
-                Button(Copy.menuTitle(for: link)) { LinkOpener.open(link) }
+            if let primary = links.primary {
+                Button(Copy.menuTitle(for: primary, custom: preference.custom)) { LinkOpener.open(primary) }
+                if !links.others.isEmpty { Divider() }
             }
-            Divider()
-            Button(Copy.searchWeb) {
-                if let url = LinkOpener.webSearchURL(for: track) { NSWorkspace.shared.open(url) }
+            ProviderMenuItems(menu: links.menu, custom: preference.custom)
+            if links.primary == nil {
+                Button(Copy.searchWeb) {
+                    if let url = LinkOpener.webSearchURL(for: track) { NSWorkspace.shared.open(url) }
+                }
             }
         }
     }

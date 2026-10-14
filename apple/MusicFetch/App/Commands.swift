@@ -137,8 +137,8 @@ struct MusicFetchCommands: Commands {
         }
 
         CommandMenu(Copy.sessionMenu) {
-            Button(Copy.openInDefault) {
-                if let track = app.selectedTrack { LinkOpener.openPreferred(track, defaultService: app.defaultService) }
+            Button(Copy.openIn(app.providerPreference.name)) {
+                if let track = app.selectedTrack { LinkOpener.openPreferred(track, preference: app.providerPreference) }
             }
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(app.selectedTrack == nil)

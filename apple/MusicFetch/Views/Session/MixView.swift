@@ -47,7 +47,7 @@ struct MixView: View {
             .onChange(of: model.isRunning) { _, _ in selectFirstWhenFinished() }
             .onKeyPress(.return) {
                 guard let track = model.selectedSegment?.track else { return .ignored }
-                LinkOpener.openPreferred(track, defaultService: app.defaultService)
+                LinkOpener.openPreferred(track, preference: app.providerPreference)
                 return .handled
             }
         }

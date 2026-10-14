@@ -9,10 +9,23 @@ nonisolated enum DemoFixtures {
 
     static func track(
         _ title: String, _ artist: String, album: String? = nil, year: UInt16? = nil, duration: UInt64? = nil,
-        isrc: String? = nil, palette: String, preview: Bool = false
+        isrc: String? = nil, palette: String, preview: Bool = false, exactLinks: Bool = false
     ) -> Track {
         let key = "\(artist)|\(title)".lowercased()
         let query = "\(artist) \(title)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let links: [ServiceLink] =
+            exactLinks
+            ? [
+                ServiceLink(service: .spotify, url: "https://open.spotify.com/track/0000000000000000000000", isSearch: false),
+                ServiceLink(service: .appleMusic, url: "https://music.apple.com/us/song/0000000000", isSearch: false),
+                ServiceLink(service: .deezer, url: "https://www.deezer.com/track/0000000000", isSearch: false),
+            ]
+            : [
+                ServiceLink(service: .spotify, url: "https://open.spotify.com/search/\(query)", isSearch: true),
+                ServiceLink(service: .appleMusic, url: "https://music.apple.com/search?term=\(query)", isSearch: true),
+                ServiceLink(service: .youTubeMusic, url: "https://music.youtube.com/search?q=\(query)", isSearch: true),
+                ServiceLink(service: .deezer, url: "https://www.deezer.com/search/\(query)", isSearch: true),
+            ]
         return Track(
             title: title,
             artist: artist,
@@ -24,12 +37,7 @@ nonisolated enum DemoFixtures {
             genre: nil,
             artworkUrl: "mfdemo://artwork/\(palette)",
             previewUrl: preview ? "mfdemo://preview/\(palette)" : nil,
-            links: [
-                ServiceLink(service: .spotify, url: "https://open.spotify.com/search/\(query)", isSearch: true),
-                ServiceLink(service: .appleMusic, url: "https://music.apple.com/search?term=\(query)", isSearch: true),
-                ServiceLink(service: .youTubeMusic, url: "https://music.youtube.com/search?q=\(query)", isSearch: true),
-                ServiceLink(service: .deezer, url: "https://www.deezer.com/search/\(query)", isSearch: true),
-            ],
+            links: links,
             ids: [:],
             identityKey: key
         )
@@ -39,7 +47,7 @@ nonisolated enum DemoFixtures {
 
     static let houdini = track(
         "Houdini", "Dua Lipa", album: "Radical Optimism", year: 2024, duration: 185_000, isrc: "GBAHT2301226", palette: "ocean",
-        preview: true)
+        preview: true, exactLinks: true)
     static let nights = track("Nights", "Frank Ocean", album: "Blonde", year: 2016, duration: 307_000, palette: "sage")
     static let blindingLights = track("Blinding Lights", "The Weeknd", album: "After Hours", year: 2020, palette: "ember")
     static let dreams = track("Dreams", "Fleetwood Mac", album: "Rumours", year: 1977, palette: "sand")

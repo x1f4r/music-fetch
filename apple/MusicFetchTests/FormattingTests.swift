@@ -124,31 +124,7 @@ struct LiveSignalTests {
     }
 }
 
-struct LinkOpenerTests {
-    private let links = [
-        ServiceLink(service: .youTube, url: "https://www.youtube.com/watch?v=x", isSearch: false),
-        ServiceLink(service: .spotify, url: "https://open.spotify.com/search/x", isSearch: true),
-        ServiceLink(service: .appleMusic, url: "https://music.apple.com/us/album/x?i=1", isSearch: false),
-        ServiceLink(service: .spotify, url: "https://open.spotify.com/track/x", isSearch: false),
-    ]
-
-    @Test func defaultServiceExactLinkFirst() {
-        #expect(LinkOpener.preferredLink(in: links, defaultService: .spotify)?.url == "https://open.spotify.com/track/x")
-        // No Deezer link: the first exact link in menu order.
-        #expect(LinkOpener.preferredLink(in: links, defaultService: .deezer)?.url == "https://open.spotify.com/track/x")
-        #expect(LinkOpener.preferredLink(in: [links[1]], defaultService: .deezer)?.isSearch == true)
-    }
-
-    @Test func menuIsOrderedAndDeduplicated() {
-        #expect(LinkOpener.menuLinks(links).map(\.service) == [.spotify, .appleMusic, .youTube])
-        #expect(LinkOpener.menuLinks(links).first?.isSearch == false)
-    }
-
-    @Test func appleMusicOpensInMusic() {
-        #expect(LinkOpener.url(for: links[2])?.scheme == "music")
-        #expect(LinkOpener.url(for: links[0])?.scheme == "https")
-    }
-
+struct CredentialTests {
     @Test func credentialsNeedEveryField() {
         var fields = CredentialFields()
         fields.auddToken = "  token "

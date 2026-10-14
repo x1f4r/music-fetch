@@ -8,6 +8,7 @@ struct MusicFetchApp: App {
 
     init() {
         Preferences.registerDefaults()
+        ProviderPreference.migrate()
         _app = State(initialValue: AppModel())
     }
 
