@@ -318,7 +318,7 @@ internal fun copy(context: Context, text: String) {
 }
 
 private fun fileName(title: String, format: ExportFormat): String {
-    val base = title.replace(Regex("[\\\\/:*?\"<>|]"), " ").trim().take(80).ifEmpty { "tracklist" }
+    val base = title.replace(Regex("[\\\\/:*?\"<>|]"), " ").replace(Regex("\\s+"), " ").trim().take(80).ifEmpty { "tracklist" }
     val ext = when (format) {
         ExportFormat.TEXT -> "txt"
         ExportFormat.CSV -> "csv"

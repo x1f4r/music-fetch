@@ -71,6 +71,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -78,6 +79,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -615,12 +617,15 @@ private fun SourceToggles(selected: ListenSource, enabled: Boolean, onSelect: (L
                 options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
                 else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
             }
+            // While a session runs the group is dimmed to 45 % but keeps showing the current
+            // source (a disabled ToggleButton would drop its checked colours).
             ToggleButton(
                 checked = selected == option,
-                onCheckedChange = { onSelect(option) },
-                enabled = enabled,
+                onCheckedChange = { if (enabled) onSelect(option) },
                 shapes = shapes,
-                modifier = Modifier.heightIn(min = 40.dp),
+                modifier = Modifier
+                    .heightIn(min = 40.dp)
+                    .semantics { if (!enabled) disabled() },
             ) {
                 if (icon != 0) {
                     Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(20.dp))
@@ -646,6 +651,7 @@ private fun LinkField(
 ) {
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
     var text by rememberSaveable { mutableStateOf("") }
     var clipboardHasLink by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(onPickFile) }
@@ -653,6 +659,7 @@ private fun LinkField(
     fun submit(value: String) {
         if (value.isBlank()) return
         keyboard?.hide()
+        focus.clearFocus()
         onSubmit(value)
         text = ""
     }
@@ -690,7 +697,10 @@ private fun LinkField(
                         Icon(painterResource(R.drawable.ic_search), contentDescription = stringResource(R.string.field_identify))
                     }
                 } else {
-                    IconButton(onClick = { picker.launch(arrayOf("audio/*", "video/*")) }, enabled = enabled) {
+                    IconButton(onClick = {
+                        focus.clearFocus()
+                        picker.launch(arrayOf("audio/*", "video/*"))
+                    }, enabled = enabled) {
                         Icon(painterResource(R.drawable.ic_attach_file), contentDescription = stringResource(R.string.field_attach))
                     }
                 }

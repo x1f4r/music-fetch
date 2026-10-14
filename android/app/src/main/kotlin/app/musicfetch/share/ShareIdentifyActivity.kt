@@ -226,15 +226,23 @@ private fun ShareSheet(viewModel: ShareViewModel, onClose: () -> Unit, onOpenApp
             item?.let { SourceRow(it) }
             val current = state
             val sessionId = current?.sessionId
-            val single = current?.segments?.singleOrNull { it.kind == SegmentKind.TRACK && it.track != null }?.track
+            // One recording that turned out to be one track is a result, even when it is long.
+            val music = current?.segments?.filter { it.kind == SegmentKind.TRACK || it.kind == SegmentKind.UNIDENTIFIED }.orEmpty()
+            val single = music.singleOrNull()?.track?.takeIf { (current?.source?.itemCount?.toInt() ?: 1) <= 1 }
             when {
                 nothing -> Text(stringResource(R.string.share_nothing), style = MaterialTheme.typography.titleMedium)
                 error != null -> Failure(error ?: "", onRetry = viewModel::retry)
                 current == null -> Working(null, onStop = onClose)
                 current.error != null -> Failure(current.error.message, onRetry = viewModel::retry)
                 current.canceled -> Text(stringResource(R.string.library_canceled), style = MaterialTheme.typography.titleMedium)
-                current.isCollection && sessionId != null -> Collection(current, onOpen = { onOpenApp("musicfetch://session/$sessionId") }, onStop = viewModel::stop)
-                single != null && sessionId != null && (current.isTerminal || current.segments.isNotEmpty()) -> Result(
+                single != null && sessionId != null && current.isTerminal -> Result(
+                    track = single,
+                    preferred = preferred,
+                    onOpenApp = { onOpenApp("musicfetch://session/$sessionId") },
+                )
+                current.isCollection && sessionId != null && current.identified > 0 ->
+                    Collection(current, onOpen = { onOpenApp("musicfetch://session/$sessionId") }, onStop = viewModel::stop)
+                single != null && sessionId != null && !current.isCollection -> Result(
                     track = single,
                     preferred = preferred,
                     onOpenApp = { onOpenApp("musicfetch://session/$sessionId") },

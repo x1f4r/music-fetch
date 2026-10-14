@@ -123,9 +123,11 @@ internal fun MixContent(view: SessionView.Mix, viewModel: SessionViewModel, onBa
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
             } else {
-                CollectionHeader(view, title, site)
+                // Collections name the host, as in "Sabrina Carpenter · 12 tracks · open.spotify.com".
+                CollectionHeader(view, title, Formatters.host(view.source?.url ?: entry?.sourceUrl) ?: site)
             }
-            StatusRow(view, rows, onStop = { viewModel.stop() })
+            // A finished collection needs no status: the header already counts its tracks.
+            if (view.timed || view.running || view.canceled) StatusRow(view, rows, onStop = { viewModel.stop() })
             LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 24.dp), modifier = Modifier.fillMaxSize()) {
                 items(rows, key = { it.id }) { segment ->
                     SegmentRow(

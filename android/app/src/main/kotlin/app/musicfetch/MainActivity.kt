@@ -14,6 +14,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.musicfetch.capture.ListenOrigin
 import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ListenMode
+import app.musicfetch.notify.Notifications
+import app.musicfetch.ui.AppAction
 import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.navigation.AppNavigation
 import app.musicfetch.ui.navigation.LocalNavigator
@@ -36,6 +38,7 @@ class MainActivity : ComponentActivity() {
                 val pending by AppIntents.pending.collectAsStateWithLifecycle()
                 LaunchedEffect(pending) {
                     val action = pending ?: return@LaunchedEffect
+                    if (action is AppAction.OpenSession) Notifications.dismissResult(this@MainActivity, action.id)
                     AppIntents.consume(action, navigator, startHum = ::startHum)
                 }
                 CompositionLocalProvider(LocalNavigator provides navigator) {

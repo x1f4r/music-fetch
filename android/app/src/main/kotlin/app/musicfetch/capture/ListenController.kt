@@ -339,7 +339,18 @@ class ListenController(
             is Notice.ImpressionDetected -> _state.update { it.copy(impression = true, notice = notice) }
             else -> _state.update { it.copy(notice = notice) }
         }
-        Notifications.updateListening(app, _state.value)
+        updateNotification()
+    }
+
+    /**
+     * Refresh the capture notification. Only while [CaptureService] is in the foreground, so a
+     * late engine event can't leave an orphaned "Matching" notification behind.
+     */
+    private fun updateNotification() {
+        synchronized(lock) {
+            if (service == null) return
+            Notifications.updateListening(app, _state.value)
+        }
     }
 
     /** A terminal event: release capture, publish the result, notify if nobody is looking. */
@@ -409,7 +420,7 @@ class ListenController(
         for (cls in listOf(SongTileService::class.java, PhoneAudioTileService::class.java)) {
             runCatching { TileService.requestListeningState(app, ComponentName(app, cls)) }
         }
-        Notifications.updateListening(app, _state.value)
+        updateNotification()
     }
 
     private data class Quad(val gen: Long, val grant: ProjectionGrant?, val source: CaptureSource, val mode: ListenMode)

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import app.musicfetch.appGraph
 import app.musicfetch.core.CaptureSource
@@ -60,6 +61,7 @@ class CaptureService : Service() {
         if (released) return
         released = true
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        NotificationManagerCompat.from(this).cancel(Notifications.LISTENING_ID)
         stopSelf()
     }
 

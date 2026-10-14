@@ -179,6 +179,9 @@ class SessionViewModel(app: Application, private val id: String) : AndroidViewMo
                     else -> SessionView.Empty(entry, null, entry.status == SessionStatus.FAILED, entry.status == SessionStatus.RUNNING)
                 }
             }
+            // A single recording that is one track (even a long music video) is a result.
+            identified.size == 1 && isSingleTrack(source, segments) ->
+                SessionView.Result(entry, identified.first().track!!, contextFor(entry, source, identified.first()))
             isCollectionOrMix(source, segments) -> mixView(entry, source, segments, running = false, canceled = entry.status == SessionStatus.CANCELED)
             identified.size == 1 -> SessionView.Result(entry, identified.first().track!!, contextFor(entry, source, identified.first()))
             else -> SessionView.Empty(
@@ -229,13 +232,18 @@ class SessionViewModel(app: Application, private val id: String) : AndroidViewMo
         return SessionView.Candidates(entry, candidates, alignment?.query, seconds, final)
     }
 
+    private fun isSingleTrack(source: SourceInfo?, segments: List<Segment>): Boolean =
+        (source?.itemCount?.toInt() ?: 1) <= 1 &&
+            segments.count { it.kind == SegmentKind.TRACK || it.kind == SegmentKind.UNIDENTIFIED } <= 1
+
     private fun isCollectionOrMix(source: SourceInfo?, segments: List<Segment>): Boolean =
         (source?.itemCount?.toInt() ?: 1) > 1 || segments.size > 1 ||
             (source?.durationMs?.toLong() ?: 0L) > AnalysisState.MIX_THRESHOLD_MS
 
     /** Collections from streaming services carry no times (start = end = 0). */
     private fun isTimed(segments: List<Segment>, source: SourceInfo?): Boolean =
-        (source?.itemCount?.toInt() ?: 1) <= 1 && segments.any { it.endMs > it.startMs }
+        (source?.itemCount?.toInt() ?: 1) <= 1 &&
+            (segments.any { it.endMs > it.startMs } || (source?.durationMs?.toLong() ?: 0L) > 0L)
 
     private fun contextFor(entry: LibraryEntry, source: SourceInfo?, segment: Segment): SessionContext? = when (entry.kind) {
         SessionKind.FILE -> SessionContext.File(entry.title)

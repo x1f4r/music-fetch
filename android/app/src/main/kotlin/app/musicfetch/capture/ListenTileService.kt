@@ -7,6 +7,9 @@ import android.service.quicksettings.TileService
 import app.musicfetch.R
 import app.musicfetch.appGraph
 import app.musicfetch.core.CaptureSource
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
 
 /**
  * Quick Settings tile that identifies a song (docs/APPS.md, "Android Quick Settings tiles").
@@ -16,10 +19,19 @@ import app.musicfetch.core.CaptureSource
  */
 abstract class ListenTileService : TileService() {
     protected abstract val source: CaptureSource
+    private var watcher: Job? = null
 
     override fun onStartListening() {
         super.onStartListening()
-        render()
+        // While the shade shows the tile, follow the session (listening → matching → idle).
+        watcher?.cancel()
+        watcher = MainScope().launch { appGraph.listen.state.collect { render() } }
+    }
+
+    override fun onStopListening() {
+        watcher?.cancel()
+        watcher = null
+        super.onStopListening()
     }
 
     override fun onClick() {

@@ -197,8 +197,17 @@ object Notifications {
             addOpenIn(context, builder, track, preferred)
             builder.addAction(0, context.getString(R.string.notif_open), openApp(context, sessionId))
         }
-        notify(context, ANALYSIS_RESULT_BASE + (sessionId.hashCode() and 0xFFFF), builder.build())
+        notify(context, analysisResultId(sessionId), builder.build())
     }
+
+    /** The user opened [sessionId] (e.g. from an action button): its result notification is done. */
+    fun dismissResult(context: Context, sessionId: String) {
+        val manager = NotificationManagerCompat.from(context)
+        manager.cancel(LISTEN_RESULT_ID)
+        manager.cancel(analysisResultId(sessionId))
+    }
+
+    private fun analysisResultId(sessionId: String): Int = ANALYSIS_RESULT_BASE + (sessionId.hashCode() and 0xFFFF)
 
     fun noMatchText(reason: NoMatchReason): Int = when (reason) {
         NoMatchReason.TOO_QUIET -> R.string.state_too_quiet

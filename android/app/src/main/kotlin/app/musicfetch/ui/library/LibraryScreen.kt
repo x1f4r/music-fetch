@@ -329,7 +329,7 @@ private fun LibraryRow(entry: LibraryEntry, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    KindIcon(entry.kind, entry.trackCount >= 2u)
+                    KindIcon(entry.kind, mix = entry.trackCount >= 2u && (entry.durationMs ?: 0u) > 0u)
                     Spacer(Modifier.width(6.dp))
                     Text(
                         subtitle(entry),
