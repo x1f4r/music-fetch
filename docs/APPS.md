@@ -78,17 +78,33 @@ best impression candidate ("Best guess: … · See all"), or the no-match reason
 
 ## Opening links
 
-`ServiceLinkOpener` (Android) / `LinkOpener` (macOS):
+The user picks **one preferred provider**; every result's primary button opens the track
+there ("Open in YouTube Music"). There is no built-in default and the app never assumes
+Spotify.
 
-1. Pick the link for the user's default service; else the first exact (non-search)
-   link; else the first search link.
-2. Android: if the service's app is installed (known package per service, resolved via
-   `PackageManager` with `<queries>` declared), launch `ACTION_VIEW` on the https URL
-   with `setPackage(...)` so it opens directly in that app; Spotify search links use the
-   `spotify:search:` URI. Otherwise open the https URL normally (browser / App Links).
-3. macOS: `NSWorkspace.open` (universal links hand off to installed apps such as Music
-   and Spotify); "Open in Music" uses the `music://` form of Apple Music links.
-4. Segment deep links (`Segment.source_url`, e.g. YouTube `&t=`) open at the timestamp.
+- **First use:** the first time a result's primary button is used without a preference,
+  a compact "Where do you listen?" picker appears (pre-selecting an installed app:
+  Android via `PackageManager`, macOS via installed apps such as Music, Spotify,
+  YouTube Music PWA). The choice is stored and editable in Settings → General → "Open
+  songs in".
+- **Switch per tap:** the primary button is a split button. Its chevron opens a menu of
+  all other providers; choosing one opens the track there once without changing the
+  setting. Exact links first, search links marked as such.
+- **Providers:** everything `catalog::provider_links` returns — Spotify, Apple Music,
+  YouTube Music, YouTube, Deezer, Tidal, Amazon Music, SoundCloud, Qobuz, Pandora,
+  Audiomack, Anghami, JioSaavn, Boomplay, KKBOX, Yandex Music, NetEase Cloud Music,
+  Bandcamp, Shazam, Last.fm, Genius — plus a **custom provider**: a name and a URL
+  template with `{artist}`, `{title}`, `{query}`, `{isrc}` placeholders, for any other
+  app or site.
+- Link choice for a provider: the exact track link when known, else the provider's
+  search link for "artist title" (version qualifiers kept).
+- Android: if the provider's app is installed (known package per provider, declared in
+  `<queries>`), launch `ACTION_VIEW` with `setPackage(...)` so it opens directly in that
+  app; Spotify search uses `spotify:search:`. Otherwise open the https URL normally.
+- macOS: `NSWorkspace.open` (universal links hand off to installed apps); Apple Music
+  links open in Music via the `music://` form.
+- Segment deep links (`Segment.source_url`, e.g. YouTube `&t=`) open the source at the
+  timestamp.
 
 ## Privacy
 
