@@ -103,6 +103,31 @@ rm -rf "$DIST_APP"
 ditto "$BUILT_APP" "$DIST_APP"
 RUNTIME_DEST="$DIST_APP/Contents/Resources/runtime"
 ditto "$BUILD_DIR/runtime" "$RUNTIME_DEST"
+# Names, versions and licenses of the Rust crates linked into the engine, for
+# Settings › About › Licenses (nothing else from the metadata is kept).
+LICENSES_DIR="$DIST_APP/Contents/Resources/Licenses"
+mkdir -p "$LICENSES_DIR"
+(
+  cd "$ROOT_DIR/core"
+  PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH" \
+    cargo metadata --format-version 1 --locked --filter-platform aarch64-apple-darwin
+) | jq '
+  . as $m
+  | ($m.resolve.nodes
+      | map({key: .id, value: [.deps[] | select(any(.dep_kinds[]; .kind == null)) | .pkg]})
+      | from_entries) as $graph
+  | ($m.packages[] | select(.name == "mfcore") | .id) as $root
+  | {seen: {}, queue: [$root]}
+  | until(.queue | length == 0;
+      .queue[0] as $id
+      | .queue |= .[1:]
+      | if .seen[$id] then . else (.seen[$id] = true | .queue += ($graph[$id] // [])) end)
+  | (.seen | keys) as $ids
+  | [$m.packages[] | select(.id as $id | $ids | index($id)) | select(.name != "mfcore")
+      | {name, version, license}]
+  | unique_by(.name + " " + .version)
+  | sort_by(.name)' >"$LICENSES_DIR/rust-crates.json" || die "listing the engine crates failed"
+echo "    $(jq length "$LICENSES_DIR/rust-crates.json") crate licenses listed"
 # Finder info and other xattr detritus fail strict signature verification.
 xattr -cr "$DIST_APP"
 
