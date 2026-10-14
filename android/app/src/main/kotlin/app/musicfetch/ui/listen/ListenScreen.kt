@@ -144,6 +144,7 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
     var phonePrePrompt by rememberSaveable { mutableStateOf(false) }
     var melodyPromptDismissed by rememberSaveable { mutableStateOf(false) }
     var backProgress by remember { mutableFloatStateOf(0f) }
+    var fieldEmpty by remember { mutableStateOf(true) }
 
     // Results navigate to the session screen.
     LaunchedEffect(viewModel) {
@@ -257,9 +258,18 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
                 askNotificationsOnce()
                 viewModel.analyzeFile(uri)
             },
+            onEmptyChange = { fieldEmpty = it },
             modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp),
         )
         Box(Modifier.weight(1f).fillMaxWidth()) {
+            ClipboardSuggestion(
+                visible = fieldEmpty && !state.isActive && link !is LinkStage.Running,
+                onIdentify = { url ->
+                    askNotificationsOnce()
+                    viewModel.analyze(url)
+                },
+                modifier = Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 4.dp),
+            )
             Stage(
                 state = state,
                 viewModel = viewModel,
@@ -648,16 +658,15 @@ private fun LinkField(
     enabled: Boolean,
     onSubmit: (String) -> Unit,
     onPickFile: (android.net.Uri) -> Unit,
+    onEmptyChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     var text by rememberSaveable { mutableStateOf("") }
-    var clipboardHasLink by remember { mutableStateOf(false) }
     val fieldLabel = stringResource(R.string.field_link)
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(onPickFile) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { clipboardHasLink = clipboardLooksLikeLink(context) }
+    LaunchedEffect(text.isEmpty()) { onEmptyChange(text.isEmpty()) }
     fun submit(value: String) {
         if (value.isBlank()) return
         keyboard?.hide()
@@ -708,33 +717,62 @@ private fun LinkField(
                 }
             }
         }
-        AnimatedVisibility(visible = clipboardHasLink && text.isEmpty() && enabled) {
-            TextButton(
-                onClick = {
-                    clipboardHasLink = false
-                    readClipboardText(context)?.let(::submit)
-                },
-                modifier = Modifier.padding(top = 4.dp),
-            ) {
-                Icon(painterResource(R.drawable.ic_content_paste), contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.field_clipboard_link), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+    }
+}
+
+/**
+ * "Identify the link you copied" (docs/design/DESIGN.md §5.5), drawn over the stage so the
+ * stage's slots never move. Checked on every resume.
+ */
+@Composable
+private fun ClipboardSuggestion(visible: Boolean, onIdentify: (String) -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var hasLink by remember { mutableStateOf(false) }
+    var resumes by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { resumes++ }
+    LaunchedEffect(resumes) {
+        // The system classifies a fresh clip in the background; wait briefly for it.
+        var state = clipboardLink(context)
+        var checks = 1
+        while (state == ClipState.Pending && checks < CLIP_CHECKS) {
+            delay(CLIP_CHECK_INTERVAL_MS)
+            state = clipboardLink(context)
+            checks++
+        }
+        hasLink = state == ClipState.Link
+    }
+    AnimatedVisibility(visible = visible && hasLink, enter = fadeIn(), exit = fadeOut(), modifier = modifier) {
+        TextButton(onClick = {
+            hasLink = false
+            readClipboardText(context)?.let(onIdentify)
+        }) {
+            Icon(painterResource(R.drawable.ic_content_paste), contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.field_clipboard_link), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
+
+private enum class ClipState { Link, NoLink, Pending }
+
+private const val CLIP_CHECKS = 10
+private const val CLIP_CHECK_INTERVAL_MS = 300L
 
 /**
  * Whether the clipboard holds a link, without reading it (reading would show the system's
  * "pasted from your clipboard" notice): Android 12+ classifies clips on its own.
  */
-private fun clipboardLooksLikeLink(context: Context): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
-    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return false
-    val description = clipboard.primaryClipDescription ?: return false
-    if (!description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) return false
-    if (description.classificationStatus != ClipDescription.CLASSIFICATION_COMPLETE) return false
-    return description.getConfidenceScore(TextClassifier.TYPE_URL) >= 0.5f
+private fun clipboardLink(context: Context): ClipState {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return ClipState.NoLink
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return ClipState.NoLink
+    val description = clipboard.primaryClipDescription ?: return ClipState.NoLink
+    if (!description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) return ClipState.NoLink
+    return when (description.classificationStatus) {
+        ClipDescription.CLASSIFICATION_COMPLETE ->
+            if (description.getConfidenceScore(TextClassifier.TYPE_URL) >= 0.5f) ClipState.Link else ClipState.NoLink
+        ClipDescription.CLASSIFICATION_NOT_COMPLETE -> ClipState.Pending
+        else -> ClipState.NoLink
+    }
 }
 
 private fun readClipboardText(context: Context): String? {
