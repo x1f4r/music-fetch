@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- targetSdk stays at 36 (Android 16) until the app is verified against Android 17's
+         background-audio and RemoteViews changes on an API 37 image; compileSdk is already 37. -->
+    <issue id="OldTargetApi" severity="ignore" />
+    <!-- abiFilters come from androidAbis() (default arm64-v8a and x86_64), which lint can't evaluate. -->
+    <issue id="ChromeOsAbiSupport" severity="ignore" />
+</lint>

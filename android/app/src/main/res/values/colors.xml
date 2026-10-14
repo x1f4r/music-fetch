@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="window_background">#FFFBFCFE</color>
-    <color name="ic_launcher_background">#FF0E1626</color>
+    <color name="window_background">#FFF5FBF8</color>
+    <!-- "Fetch teal", the fallback seed; identified tracks in progress notifications. -->
+    <color name="progress_track">#FF1FA48A</color>
+    <color name="widget_preview_background">#FFE6F2EE</color>
 </resources>

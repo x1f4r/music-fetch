@@ -159,6 +159,61 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(result, {"error": "canceled", "message": "Canceled."})
 
 
+class ProbeCommentsTest(unittest.TestCase):
+    def setUp(self):
+        self.real = mf_ytdlp.yt_dlp.YoutubeDL
+        mf_ytdlp.yt_dlp.YoutubeDL = RecordingYoutubeDL
+        RecordingYoutubeDL.params = []
+
+    def tearDown(self):
+        mf_ytdlp.yt_dlp.YoutubeDL = self.real
+
+    def test_comments_requested_with_top_sort(self):
+        info = json.loads(mf_ytdlp.probe("https://www.youtube.com/watch?v=x", "{}", True))
+        self.assertEqual(info["comments"], [{"text": "0:00 A - B"}])
+        params = RecordingYoutubeDL.params[0]
+        self.assertTrue(params["getcomments"])
+        youtube = params["extractor_args"]["youtube"]
+        self.assertEqual(youtube["max_comments"], ["40", "all", "0", "0"])
+        self.assertEqual(youtube["comment_sort"], ["top"])
+        self.assertEqual(youtube["player_client"], mf_ytdlp.FAST_YOUTUBE_CLIENTS)
+
+    def test_no_comments_by_default(self):
+        mf_ytdlp.probe("https://soundcloud.com/a/b", "{}")
+        params = RecordingYoutubeDL.params[0]
+        self.assertNotIn("getcomments", params)
+        self.assertNotIn("extractor_args", params)
+
+    def test_merge_extractor_args(self):
+        base = {"youtube": {"player_client": ["web"]}, "tiktok": {"x": ["1"]}}
+        merged = mf_ytdlp.merge_extractor_args(base, {"youtube": {"comment_sort": ["top"]}})
+        self.assertEqual(merged["youtube"], {"player_client": ["web"], "comment_sort": ["top"]})
+        self.assertEqual(merged["tiktok"], {"x": ["1"]})
+        self.assertEqual(base["youtube"], {"player_client": ["web"]})
+        self.assertEqual(mf_ytdlp.merge_extractor_args(None, {"a": {"b": ["c"]}}), {"a": {"b": ["c"]}})
+
+
+class RecordingYoutubeDL:
+    """Records the params and returns one video with a comment."""
+
+    params = []
+
+    def __init__(self, params):
+        RecordingYoutubeDL.params.append(params)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def extract_info(self, url, download):
+        return {"id": "x", "title": "T", "comments": [{"text": "0:00 A - B"}]}
+
+    def sanitize_info(self, info):
+        return info
+
+
 class FakeYoutubeDL:
     """Stands in for yt_dlp.YoutubeDL; `outcomes` are raised or returned in order."""
 
@@ -222,6 +277,15 @@ class YoutubeFallbackTest(unittest.TestCase):
         custom = {"youtube": {"player_client": ["web"]}}
         self.run_extract(self.URL, {"id": "b"}, params={"extractor_args": custom})
         self.assertEqual(FakeYoutubeDL.calls, [None, custom])
+
+    def test_fast_client_keeps_other_arguments(self):
+        comments = mf_ytdlp.COMMENT_EXTRACTOR_ARGS
+        FakeYoutubeDL.outcomes = [{"id": "b"}]
+        work = lambda ydl: ydl.extract_info(self.URL, download=False)  # noqa: E731
+        mf_ytdlp._extract(self.URL, {"extractor_args": comments}, work, fast=True)
+        expected = {"youtube": dict(comments["youtube"], player_client=mf_ytdlp.FAST_YOUTUBE_CLIENTS)}
+        self.assertEqual(FakeYoutubeDL.calls, [expected])
+        self.assertNotIn("player_client", comments["youtube"])
 
     def test_is_youtube(self):
         for url in ("https://youtu.be/x", "music.youtube.com/watch?v=x", "https://m.youtube.com/shorts/x",

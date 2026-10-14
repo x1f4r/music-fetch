@@ -51,19 +51,27 @@ class ChaquopyMediaBackend(context: Context) : MediaBackend {
             .toString()
     }
 
-    override fun probe(url: String, task: TaskHandle): String = probe(url, isCanceled = task::isCanceled)
+    override fun probe(url: String, withComments: Boolean, task: TaskHandle): String =
+        probe(url, withComments, isCanceled = task::isCanceled)
 
     override fun downloadAudio(url: String, destDir: String, task: TaskHandle): String =
         downloadAudio(url, destDir, isCanceled = task::isCanceled, onProgress = task::reportProgress)
 
     /**
-     * yt-dlp `--dump-single-json --flat-playlist` output for [url]. [extractorArgs] passes
-     * yt-dlp extractor arguments (diagnostics only), e.g. `{"youtube": {"player_client": ["web_safari"]}}`.
+     * yt-dlp `--dump-single-json --flat-playlist` output for [url]. With [withComments] it also
+     * holds up to 40 top comments (YouTube: pinned first, sorted by top), where tracklists are
+     * often posted. [extractorArgs] passes yt-dlp extractor arguments (diagnostics only), e.g.
+     * `{"youtube": {"player_client": ["web_safari"]}}`.
      */
     @Throws(PlatformException::class)
-    fun probe(url: String, isCanceled: () -> Boolean = { false }, extractorArgs: JSONObject? = null): String {
+    fun probe(
+        url: String,
+        withComments: Boolean = false,
+        isCanceled: () -> Boolean = { false },
+        extractorArgs: JSONObject? = null,
+    ): String {
         val opts = extractorArgs?.let { JSONObject(options).put("extractor_args", it).toString() } ?: options
-        return call(isCanceled) { it.callAttr("probe", url, opts).toString() }
+        return call(isCanceled) { it.callAttr("probe", url, opts, withComments).toString() }
     }
 
     /** Download the best audio-only stream of [url] into [destDir] and return the file path. */
