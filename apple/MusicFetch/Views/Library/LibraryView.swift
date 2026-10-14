@@ -54,8 +54,14 @@ struct LibraryView: View {
                 }
                 .onChange(of: library.selection) { _, selection in
                     // The inspector shows the selected row's details.
-                    guard selection.count == 1, let id = selection.first else { return }
-                    Task { _ = await app.session(id) }
+                    guard selection.count == 1, let id = selection.first else {
+                        app.inspectedLibrarySession = nil
+                        return
+                    }
+                    Task {
+                        let model = await app.session(id)
+                        if library.selection == [id] { app.inspectedLibrarySession = model }
+                    }
                 }
             }
         }

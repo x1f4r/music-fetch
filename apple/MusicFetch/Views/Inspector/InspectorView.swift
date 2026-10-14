@@ -31,8 +31,8 @@ struct InspectorView: View {
     /// The session in the detail column, or the selected (not opened) library row.
     private var inspected: SessionModel? {
         if app.route == .library, app.libraryPath.isEmpty {
-            guard app.library.selection.count == 1, let id = app.library.selection.first else { return nil }
-            return app.cachedSession(id)
+            guard app.library.selection.count == 1 else { return nil }
+            return app.inspectedLibrarySession
         }
         return app.currentSession
     }

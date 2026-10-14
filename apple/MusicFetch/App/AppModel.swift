@@ -41,6 +41,8 @@ final class AppModel {
     var showMelodyPrompt = false
     var microphonePrePromptSource: ListenSource?
     var deleteConfirmation: [String]?
+    /// The single selected (not opened) Library row, for the inspector.
+    var inspectedLibrarySession: SessionModel?
     var exportError: String?
 
     private(set) var engine: (any MusicEngine)?

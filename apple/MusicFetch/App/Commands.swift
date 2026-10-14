@@ -29,6 +29,10 @@ struct MusicFetchCommands: Commands {
                 app.openFile()
             }
             .keyboardShortcut("o")
+            Button(Copy.searchLyricsMenu) {
+                showMain()
+                app.presentLyricSearch()
+            }
         }
         CommandGroup(after: .saveItem) {
             Button(Copy.exportEllipsis) {
@@ -119,11 +123,6 @@ struct MusicFetchCommands: Commands {
             }
             .keyboardShortcut("h", modifiers: [.command, .shift])
             .disabled(app.engine == nil || app.listen.isBusy)
-            Button(Copy.searchLyricsMenu) {
-                showMain()
-                app.presentLyricSearch()
-            }
-            .disabled(app.engine == nil)
             Button(Copy.stop) { app.listen.escape() }
                 .keyboardShortcut(.escape, modifiers: [])
                 .disabled(!(app.listen.stage == .listening || app.listen.stage == .matching))

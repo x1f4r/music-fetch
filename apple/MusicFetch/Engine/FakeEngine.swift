@@ -230,7 +230,7 @@ nonisolated final class FakeEngine: MusicEngine {
             var fraction: Float = 0
             while fraction < 1, !session.isDone {
                 session.emit(.phase(phase: .downloading, fraction: fraction))
-                fraction += 0.02
+                fraction += 0.005
                 session.sleep(0.1)
             }
             session.emit(session.wasCanceled ? .canceled : .finished(outcome: .completed(identified: 1, total: 1)))
