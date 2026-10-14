@@ -1,0 +1,64 @@
+import Foundation
+
+/// Streams 16-bit PCM into a canonical RIFF/WAVE file and patches the sizes on finish.
+nonisolated final class WAVWriter {
+    enum WriteError: Error {
+        case tooLarge
+    }
+
+    private let handle: FileHandle
+    private let sampleRate: UInt32
+    private let channels: UInt16
+    private(set) var dataBytes: UInt64 = 0
+
+    /// Creates (or truncates) `url` and writes a placeholder header.
+    init(url: URL, sampleRate: UInt32, channels: UInt16) throws {
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        handle = try FileHandle(forWritingTo: url)
+        self.sampleRate = sampleRate
+        self.channels = channels
+        try handle.write(contentsOf: Self.header(sampleRate: sampleRate, channels: channels, dataBytes: 0))
+    }
+
+    deinit {
+        try? handle.close()
+    }
+
+    /// Appends little-endian 16-bit samples.
+    func append(_ bytes: UnsafeRawBufferPointer) throws {
+        guard !bytes.isEmpty else { return }
+        dataBytes += UInt64(bytes.count)
+        guard dataBytes <= UInt64(UInt32.max) - 36 else { throw WriteError.tooLarge }
+        try handle.write(contentsOf: Data(bytes))
+    }
+
+    /// Writes the final sizes and closes the file.
+    func finish() throws {
+        try handle.seek(toOffset: 0)
+        try handle.write(contentsOf: Self.header(sampleRate: sampleRate, channels: channels, dataBytes: UInt32(dataBytes)))
+        try handle.close()
+    }
+
+    /// The 44-byte header of a 16-bit PCM WAVE file.
+    static func header(sampleRate: UInt32, channels: UInt16, dataBytes: UInt32) -> Data {
+        var data = Data(capacity: 44)
+        let append32: (UInt32) -> Void = { value in withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        let append16: (UInt16) -> Void = { value in withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        let bitsPerSample: UInt16 = 16
+        let blockAlign = channels * bitsPerSample / 8
+        data.append(contentsOf: Array("RIFF".utf8))
+        append32(UInt32(36) &+ dataBytes)
+        data.append(contentsOf: Array("WAVE".utf8))
+        data.append(contentsOf: Array("fmt ".utf8))
+        append32(UInt32(16))
+        append16(UInt16(1))  // PCM
+        append16(channels)
+        append32(sampleRate)
+        append32(sampleRate * UInt32(blockAlign))
+        append16(blockAlign)
+        append16(bitsPerSample)
+        data.append(contentsOf: Array("data".utf8))
+        append32(dataBytes)
+        return data
+    }
+}

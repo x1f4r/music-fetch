@@ -1,0 +1,52 @@
+[package]
+name = "mfcore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+uniffi = { workspace = true, features = ["tokio"] }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+parking_lot = "0.12"
+fastrand = "2"
+uuid = { version = "1", features = ["v4"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "gzip", "brotli", "multipart", "http2", "charset", "query", "form"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+# audio
+symphonia = { version = "0.6.1", default-features = false, features = ["isomp4", "aac", "mp3", "flac", "vorbis", "ogg", "wav", "mkv", "alac", "pcm", "caf", "aiff", "adpcm"] }
+rubato = "5.0.1"
+realfft = "3.5"
+opus-decoder = "0.1.1"
+# media
+libc = "0.2"
+# shazam, providers
+crc32fast = "1.5"
+base64 = "0.23"
+sha2 = "0.11"
+sha1 = "0.11"
+hmac = "0.13"
+percent-encoding = "2.3"
+# links, catalog, identity
+url = "2.5"
+scraper = { version = "0.27", default-features = false }
+regex = "1.11"
+unicode-normalization = "0.1.24"
+lru = "0.18"
+strsim = "0.11"
+# lyrics
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# melody
+tract-onnx = "0.23.8"
+memmap2 = "0.9.11"
+
+[dev-dependencies]

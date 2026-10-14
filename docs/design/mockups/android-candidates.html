@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — Android — Hum candidates</title>
+<link rel="stylesheet" href="android.css">
+<script src="mock.js"></script>
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+<style>
+  .humrow { position: absolute; top: 116px; left: 16px; right: 16px; height: 64px; display: flex; align-items: center; gap: 12px; }
+  .humrow .trace { flex: 1; height: 48px; color: var(--primary); }
+  .humrow .trace svg { width: 100%; height: 100%; overflow: visible; }
+  .cands { position: absolute; top: 192px; left: 16px; right: 16px; bottom: 88px; display: flex; flex-direction: column; gap: 8px; }
+  .cand { border-radius: 16px; background: var(--surface-container-low); padding: 12px; }
+  .cand.open { background: var(--surface-container); }
+  .cand .head { display: flex; align-items: center; gap: 12px; }
+  .cand .text { flex: 1; min-width: 0; }
+  .cand .acts { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+  .cand .acts .spacer { flex: 1; }
+  .overlay { margin: 12px 0 6px; height: 96px; width: 100%; overflow: visible; display: block; }
+</style>
+</head>
+<body>
+<div class="statusbar"><span>14:32</span><span class="cam"></span><span class="right"><span class="ic ic-wifi s18"></span><span class="sigbars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:12px"></i></span><span class="battery"></span></span></div>
+
+<div class="topbar">
+  <div class="iconbtn"><span class="ic ic-back"></span></div>
+  <div class="ttl"></div>
+  <div class="btn text"><span class="ic ic-hum s20"></span>Hum again</div>
+</div>
+
+<div class="humrow">
+  <div class="trace"><svg id="hum" viewBox="0 0 300 48" preserveAspectRatio="none"></svg></div>
+  <span class="label-m variant">Your hum · 11 s</span>
+</div>
+
+<div class="cands">
+  <div class="cand open">
+    <div class="head">
+      <div class="art art-56 cv-takeonme"></div>
+      <div class="text"><div class="title-m truncate">Take On Me</div><div class="body-m variant truncate">a-ha</div></div>
+      <span class="tag filled">Strong</span>
+    </div>
+    <svg class="overlay" id="overlay" viewBox="0 0 356 96" preserveAspectRatio="none"></svg>
+    <div class="legend"><span><i style="background:var(--primary)"></i>You</span><span><i style="background:var(--outline-variant)"></i>Take On Me</span></div>
+    <div class="acts"><div class="iconbtn tonal"><span class="ic ic-play"></span></div><span class="spacer"></span><div class="btn filled">This is it</div></div>
+  </div>
+  <div class="cand">
+    <div class="head">
+      <div class="art art-56 cv-dancingqueen"></div>
+      <div class="text"><div class="title-m truncate">Dancing Queen</div><div class="body-m variant truncate">ABBA</div></div>
+      <span class="tag tonal">Possible</span>
+      <div class="iconbtn"><span class="ic ic-play"></span></div>
+    </div>
+  </div>
+  <div class="cand">
+    <div class="head">
+      <div class="art art-56 cv-africa"></div>
+      <div class="text"><div class="title-m truncate">Africa</div><div class="body-m variant truncate">Toto</div></div>
+      <span class="tag tonal">Possible</span>
+      <div class="iconbtn"><span class="ic ic-play"></span></div>
+    </div>
+  </div>
+  <div class="cand">
+    <div class="head">
+      <div class="art art-56 cv-dontstop"></div>
+      <div class="text"><div class="title-m truncate">Don't Stop Me Now</div><div class="body-m variant truncate">Queen</div></div>
+      <span class="tag outlined">Long shot</span>
+      <div class="iconbtn"><span class="ic ic-play"></span></div>
+    </div>
+  </div>
+  <div style="display:flex; align-items:center; gap:4px; padding: 4px 8px" class="body-m variant">Not here?<div class="btn text">Type a lyric</div></div>
+</div>
+
+<nav class="navbar">
+  <div class="navitem on"><div class="pill"><span class="ic ic-listen"></span></div>Listen</div>
+  <div class="navitem"><div class="pill"><span class="ic ic-library-o"></span></div>Library</div>
+</nav>
+<div class="navhandle"></div>
+<script>
+  const L = Mock.melodyLength(Mock.MELODY);
+  Mock.drawTrace(document.getElementById('hum'), Mock.MELODY, { w: 300, h: 48, t1: 0, t2: L, width: 2.5, seed: 11 });
+  Mock.drawTrace(document.getElementById('overlay'), Mock.MELODY, { w: 356, h: 96, t1: 0, t2: L, width: 4, seed: 1, jitter: 0, vibrato: 0, slide: .02, stroke: 'var(--outline-variant)', flat: true });
+  Mock.drawTrace(document.getElementById('overlay'), Mock.MELODY, { w: 356, h: 96, t1: 0, t2: L, width: 2.5, seed: 11, jitter: .5, vibrato: .15, stroke: 'var(--primary)' });
+</script>
+</body>
+</html>

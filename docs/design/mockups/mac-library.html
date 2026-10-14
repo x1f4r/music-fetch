@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — macOS — Library</title>
+<link rel="stylesheet" href="mac.css">
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+<style>
+  .pane { background: var(--content); }
+  .row .sub { display: inline-flex; align-items: center; gap: 5px; }
+  .row .sub .ic { color: var(--label3); }
+</style>
+</head>
+<body>
+<div class="window">
+  <aside class="panel sidebar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="sb-toggle"><span class="ic ic-sidebar"></span></div>
+    <div class="sb-item"><span class="ic ic-hum"></span>Listen</div>
+    <div class="sb-item selected"><span class="ic ic-stack"></span>Library</div>
+    <div class="sb-section">Pinned</div>
+    <div class="sb-item"><span class="ic ic-mix"></span><span class="truncate">Fred again.. | Boiler Room: London</span></div>
+    <div class="sb-item"><span class="ic ic-note"></span><span class="truncate">Nights</span></div>
+  </aside>
+
+  <main class="content">
+    <div class="toolbar">
+      <div class="tb-left"><span class="wtitle">Library</span></div>
+      <div class="tb-segmented"><span class="on">All</span><span>Heard</span><span>Hummed</span><span>Links</span><span>Mixes</span></div>
+      <div class="tb-right">
+        <div class="tb-field" style="width:200px"><span class="ic ic-search s14"></span>Search</div>
+        <div class="tb-group"><div class="tb-btn prominent"><span class="ic ic-hum s14"></span>Listen</div></div>
+        <div class="tb-group"><div class="tb-btn"><span class="ic ic-sidebar"></span></div></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="list">
+        <div class="day" style="padding-top:8px">Today</div>
+        <div class="row">
+          <div class="art art-40 cv-houdini"></div>
+          <div class="text"><span class="body truncate">Houdini</span><span class="callout secondary sub"><span class="ic ic-mic s12"></span>Dua Lipa</span></div>
+          <div class="trail"><span class="callout mono">14:32</span></div>
+        </div>
+        <div class="row">
+          <div class="art art-40 cv-boiler"></div>
+          <div class="text"><span class="body truncate">Fred again.. | Boiler Room: London</span><span class="callout secondary sub"><span class="ic ic-mix s12"></span>8 tracks so far</span></div>
+          <div class="trail"><span class="spinner"></span><span class="callout mono">13:05</span><span class="ic ic-pin s14" style="color:var(--label3)"></span></div>
+        </div>
+        <div class="row">
+          <div class="art art-40 cv-takeonme"></div>
+          <div class="text"><span class="body truncate">Take On Me</span><span class="callout secondary sub"><span class="ic ic-hum s12"></span>a-ha · 4 candidates</span></div>
+          <div class="trail"><span class="callout mono">11:48</span></div>
+        </div>
+
+        <div class="day">Yesterday</div>
+        <div class="row">
+          <div class="art art-40 cv-espresso"></div>
+          <div class="text"><span class="body truncate">Espresso</span><span class="callout secondary sub"><span class="ic ic-link s12"></span>Sabrina Carpenter · tiktok.com</span></div>
+          <div class="trail"><span class="callout mono">21:10</span></div>
+        </div>
+        <div class="row">
+          <div class="art art-40 cv-nights"></div>
+          <div class="text"><span class="body truncate">Nights</span><span class="callout secondary sub"><span class="ic ic-laptop s12"></span>Frank Ocean</span></div>
+          <div class="trail"><span class="callout mono">18:22</span><span class="ic ic-pin s14" style="color:var(--label3)"></span></div>
+        </div>
+
+        <div class="day">Sunday, October 11</div>
+        <div class="row">
+          <div class="art art-40 cv-blinding"></div>
+          <div class="text"><span class="body truncate">Blinding Lights</span><span class="callout secondary sub"><span class="ic ic-mic s12"></span>The Weeknd</span></div>
+          <div class="trail"><span class="callout mono">16:40</span></div>
+        </div>
+        <div class="row">
+          <div class="art art-40 cv-shortnsweet"></div>
+          <div class="text"><span class="body truncate">Short n' Sweet</span><span class="callout secondary sub"><span class="ic ic-link s12"></span>Sabrina Carpenter · 12 tracks · open.spotify.com</span></div>
+          <div class="trail"><span class="callout mono">09:15</span></div>
+        </div>
+        <div class="row">
+          <div class="art art-40 cv-dreams"></div>
+          <div class="text"><span class="body truncate">Dreams</span><span class="callout secondary sub"><span class="ic ic-doc s12"></span>Fleetwood Mac · rumours_side_a.flac</span></div>
+          <div class="trail"><span class="callout mono">08:02</span></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

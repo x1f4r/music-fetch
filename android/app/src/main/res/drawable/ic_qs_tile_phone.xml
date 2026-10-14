@@ -1,0 +1,5 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <!-- A phone outline with the contour mark inside: "Identify phone audio". -->
+    <path android:pathData="M8,2.9 L16,2.9 Q18.1,2.9 18.1,5 L18.1,19 Q18.1,21.1 16,21.1 L8,21.1 Q5.9,21.1 5.9,19 L5.9,5 Q5.9,2.9 8,2.9 Z" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineJoin="round" />
+    <path android:pathData="M 7.800,12.680 C 8.600,12.680 8.800,10.640 9.600,10.640 C 10.400,10.640 10.600,14.040 11.400,14.040 C 12.400,14.040 12.400,9.960 13.400,9.960 C 14.400,9.960 14.400,13.360 15.200,13.360 C 15.800,13.360 16.000,12.000 16.200,12.000" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

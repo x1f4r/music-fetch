@@ -1,0 +1,121 @@
+# XcodeGen 2.46 spec for the macOS app. Generate with scripts/build-macos-app.sh, or
+# run scripts/build-core-apple.sh and then `xcodegen generate --spec apple/project.yml`.
+name: MusicFetch
+
+options:
+  deploymentTarget:
+    macOS: "26.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+  groupSortPosition: top
+  xcodeVersion: "26.0"
+
+settings:
+  base:
+    MARKETING_VERSION: 1.0.0
+    CURRENT_PROJECT_VERSION: 1
+
+packages:
+  MusicFetchCore:
+    path: MusicFetchCore
+
+targets:
+  MusicFetch:
+    type: application
+    platform: macOS
+    sources:
+      - path: MusicFetch
+        excludes:
+          - Info.plist
+      - path: ../THIRD_PARTY_NOTICES.md
+        buildPhase: resources
+    dependencies:
+      - package: MusicFetchCore
+      - sdk: ServiceManagement.framework
+      - sdk: UserNotifications.framework
+      - sdk: Speech.framework
+      - sdk: CoreAudio.framework
+    info:
+      path: MusicFetch/Info.plist
+      properties:
+        CFBundleDisplayName: Music Fetch
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleIconName: AppIcon
+        LSApplicationCategoryType: public.app-category.music
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSMicrophoneUsageDescription: Music Fetch listens through the microphone to identify the song that is playing or the tune you hum.
+        NSAudioCaptureUsageDescription: Music Fetch listens to audio playing on this Mac to identify songs.
+        NSSpeechRecognitionUsageDescription: Music Fetch turns sung or spoken lyrics into text on this Mac to search for the song.
+        CFBundleURLTypes:
+          - CFBundleURLName: local.musicfetch.app
+            CFBundleURLSchemes: [musicfetch]
+        NSServices:
+          - NSMenuItem:
+              default: Identify with Music Fetch
+            NSMessage: identifyWithMusicFetch
+            NSPortName: Music Fetch
+            NSRequiredContext: {}
+            NSSendTypes:
+              - NSStringPboardType
+              - public.utf8-plain-text
+              - public.url
+              - public.file-url
+    settings:
+      base:
+        PRODUCT_NAME: Music Fetch
+        PRODUCT_MODULE_NAME: MusicFetch
+        PRODUCT_BUNDLE_IDENTIFIER: local.musicfetch.app
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_VERSION: "6.0"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+        # The engine is a static arm64 library.
+        ARCHS: arm64
+        DEAD_CODE_STRIPPING: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        # Ad-hoc signed, not sandboxed, no hardened runtime. build-macos-app.sh re-signs
+        # the bundle with a stable designated requirement after adding the runtime.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+
+  MusicFetchTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: MusicFetchTests
+    dependencies:
+      - target: MusicFetch
+      - package: MusicFetchCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.musicfetch.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        ARCHS: arm64
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Music Fetch.app/Contents/MacOS/Music Fetch
+        BUNDLE_LOADER: $(TEST_HOST)
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+
+schemes:
+  MusicFetch:
+    build:
+      targets:
+        MusicFetch: all
+        MusicFetchTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MusicFetchTests
+    archive:
+      config: Release

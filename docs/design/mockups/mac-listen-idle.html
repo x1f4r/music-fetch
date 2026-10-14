@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — macOS — Listen (idle)</title>
+<link rel="stylesheet" href="mac.css">
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+</head>
+<body>
+<div class="window">
+  <aside class="panel sidebar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="sb-toggle"><span class="ic ic-sidebar"></span></div>
+    <div class="sb-item selected"><span class="ic ic-hum"></span>Listen</div>
+    <div class="sb-item"><span class="ic ic-stack"></span>Library</div>
+    <div class="sb-section">Pinned</div>
+    <div class="sb-item"><span class="ic ic-mix"></span><span class="truncate">Fred again.. | Boiler Room: London</span></div>
+    <div class="sb-item"><span class="ic ic-note"></span><span class="truncate">Nights</span></div>
+  </aside>
+
+  <main class="content">
+    <div class="toolbar">
+      <div class="tb-left"><span class="wtitle">Listen</span></div>
+      <div class="tb-field"><span class="ic ic-link s14"></span>Paste a link</div>
+      <div class="tb-right"><div class="tb-group"><div class="tb-btn"><span class="ic ic-sidebar"></span></div></div></div>
+    </div>
+    <div class="pane">
+      <div class="stage">
+        <div class="listen">
+          <div class="halo"></div>
+          <div class="glass"></div>
+          <svg class="mark" width="56" height="24" viewBox="0 0 48 20" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 11 C7 11 8 5 12 5 C16 5 17 15 21 15 C26 15 26 3 31 3 C36 3 36 13 40 13 C43 13 44 9 45 9"/>
+          </svg>
+        </div>
+        <div class="state">Identify what's playing</div>
+        <div class="sources toggle-row">
+          <div class="toggle on"><span class="ic ic-mic s14"></span>Microphone</div>
+          <div class="toggle"><span class="ic ic-laptop s14"></span>This Mac</div>
+          <div class="toggle"><span class="ic ic-hum s14"></span>Hum</div>
+        </div>
+        <div class="recent row">
+          <div class="art art-40 cv-houdini"></div>
+          <div class="text">
+            <div class="headline truncate">Houdini</div>
+            <div class="callout secondary truncate">Dua Lipa</div>
+          </div>
+          <div class="trail"><span class="callout mono">14:32</span><div class="btn">Open in Spotify</div></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

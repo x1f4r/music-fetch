@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — macOS — Mix session</title>
+<link rel="stylesheet" href="mac.css">
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+</head>
+<body>
+<div class="window">
+  <aside class="panel sidebar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="sb-toggle"><span class="ic ic-sidebar"></span></div>
+    <div class="sb-item"><span class="ic ic-hum"></span>Listen</div>
+    <div class="sb-item selected"><span class="ic ic-stack"></span>Library</div>
+    <div class="sb-section">Pinned</div>
+    <div class="sb-item"><span class="ic ic-mix"></span><span class="truncate">Fred again.. | Boiler Room: London</span></div>
+    <div class="sb-item"><span class="ic ic-note"></span><span class="truncate">Nights</span></div>
+  </aside>
+
+  <main class="content with-inspector">
+    <div class="toolbar">
+      <div class="tb-left">
+        <div class="tb-group"><div class="tb-btn" style="min-width:32px;padding:0 6px"><span class="ic ic-chev-left"></span></div></div>
+      </div>
+      <div class="tb-right">
+        <div class="tb-group"><div class="tb-btn"><span class="ic ic-export"></span><span class="ic ic-chev-down s12" style="margin-left:-2px"></span></div></div>
+        <div class="tb-group"><div class="tb-btn prominent"><span class="ic ic-hum s14"></span>Listen</div></div>
+        <div class="tb-group"><div class="tb-btn"><span class="ic ic-sidebar"></span></div></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="mix-head">
+        <div class="art video cv-boiler"></div>
+        <div class="text">
+          <div class="headline truncate">Fred again.. | Boiler Room: London</div>
+          <div class="callout secondary truncate">YouTube · 1:00:33</div>
+        </div>
+        <div class="status"><span class="spinner"></span>About 4 min left<div class="btn">Stop</div></div>
+      </div>
+      <div class="tl">
+        <div class="ruler"><span style="left:0%">0:00</span><span style="left:25%">15:00</span><span style="left:50%">30:00</span><span style="left:75%">45:00</span><span style="left:100%">1:00:00</span></div>
+        <div class="strip">
+          <div class="seg speech" style="left:0%;width:.8%"></div>
+          <div class="seg confirmed" style="left:1%;width:5.9%"></div>
+          <div class="seg confirmed" style="left:7%;width:5.8%"></div>
+          <div class="seg likely" style="left:12.9%;width:5.8%"></div>
+          <div class="seg unknown" style="left:18.8%;width:6.1%"></div>
+          <div class="seg possible selected" style="left:25%;width:7.2%"></div>
+          <div class="seg confirmed" style="left:32.3%;width:7.2%"></div>
+          <div class="seg confirmed" style="left:39.6%;width:7.8%"></div>
+          <div class="seg confirmed" style="left:47.5%;width:5.7%"></div>
+          <div class="unanalyzed" style="width:45%"></div>
+          <div class="frontier" style="left:55%"></div>
+        </div>
+      </div>
+      <div class="tracks">
+        <div class="track"><span class="cue">0:30</span><div class="art art-40 cv-marea"></div><div class="text"><span class="body truncate">Marea (we've lost dancing)</span><span class="callout secondary truncate">Fred again.., The Blessed Madonna</span></div><div class="trail"></div></div>
+        <div class="track"><span class="cue">4:10</span><div class="art art-40 cv-kyle"></div><div class="text"><span class="body truncate">Kyle (i found you)</span><span class="callout secondary truncate">Fred again..</span></div><div class="trail"></div></div>
+        <div class="track"><span class="cue">7:48</span><div class="art art-40 cv-jungle"></div><div class="text"><span class="body truncate">Jungle</span><span class="callout secondary truncate">Fred again..</span></div><div class="trail"></div></div>
+        <div class="track"><span class="cue">11:20</span><div class="art art-40 unknown"></div><div class="text"><span class="body secondary">ID</span></div><div class="trail"><div class="btn"><span class="ic ic-hum s12"></span>Hum it</div></div></div>
+        <div class="track selected"><span class="cue">15:05</span><div class="art art-40 cv-lightsout"></div><div class="text"><span class="body truncate">Lights Out</span><span class="callout secondary truncate">Fred again.., Romy, HAAi</span></div><div class="trail"><span class="capsule outlined">Possible</span><div class="btn icon"><span class="ic ic-check s12"></span></div><div class="btn icon"><span class="ic ic-x s12"></span></div></div></div>
+        <div class="track"><span class="cue">19:30</span><div class="art art-40 cv-delilah"></div><div class="text"><span class="body truncate">Delilah (pull me out of this)</span><span class="callout secondary truncate">Fred again..</span></div><div class="trail"></div></div>
+        <div class="track"><span class="cue">23:55</span><div class="art art-40 cv-turnon"></div><div class="text"><span class="body truncate">Turn On The Lights again..</span><span class="callout secondary truncate">Fred again.., Swedish House Mafia, Future</span></div><div class="trail"></div></div>
+        <div class="track"><span class="cue">28:40</span><div class="art art-40 cv-rumble"></div><div class="text"><span class="body truncate">Rumble</span><span class="callout secondary truncate">Skrillex, Fred again.., Flowdan</span></div><div class="trail"></div></div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="panel inspector">
+    <div style="display:flex; gap:12px; align-items:center">
+      <div class="art art-64 cv-lightsout"></div>
+      <div style="min-width:0">
+        <div class="headline truncate">Lights Out</div>
+        <div class="callout secondary truncate">Fred again.., Romy, HAAi</div>
+        <div class="callout secondary mono" style="margin-top:2px">15:05 – 19:30</div>
+      </div>
+    </div>
+    <div class="ins-section">
+      <div class="kv"><span class="k">Match</span><span class="v">Possible</span></div>
+      <div class="kv"><span class="k">Evidence</span><span class="v">1 Shazam match, pitch-shifted</span></div>
+      <div class="kv"><span class="k">Album</span><span class="v">Actual Life 3</span></div>
+    </div>
+    <div class="ins-section" style="display:flex; flex-direction:column; gap:8px">
+      <div class="split" style="align-self:stretch"><div class="btn prominent" style="flex:1">Open in Spotify</div><div class="btn prominent"><span class="ic ic-chev-down s12"></span></div></div>
+      <div class="btn" style="align-self:stretch"><span class="ic ic-arrow-out s12"></span>YouTube at 15:05</div>
+    </div>
+  </aside>
+</div>
+</body>
+</html>

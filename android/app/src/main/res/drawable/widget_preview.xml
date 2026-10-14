@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget picker preview: the listen button on the widget background. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/widget_preview_background" />
+            <corners android:radius="24dp" />
+            <size android:width="120dp" android:height="120dp" />
+        </shape>
+    </item>
+    <item
+        android:width="72dp"
+        android:height="72dp"
+        android:drawable="@drawable/widget_cookie_preview"
+        android:gravity="center" />
+    <item
+        android:width="40dp"
+        android:height="17dp"
+        android:drawable="@drawable/widget_mark"
+        android:gravity="center" />
+</layer-list>

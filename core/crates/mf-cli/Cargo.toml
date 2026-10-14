@@ -1,0 +1,23 @@
+[package]
+name = "mf-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "mf"
+path = "src/main.rs"
+
+[dependencies]
+mfcore = { path = "../mfcore" }
+tokio.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+parking_lot = "0.12"
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+# media
+ctrlc = "3.4"
+# shazam
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

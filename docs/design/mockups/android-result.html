@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — Android — Result</title>
+<link rel="stylesheet" href="android.css">
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+<style>
+  /* Content-based scheme derived from the artwork (MaterialKolor, PaletteStyle.Expressive) */
+  :root { --primary: #2457b8; --on-primary: #fff; --primary-container: #d8e2ff; --on-primary-container: #001a41;
+    --secondary-container: #dbe2f9; --on-secondary-container: #141b2c; --surface: #f9f9ff; --surface-container-low: #f3f3fb;
+    --surface-container: #eeedf5; --surface-container-high: #e8e7f0; --surface-container-highest: #e2e2ea;
+    --on-surface: #1a1b20; --on-surface-variant: #44474f; --outline-variant: #c4c6d0; --outline: #74777f; }
+  html[data-theme="dark"] { --primary: #adc6ff; --on-primary: #002e69; --primary-container: #004494; --on-primary-container: #d8e2ff;
+    --secondary-container: #3f4759; --on-secondary-container: #dbe2f9; --surface: #111318; --surface-container-low: #1a1b20;
+    --surface-container: #1e1f25; --surface-container-high: #282a2f; --surface-container-highest: #33353a;
+    --on-surface: #e2e2e9; --on-surface-variant: #c4c6d0; --outline-variant: #44474f; --outline: #8e9099; }
+  .wash { position: absolute; left: 0; right: 0; top: 0; height: 440px; background: linear-gradient(180deg, var(--primary-container) 0%, transparent 100%); opacity: .55; }
+  html[data-theme="dark"] .wash { opacity: .5; }
+  .hero { position: absolute; left: 24px; right: 24px; top: 128px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .hero .title { margin-top: 24px; }
+  .hero .artist { margin-top: 2px; }
+  .hero .meta { margin-top: 2px; }
+  .hero .cta { margin-top: 22px; }
+  .lyrics { position: absolute; left: 24px; right: 24px; top: 612px; bottom: 88px; overflow: hidden; }
+  .lyrics .body-l { margin-top: 6px; color: var(--on-surface-variant); }
+  .lyrics::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 56px; background: linear-gradient(180deg, transparent, var(--surface)); }
+</style>
+</head>
+<body>
+<div class="wash"></div>
+<div class="statusbar"><span>14:32</span><span class="cam"></span><span class="right"><span class="ic ic-wifi s18"></span><span class="sigbars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:12px"></i></span><span class="battery"></span></span></div>
+
+<div class="topbar">
+  <div class="iconbtn"><span class="ic ic-back"></span></div>
+  <div class="ttl"></div>
+  <div class="iconbtn"><span class="ic ic-share"></span></div>
+  <div class="iconbtn"><span class="ic ic-more"></span></div>
+</div>
+
+<div class="hero">
+  <div class="art art-240 cv-houdini"></div>
+  <div class="display-s em title">Houdini</div>
+  <div class="title-m artist">Dua Lipa</div>
+  <div class="body-m variant meta">Radical Optimism · 2024</div>
+  <div class="splitbtn xl cta">
+    <div class="btn filled lead">Open in Spotify</div>
+    <div class="btn filled trail"><span class="ic ic-chev-down"></span></div>
+  </div>
+</div>
+
+<div class="lyrics">
+  <div class="title-s">Lyrics</div>
+  <div class="body-l">Lyrics appear here<br>line by line as the song plays<br>synced when timing is known<br>plain text otherwise<br><br>A second verse follows<br>with the same quiet styling<br>scrolling under the details</div>
+</div>
+
+<nav class="navbar">
+  <div class="navitem on"><div class="pill"><span class="ic ic-listen"></span></div>Listen</div>
+  <div class="navitem"><div class="pill"><span class="ic ic-library-o"></span></div>Library</div>
+</nav>
+<div class="navhandle"></div>
+</body>
+</html>

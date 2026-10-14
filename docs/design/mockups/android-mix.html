@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music Fetch — Android — Mix session</title>
+<link rel="stylesheet" href="android.css">
+<script src="mock.js"></script>
+<script>if (location.hash === '#dark') document.documentElement.dataset.theme = 'dark';</script>
+<style>
+  .tl { position: absolute; top: 120px; left: 16px; right: 16px; }
+  .status { display: flex; align-items: center; gap: 8px; margin-top: 10px; height: 40px; }
+  .status .spacer { flex: 1; }
+  .tracks { position: absolute; top: 232px; left: 0; right: 0; bottom: 88px; overflow: hidden; }
+  .trk { display: flex; align-items: center; gap: 12px; height: 64px; padding: 0 16px; }
+  .trk.selected { background: var(--surface-container); }
+  .trk .cue { width: 44px; flex: none; font-size: 12px; font-weight: 500; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+  .trk .text { flex: 1; min-width: 0; }
+  .trk .trail { display: flex; align-items: center; gap: 2px; }
+  .trk .iconbtn { width: 40px; height: 40px; }
+</style>
+</head>
+<body>
+<div class="statusbar"><span>14:32</span><span class="cam"></span><span class="right"><span class="ic ic-wifi s18"></span><span class="sigbars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:12px"></i></span><span class="battery"></span></span></div>
+
+<div class="topbar">
+  <div class="iconbtn"><span class="ic ic-back"></span></div>
+  <div class="ttl"><div class="title-l truncate">Fred again.. | Boiler Room: London</div><div class="body-m variant truncate">YouTube · 1:00:33</div></div>
+  <div class="iconbtn"><span class="ic ic-share"></span></div>
+  <div class="iconbtn"><span class="ic ic-more"></span></div>
+</div>
+
+<div class="tl">
+  <div class="ruler"><span style="left:0%">0:00</span><span style="left:25%">15:00</span><span style="left:50%">30:00</span><span style="left:75%">45:00</span><span style="left:100%">1:00:00</span></div>
+  <div class="strip">
+    <div class="seg speech" style="left:0%;width:.8%"></div>
+    <div class="seg confirmed" style="left:1%;width:5.9%"></div>
+    <div class="seg confirmed" style="left:7%;width:5.8%"></div>
+    <div class="seg likely" style="left:12.9%;width:5.8%"></div>
+    <div class="seg unknown" style="left:18.8%;width:6.1%"></div>
+    <div class="seg possible selected" style="left:25%;width:7.2%"></div>
+    <div class="seg confirmed" style="left:32.3%;width:7.2%"></div>
+    <div class="seg confirmed" style="left:39.6%;width:7.8%"></div>
+    <div class="seg confirmed" style="left:47.5%;width:5.7%"></div>
+    <div class="unanalyzed" style="width:45%"></div>
+    <div class="frontier" style="left:55%"></div>
+  </div>
+  <div class="status">
+    <div class="wavy" style="width:120px"><svg viewBox="0 0 120 10"><path id="wavyA" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round"/><path id="wavyT" fill="none" stroke="var(--surface-container-highest)" stroke-width="3" stroke-linecap="round"/></svg></div>
+    <span class="body-m variant">About 4 min left</span>
+    <span class="spacer"></span>
+    <div class="btn text">Stop</div>
+  </div>
+</div>
+
+<div class="tracks">
+  <div class="trk"><span class="cue">0:30</span><div class="art art-40 cv-marea"></div><div class="text"><div class="body-l truncate">Marea (we've lost dancing)</div><div class="body-m variant truncate">Fred again.., The Blessed Madonna</div></div></div>
+  <div class="trk"><span class="cue">4:10</span><div class="art art-40 cv-kyle"></div><div class="text"><div class="body-l truncate">Kyle (i found you)</div><div class="body-m variant truncate">Fred again..</div></div></div>
+  <div class="trk"><span class="cue">7:48</span><div class="art art-40 cv-jungle"></div><div class="text"><div class="body-l truncate">Jungle</div><div class="body-m variant truncate">Fred again..</div></div></div>
+  <div class="trk"><span class="cue">11:20</span><div class="art art-40 unknown"></div><div class="text"><div class="body-l variant">ID</div></div><div class="trail"><div class="btn text"><span class="ic ic-hum s20"></span>Hum it</div></div></div>
+  <div class="trk selected"><span class="cue">15:05</span><div class="art art-40 cv-lightsout"></div><div class="text"><div class="body-l truncate">Lights Out</div><div class="body-m variant truncate">Fred again.., Romy, HAAi</div></div><div class="trail"><span class="tag outlined">Possible</span><div class="iconbtn"><span class="ic ic-check"></span></div><div class="iconbtn"><span class="ic ic-x"></span></div></div></div>
+  <div class="trk"><span class="cue">19:30</span><div class="art art-40 cv-delilah"></div><div class="text"><div class="body-l truncate">Delilah (pull me out of this)</div><div class="body-m variant truncate">Fred again..</div></div></div>
+  <div class="trk"><span class="cue">23:55</span><div class="art art-40 cv-turnon"></div><div class="text"><div class="body-l truncate">Turn On The Lights again..</div><div class="body-m variant truncate">Fred again.., Swedish House Mafia, Future</div></div></div>
+  <div class="trk"><span class="cue">28:40</span><div class="art art-40 cv-rumble"></div><div class="text"><div class="body-l truncate">Rumble</div><div class="body-m variant truncate">Skrillex, Fred again.., Flowdan</div></div></div>
+  <div class="trk"><span class="cue">32:15</span><div class="art art-40 unknown"></div><div class="text"><div class="body-l variant">ID</div></div><div class="trail"><div class="btn text"><span class="ic ic-hum s20"></span>Hum it</div></div></div>
+</div>
+
+<nav class="navbar">
+  <div class="navitem"><div class="pill"><span class="ic ic-listen"></span></div>Listen</div>
+  <div class="navitem on"><div class="pill"><span class="ic ic-library"></span></div>Library</div>
+</nav>
+<div class="navhandle"></div>
+<script>
+  const w = Mock.wavyLine(120, 10, 2.2, 14, .55);
+  document.getElementById('wavyA').setAttribute('d', w.active);
+  document.getElementById('wavyT').setAttribute('d', w.track);
+</script>
+</body>
+</html>

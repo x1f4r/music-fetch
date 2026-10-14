@@ -1,0 +1,50 @@
+{
+ "id": "dholbach_cryptkeeper",
+ "title": "Cryptkeeper",
+ "description": "After quite a long silence from myself, finally another Drum'n'Bass mix with my favourite current dance floor bangers.",
+ "thumbnail": "https://thumbnailer.mixcloud.com/unsafe/1024x1024/extaudio/a/4/1/3/7e83-445a-4339-9f12-677a718db4de.jpg",
+ "timestamp": 1321359578,
+ "duration": 3723,
+ "uploader": "dholbach",
+ "uploader_id": "dholbach",
+ "uploader_url": "https://www.mixcloud.com/dholbach/",
+ "view_count": 528,
+ "like_count": 0,
+ "repost_count": 0,
+ "comment_count": 2,
+ "tags": [
+  "liquid drum and bass",
+  "drum and bass"
+ ],
+ "artists": [
+  "Submorphics & Chino ",
+  "Telekinesis",
+  "Porter Robinson",
+  "Enei",
+  "Breakage ft Jess Mills"
+ ],
+ "webpage_url": "https://www.mixcloud.com/dholbach/cryptkeeper/",
+ "original_url": "https://www.mixcloud.com/dholbach/cryptkeeper/",
+ "webpage_url_basename": "cryptkeeper",
+ "webpage_url_domain": "mixcloud.com",
+ "extractor": "mixcloud",
+ "extractor_key": "Mixcloud",
+ "playlist": null,
+ "playlist_index": null,
+ "display_id": "dholbach_cryptkeeper",
+ "fulltitle": "Cryptkeeper",
+ "duration_string": "1:02:03",
+ "upload_date": "20111115",
+ "release_year": null,
+ "artist": "Submorphics & Chino , Telekinesis, Porter Robinson, Enei, Breakage ft Jess Mills",
+ "_has_drm": null,
+ "epoch": 1791923491,
+ "filesize": null,
+ "_type": "video",
+ "_version": {
+  "version": "2026.08.19",
+  "current_git_head": null,
+  "release_git_head": "594bd50c2c78ac432f81600d309fdc4e0a92d82c",
+  "repository": "yt-dlp/yt-dlp"
+ }
+}

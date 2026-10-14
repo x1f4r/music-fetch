@@ -1,0 +1,9 @@
+# Built by scripts/build-core-android.sh and scripts/fetch-android-runtime.sh
+core/src/main/jniLibs/
+core/src/main/kotlin/
+app/src/main/jniLibs/
+
+.gradle/
+.kotlin/
+build/
+local.properties
