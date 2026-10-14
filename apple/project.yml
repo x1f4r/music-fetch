@@ -27,6 +27,8 @@ targets:
       - path: MusicFetch
         excludes:
           - Info.plist
+      - path: ../THIRD_PARTY_NOTICES.md
+        buildPhase: resources
     dependencies:
       - package: MusicFetchCore
       - sdk: ServiceManagement.framework
@@ -65,7 +67,6 @@ targets:
         PRODUCT_MODULE_NAME: MusicFetch
         PRODUCT_BUNDLE_IDENTIFIER: local.musicfetch.app
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SWIFT_VERSION: "6.0"
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         SWIFT_APPROACHABLE_CONCURRENCY: YES
