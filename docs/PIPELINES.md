@@ -277,10 +277,15 @@ Never decide by duration alone. A single song must never be split.
      confirms the answer for free and shows more of where X plays. Before each probe the
      previews of everything identified so far are looked for around T (continuing or
      replayed tracks cost nothing).
-   - Two consecutive recordings X (heard until T₁) and Y (from T₂): the boundary is Y's
-     start estimate when it falls in [T₁, T₂] (it is precise: no snapping), else X's end
-     estimate when it does (snapped to a novelty peak within ±8 s), else the strongest
-     novelty peak in [T₁, T₂], else the middle.
+   - Two consecutive recordings X (heard until T₁) and Y (from T₂): a hard cut (Eₓ and
+     Sᵧ within 8 s: albums, compilations) puts the boundary at Sᵧ. Otherwise the change
+     lies in the transition [max(T₁, Sᵧ), min(T₂, Eₓ)] — DJs blend for a minute or more
+     and published tracklists mark the takeover rather than the first bar of Y (on the
+     evaluation mixes Sᵧ came 40–110 s before the published time) — and transitions
+     longer than 40 s get up to two refining probes in their middle (whoever is heard
+     there narrows the stretch), within 60 probes per hour of media; the boundary is
+     the middle of what remains. The novelty curve is logged for evaluation but not
+     used: it placed changes no better than the middle of the transition.
    - Gaps: X's end and Y's start ≥ 30 s apart → probe the middle; an unseen stretch of
      ≥ 60 s before Sᵧ (unless X ends exactly at Sᵧ, i.e. played in full) → probe 20 s
      before Sᵧ, where a short hidden track would sit; T₂ − T₁ > 4 min → probe the

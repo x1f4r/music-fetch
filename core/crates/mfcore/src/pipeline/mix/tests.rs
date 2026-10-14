@@ -62,7 +62,8 @@ async fn blind_dj_mix_with_partial_plays_and_a_short_track() {
     let found = songs(&report.pieces);
     let titles: Vec<&str> = found.iter().map(|f| f.2.as_str()).collect();
     assert_eq!(titles, vec!["Long One", "Long Two", "Short", "Long Three"], "{:#?}", report.log);
-    assert!(close(found[1].0, 190, 12) && close(found[2].0, 380, 12) && close(found[3].0, 440, 12), "{found:?}");
+    // Changes land inside the stretch between the last and first hearing.
+    assert!(close(found[1].0, 190, 20) && close(found[2].0, 380, 20) && close(found[3].0, 440, 20), "{found:?}");
     // Never more than the budget: 660 s / 45 s + 10.
     assert!(services.calls() <= 24);
 }

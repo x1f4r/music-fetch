@@ -63,6 +63,12 @@ const BEFORE_START_MS: u64 = 20_000;
 const UNRELIABLE_WINDOW: usize = 6;
 /// ...and how many of them the audio must have overruled.
 const UNRELIABLE_CONTRADICTIONS: usize = 3;
+/// An end and a start this close describe a hard cut.
+const HARD_CUT_MS: i64 = 8_000;
+/// Transitions longer than this get a refining probe in their middle...
+const REFINE_MIN_MS: u64 = 40_000;
+/// ...while the whole analysis stays under this many probes per hour of media.
+const REFINE_RATE_PER_HOUR: f64 = 60.0;
 /// A replay must start no earlier than this before the first play's latest end.
 const REPLAY_SLACK_MS: i64 = 30_000;
 /// A lone answer whose own start lies this long before another established
@@ -74,8 +80,6 @@ const CONFIRM_REACH_MS: u64 = 40_000;
 const CONFIRM_ROOM_MS: u64 = 20_000;
 /// A leading or trailing stretch shorter than this joins the first/last track.
 const EDGE_ABSORB_MS: u64 = 30_000;
-/// Boundaries snap to a novelty peak this close.
-const SNAP_MS: u64 = 8_000;
 /// Paid provider calls per analysis.
 const MAX_PAID: u32 = 30;
 /// Largest DJ speed change searched by local matching (pitch faders go to ±8 %).
@@ -244,6 +248,7 @@ pub async fn run<S: Services>(
     }
     mix.adaptive_pass().await?;
     mix.fill_gaps().await?;
+    mix.refine_boundaries().await?;
     mix.confirm_lone().await?;
     mix.resolve_leftovers().await?;
     emitter.phase(Phase::Finishing, None);
@@ -1009,6 +1014,59 @@ impl<S: Services> Mix<'_, S> {
         out
     }
 
+    /// Listen in the middle of long transitions (at most twice each) so a
+    /// change lands where the next recording takes over; the whole analysis
+    /// stays within `REFINE_RATE_PER_HOUR`.
+    async fn refine_boundaries(&mut self) -> Result<()> {
+        let cap = ((self.duration as f64 / 3_600_000.0) * REFINE_RATE_PER_HOUR).ceil() as u32;
+        for _round in 0..2 {
+            let mut anchors: Vec<&Anchor> = self
+                .anchors
+                .iter()
+                .filter(|a| !self.is_fixed(a.at_ms + a.len_ms / 2) && !self.refuted.contains(&a.id))
+                .collect();
+            anchors.sort_by_key(|a| a.at_ms);
+            let anchors = drop_contradicted(anchors);
+            let mut targets = Vec::new();
+            for pair in anchors.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                if hints::same_recording(&a.track, &b.track) || hard_cut(a, b).is_some() {
+                    continue;
+                }
+                let (lo, hi) = self.transition(a, b);
+                if hi.saturating_sub(lo) < REFINE_MIN_MS {
+                    continue;
+                }
+                let at = (lo + (hi - lo) / 2).saturating_sub(PROBE_MS / 2);
+                if self.probed_within(at, 8_000) || self.music_share(at, at + PROBE_MS) < 0.4 {
+                    continue;
+                }
+                targets.push(at);
+            }
+            if targets.is_empty() {
+                break;
+            }
+            for at in targets {
+                if self.report.probes >= cap || !self.can_probe() {
+                    return Ok(());
+                }
+                self.services.cancel().check()?;
+                if let Some(a) = self.probe(at).await? {
+                    self.anchors.push(a.clone());
+                    self.learn(&a).await?;
+                }
+                self.publish(at);
+            }
+        }
+        Ok(())
+    }
+
+    /// A probe (answered or not) already started within `distance` of `at`.
+    fn probed_within(&self, at: u64, distance: u64) -> bool {
+        self.misses.iter().any(|(m, _)| m.abs_diff(at) < distance)
+            || self.anchors.iter().any(|a| a.kind == AnchorKind::Recognizer && a.at_ms.abs_diff(at) < distance)
+    }
+
     /// A recording heard only once and not found locally gets a second probe
     /// where it must still be playing. Answers caused by a sampled record or a
     /// near miss rarely repeat with a consistent position; those that do not
@@ -1278,6 +1336,10 @@ impl<S: Services> Mix<'_, S> {
             };
             return (t, t);
         }
+        // Played in full and cut: `a` ends exactly where `b` begins.
+        if let Some(s) = hard_cut(a, b).filter(|s| *s >= lo && *s <= hi) {
+            return (s, s);
+        }
         let in_range = |t: i64| t >= lo as i64 && t <= hi as i64;
         let a_end = a.end_est.filter(|e| in_range(*e)).map(|e| e as u64);
         let b_start = b.start_est.filter(|s| in_range(*s)).map(|s| s as u64);
@@ -1287,13 +1349,23 @@ impl<S: Services> Mix<'_, S> {
         {
             return (e, s);
         }
-        let t = match (b_start, a_end) {
-            // The next recording's own start (from its recognizer offset) is precise.
-            (Some(s), _) => s,
-            (None, Some(e)) => self.snap_to_novelty(e, lo, hi),
-            (None, None) => self.strongest_change(lo, hi),
-        };
+        let (lo, hi) = self.transition(a, b);
+        let t = lo + (hi - lo) / 2;
         (t, t)
+    }
+
+    /// Where `b` takes over from `a`: after `a` was last heard and `b` began,
+    /// before `b` was first heard and `a` ended. DJs blend for a minute or
+    /// more; published tracklists mark the middle of the blend more often than
+    /// its start, so the middle of this stretch is the estimate (and the place
+    /// to listen when refining it).
+    fn transition(&self, a: &Anchor, b: &Anchor) -> (u64, u64) {
+        let lo = a.seen_until();
+        let hi = b.seen_from().max(lo);
+        let in_range = |t: i64| t >= lo as i64 && t <= hi as i64;
+        let start = b.start_est.filter(|s| in_range(*s)).map_or(lo, |s| s as u64);
+        let end = a.end_est.filter(|e| in_range(*e) && *e as u64 >= start).map_or(hi, |e| e as u64);
+        (start, end.max(start))
     }
 
     /// Note how each change between two recordings was placed (evaluation aid).
@@ -1337,28 +1409,6 @@ impl<S: Services> Mix<'_, S> {
         for line in lines {
             self.log(line);
         }
-    }
-
-    /// Strongest novelty peak in `[lo, hi]`, else the middle.
-    fn strongest_change(&self, lo: u64, hi: u64) -> u64 {
-        self.novelty_peaks
-            .iter()
-            .copied()
-            .filter(|p| *p >= lo && *p <= hi)
-            .max_by(|x, y| {
-                let v = |p: u64| self.novelty.get((p / 1000) as usize).copied().unwrap_or(0.0);
-                v(*x).total_cmp(&v(*y))
-            })
-            .unwrap_or(lo + (hi - lo) / 2)
-    }
-
-    fn snap_to_novelty(&self, t: u64, lo: u64, hi: u64) -> u64 {
-        self.novelty_peaks
-            .iter()
-            .copied()
-            .filter(|p| p.abs_diff(t) <= SNAP_MS && *p >= lo && *p <= hi)
-            .min_by_key(|p| p.abs_diff(t))
-            .unwrap_or(t)
     }
 
     /// Gap pieces for `[lo, hi)` from the labels: speech and silence runs that
@@ -1491,6 +1541,13 @@ fn next_probe(a: &Anchor) -> u64 {
         }
         _ => t + UNKNOWN_STEP_MS,
     }
+}
+
+/// `a` (played to its end) stops where `b` (played from its beginning) starts:
+/// a hard cut, as in albums and compilations. Returns that time.
+fn hard_cut(a: &Anchor, b: &Anchor) -> Option<u64> {
+    let (end, start) = (a.end_est?, b.start_est?);
+    ((end - start).abs() <= HARD_CUT_MS && start >= 0).then_some(start as u64)
 }
 
 /// Two answers place the recording's start within a few seconds of each other.
