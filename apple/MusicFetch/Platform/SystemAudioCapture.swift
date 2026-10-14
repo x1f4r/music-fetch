@@ -19,7 +19,7 @@ nonisolated final class SystemAudioCapture: AudioCapture, @unchecked Sendable {
     private var format = AudioStreamBasicDescription()
     private var defaultOutputListener: AudioObjectPropertyListenerBlock?
 
-    private static var defaultOutputAddress = AudioObjectPropertyAddress(
+    private static let defaultOutputAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
@@ -39,15 +39,16 @@ nonisolated final class SystemAudioCapture: AudioCapture, @unchecked Sendable {
                 self?.defaultOutputChanged()
             }
             defaultOutputListener = listener
-            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &Self.defaultOutputAddress, queue, listener)
+            var address = Self.defaultOutputAddress
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, listener)
         }
     }
 
     func stop() {
         queue.sync {
             if let listener = defaultOutputListener {
-                AudioObjectRemovePropertyListenerBlock(
-                    AudioObjectID(kAudioObjectSystemObject), &Self.defaultOutputAddress, queue, listener)
+                var address = Self.defaultOutputAddress
+                AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, listener)
             }
             defaultOutputListener = nil
             handler = nil

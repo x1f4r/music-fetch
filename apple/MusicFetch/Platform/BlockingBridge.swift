@@ -58,8 +58,18 @@ nonisolated private final class ResultBox<T: Sendable>: Sendable {
 
     func take() -> Result<T, Error>? {
         slot.withLock { value in
-            defer { value = nil }
-            return value
+            let taken = value
+            value = nil
+            return taken
         }
+    }
+}
+
+/// Carries a non-Sendable value across a hand-off where only one side uses it at a time.
+nonisolated struct UncheckedSendable<Value>: @unchecked Sendable {
+    let value: Value
+
+    init(_ value: Value) {
+        self.value = value
     }
 }

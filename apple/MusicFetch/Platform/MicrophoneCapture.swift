@@ -32,31 +32,31 @@ nonisolated final class MicrophoneCapture: AudioCapture, @unchecked Sendable {
     private var configurationObserver: NSObjectProtocol?
 
     func start(handler: @escaping PCMHandler) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        self.handler = handler
-        let input = engine.inputNode
-        if input.isVoiceProcessingEnabled {
-            try input.setVoiceProcessingEnabled(false)
-        }
-        try installTapAndStart()
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-        ) { [weak self] _ in
-            self?.restartAfterConfigurationChange()
+        try lock.withLock {
+            self.handler = handler
+            let input = engine.inputNode
+            if input.isVoiceProcessingEnabled {
+                try input.setVoiceProcessingEnabled(false)
+            }
+            try installTapAndStart()
+            configurationObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+            ) { [weak self] _ in
+                self?.restartAfterConfigurationChange()
+            }
         }
     }
 
     func stop() {
-        lock.lock()
-        defer { lock.unlock() }
-        if let configurationObserver {
-            NotificationCenter.default.removeObserver(configurationObserver)
+        lock.withLock {
+            if let configurationObserver {
+                NotificationCenter.default.removeObserver(configurationObserver)
+            }
+            configurationObserver = nil
+            handler = nil
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
         }
-        configurationObserver = nil
-        handler = nil
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
     }
 
     private func installTapAndStart() throws {
@@ -76,15 +76,15 @@ nonisolated final class MicrophoneCapture: AudioCapture, @unchecked Sendable {
 
     /// The input device or its format changed: reinstall the tap with the new format.
     private func restartAfterConfigurationChange() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard handler != nil else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        do {
-            try installTapAndStart()
-        } catch {
-            Log.capture.error("Microphone restart failed: \(error.localizedDescription, privacy: .public)")
+        lock.withLock {
+            guard handler != nil else { return }
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            do {
+                try installTapAndStart()
+            } catch {
+                Log.capture.error("Microphone restart failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 

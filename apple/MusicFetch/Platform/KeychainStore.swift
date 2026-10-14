@@ -7,7 +7,7 @@ nonisolated struct KeychainStore: Sendable {
     /// Service name for provider credentials.
     static let credentialsService = "local.musicfetch.app.credentials"
 
-    struct Failure: LocalizedError {
+    nonisolated struct Failure: LocalizedError {
         let status: OSStatus
         var errorDescription: String? {
             (SecCopyErrorMessageString(status, nil) as String?) ?? "Keychain error \(status)."
@@ -129,11 +129,11 @@ nonisolated struct CredentialFields: Equatable, Sendable {
 
     /// The engine's view: a provider is configured only when all its fields are set.
     var credentials: Credentials {
-        func value(_ text: String) -> String? {
+        let value: (String) -> String? = { text in
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }
-        func acr(_ host: String, _ key: String, _ secret: String) -> AcrCredentials? {
+        let acr: (String, String, String) -> AcrCredentials? = { host, key, secret in
             guard let host = value(host), let key = value(key), let secret = value(secret) else { return nil }
             return AcrCredentials(host: host, accessKey: key, accessSecret: secret)
         }

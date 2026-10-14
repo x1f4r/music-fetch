@@ -44,7 +44,7 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
     static func prepare(language: String) async {
         let locale = Locale(identifier: language)
         guard let match = matchingLocale(locale, in: await SpeechTranscriber.supportedLocales) else { return }
-        let transcriber = SpeechTranscriber(locale: match, preset: .offlineTranscriptionWithAlternatives)
+        let transcriber = makeTranscriber(locale: match)
         guard await AssetInventory.status(forModules: [transcriber]) < .installed else { return }
         do {
             try await AssetInventory.assetInstallationRequest(supporting: [transcriber])?.downloadAndInstall()
@@ -53,15 +53,26 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
         }
     }
 
+    /// A file transcriber that reports alternatives. Built from options rather than a
+    /// preset: the preset names differ between the macOS 26.0 SDK and later systems.
+    private static func makeTranscriber(locale: Locale) -> SpeechTranscriber {
+        SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.alternativeTranscriptions], attributeOptions: [])
+    }
+
     /// Up to five hypotheses, best first; empty when nothing was said.
     static func transcribe(file: URL, language: String) async throws -> [String] {
         let locale = Locale(identifier: language)
 
         if let match = matchingLocale(locale, in: await SpeechTranscriber.supportedLocales) {
-            let transcriber = SpeechTranscriber(locale: match, preset: .offlineTranscriptionWithAlternatives)
+            let transcriber = makeTranscriber(locale: match)
             if try await installAssets(for: transcriber) {
-                let pieces = try await analyze(file: file, module: transcriber, results: transcriber.results) {
-                    Piece(text: String($0.text.characters), alternatives: $0.alternatives.map { String($0.characters) })
+                let pieces = try await analyze(file: file, module: transcriber) {
+                    var pieces: [Piece] = []
+                    for try await result in transcriber.results {
+                        pieces.append(
+                            Piece(text: String(result.text.characters), alternatives: result.alternatives.map { String($0.characters) }))
+                    }
+                    return pieces
                 }
                 return hypotheses(from: pieces)
             }
@@ -70,8 +81,13 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
         if let match = matchingLocale(locale, in: await DictationTranscriber.supportedLocales) {
             let transcriber = DictationTranscriber(locale: match, preset: .longDictation)
             if try await installAssets(for: transcriber) {
-                let pieces = try await analyze(file: file, module: transcriber, results: transcriber.results) {
-                    Piece(text: String($0.text.characters), alternatives: $0.alternatives.map { String($0.characters) })
+                let pieces = try await analyze(file: file, module: transcriber) {
+                    var pieces: [Piece] = []
+                    for try await result in transcriber.results {
+                        pieces.append(
+                            Piece(text: String(result.text.characters), alternatives: result.alternatives.map { String($0.characters) }))
+                    }
+                    return pieces
                 }
                 return hypotheses(from: pieces)
             }
@@ -103,19 +119,13 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
         }
     }
 
-    private static func analyze<Results: AsyncSequence & Sendable>(
+    /// Runs the analyzer over `file` while `collect` drains the module's results.
+    private static func analyze(
         file: URL,
         module: any SpeechModule,
-        results: Results,
-        piece: @escaping @Sendable (Results.Element) -> Piece
+        collect: @escaping @Sendable () async throws -> [Piece]
     ) async throws -> [Piece] {
-        let collector = Task {
-            var pieces: [Piece] = []
-            for try await result in results {
-                pieces.append(piece(result))
-            }
-            return pieces
-        }
+        let collector = Task { try await collect() }
         do {
             let audio = try AVAudioFile(forReading: file)
             let analyzer = try await SpeechAnalyzer(inputAudioFile: audio, modules: [module], finishAfterFile: true)
@@ -136,7 +146,7 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
     /// Joins the per-segment texts into whole-clip hypotheses: the best text first, then
     /// one hypothesis per alternative rank. Deduplicated, at most five.
     static func hypotheses(from pieces: [Piece]) -> [String] {
-        func join(_ parts: [String]) -> String {
+        let join: ([String]) -> String = { parts in
             parts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .joined(separator: " ")
@@ -242,9 +252,9 @@ nonisolated private final class ResumeOnce<T: Sendable>: @unchecked Sendable {
 
     private func take() -> CheckedContinuation<T, Error>? {
         lock.lock()
-        defer { lock.unlock() }
         let value = continuation
         continuation = nil
+        lock.unlock()
         return value
     }
 }

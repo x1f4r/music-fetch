@@ -37,12 +37,14 @@ nonisolated final class AVFoundationDecoder: PlatformDecoder {
         progress: (Float) -> Void
     ) throws {
         let asset = AVURLAsset(url: input)
-        let (track, duration) = try BlockingBridge.run(timeout: .seconds(30), isCanceled: isCanceled) {
+        // AVAssetTrack isn't Sendable; it only crosses back to this (waiting) thread.
+        let loaded = try BlockingBridge.run(timeout: .seconds(30), isCanceled: isCanceled) {
             let tracks = try await asset.loadTracks(withMediaType: .audio)
             guard let track = tracks.first else { throw DecodeError.noAudioTrack }
             let duration = try await asset.load(.duration)
-            return (track, duration)
+            return UncheckedSendable((track, duration))
         }
+        let (track, duration) = loaded.value
 
         let reader = try AVAssetReader(asset: asset)
         let settings: [String: Any] = [

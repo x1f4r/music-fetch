@@ -42,24 +42,23 @@ nonisolated final class WAVWriter {
     /// The 44-byte header of a 16-bit PCM WAVE file.
     static func header(sampleRate: UInt32, channels: UInt16, dataBytes: UInt32) -> Data {
         var data = Data(capacity: 44)
-        func append<T: FixedWidthInteger>(_ value: T) {
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
+        let append32: (UInt32) -> Void = { value in withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        let append16: (UInt16) -> Void = { value in withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
         let bitsPerSample: UInt16 = 16
         let blockAlign = channels * bitsPerSample / 8
         data.append(contentsOf: Array("RIFF".utf8))
-        append(UInt32(36) &+ dataBytes)
+        append32(UInt32(36) &+ dataBytes)
         data.append(contentsOf: Array("WAVE".utf8))
         data.append(contentsOf: Array("fmt ".utf8))
-        append(UInt32(16))
-        append(UInt16(1))  // PCM
-        append(channels)
-        append(sampleRate)
-        append(sampleRate * UInt32(blockAlign))
-        append(blockAlign)
-        append(bitsPerSample)
+        append32(UInt32(16))
+        append16(UInt16(1))  // PCM
+        append16(channels)
+        append32(sampleRate)
+        append32(sampleRate * UInt32(blockAlign))
+        append16(blockAlign)
+        append16(bitsPerSample)
         data.append(contentsOf: Array("data".utf8))
-        append(dataBytes)
+        append32(dataBytes)
         return data
     }
 }

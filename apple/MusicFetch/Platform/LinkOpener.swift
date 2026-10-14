@@ -32,7 +32,7 @@ nonisolated enum LinkOpener {
 
     /// Stable order: menu order first, then anything else; exact links before searches.
     static func sorted(_ links: [ServiceLink]) -> [ServiceLink] {
-        func rank(_ service: Service) -> Int { menuOrder.firstIndex(of: service) ?? menuOrder.count }
+        let rank: (Service) -> Int = { service in menuOrder.firstIndex(of: service) ?? menuOrder.count }
         return links.enumerated().sorted { lhs, rhs in
             let (a, b) = (lhs.element, rhs.element)
             if rank(a.service) != rank(b.service) { return rank(a.service) < rank(b.service) }
