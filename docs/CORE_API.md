@@ -65,7 +65,7 @@ This document describes the behaviour the types cannot express.
 |---|---|---|---|
 | `MediaBackend` | not supplied: the core runs the bundled yt-dlp via `EngineConfig.media_tools` | Chaquopy wrapper | links that are not streaming metadata |
 | `PlatformDecoder` | AVFoundation | MediaExtractor + MediaCodec | symphonia fails on a file |
-| `SpeechToText` | SpeechTranscriber (macOS 26) | on-device SpeechRecognizer | impression sessions where speech is detected |
+| `SpeechToText` | SpeechTranscriber (macOS 26), SFSpeechRecognizer (macOS 15) | on-device SpeechRecognizer | impression sessions where speech is detected |
 
 All three are called from engine worker threads, may block, must honour
 `TaskHandle.is_canceled()` and must return `PlatformError::Canceled` when canceled.

@@ -21,9 +21,9 @@ Everything runs on your device. There are no accounts, no analytics and no track
 
 Downloads are on the [Releases](https://github.com/x1f4r/music-fetch/releases) page.
 
-### macOS (Apple silicon, macOS 26 or later)
+### macOS (macOS 15 Sequoia or later, Apple silicon and Intel)
 
-1. Download `MusicFetch-<version>-macOS-arm64.zip`, open it and move **Music Fetch** to
+1. Download `MusicFetch-<version>-macOS-universal.zip`, open it and move **Music Fetch** to
    Applications.
 2. The app is not notarized. The first time you open it, macOS says it cannot verify
    the developer. Open **System Settings → Privacy & Security**, scroll down and click

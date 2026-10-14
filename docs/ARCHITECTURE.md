@@ -15,7 +15,7 @@ into both apps. The apps own capture, speech recognition, credentials, the media
 download backend and the UI.
 
 ```
-┌──────────── macOS app (SwiftUI, macOS 26+) ───────────┐  ┌──────── Android app (Compose, API 29+) ────────┐
+┌──────────── macOS app (SwiftUI, macOS 15+) ───────────┐  ┌──────── Android app (Compose, API 29+) ────────┐
 │ AVAudioEngine mic · Core Audio process tap            │  │ AudioRecord mic · AudioPlaybackCapture         │
 │ SpeechTranscriber · Keychain · bundled Python+yt-dlp  │  │ SpeechRecognizer · Keystore · Chaquopy+yt-dlp  │
 │ Views (Liquid Glass)                                  │  │ Views (Material 3 Expressive)                  │
@@ -190,8 +190,9 @@ Output: 1–5 `Candidate`s, each with sources, a calibrated score, a tier
 
 - `scripts/build-core-apple.sh` → `apple/MusicFetchCore/MfCoreFFI.xcframework` + Swift bindings.
 - `scripts/build-core-android.sh` → `android/core/src/main/jniLibs/{arm64-v8a,x86_64}` + Kotlin bindings.
-- `scripts/build-macos-app.sh` → `dist/Music Fetch.app` (arm64, ad-hoc signed with the
-  stable designated requirement `identifier "local.musicfetch.app"`) and a `ditto` zip.
+- `scripts/build-macos-app.sh` → `dist/Music Fetch.app` (universal arm64 + x86_64, macOS 15+,
+  ad-hoc signed with the stable designated requirement `identifier "local.musicfetch.app"`)
+  and a `ditto` zip.
 - `scripts/build-android-app.sh` → signed release APK.
 - CI (GitHub Actions): Rust fmt/clippy/test on macOS; Android assembleRelease (unsigned)
   on Ubuntu; macOS app build on macos-26.
