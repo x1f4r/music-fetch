@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
@@ -37,6 +39,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.res.painterResource
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -113,6 +119,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                         onClick = { openNotificationSettings(context) },
                     )
                 }
+                item { Header(R.string.settings_microphone) }
+                item { MicrophoneSection() }
                 item { Header(R.string.settings_qs_tile) }
                 item {
                     TileRow(R.string.tile_song, R.drawable.ic_qs_tile, SongTileService::class.java)
@@ -451,5 +459,68 @@ private fun CredentialGroup(
             }
         }
         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    }
+}
+
+/** Microphone order: the first connected one is used; reorder with the arrows. */
+@Composable
+private fun MicrophoneSection() {
+    val context = LocalContext.current
+    val builtIn = stringResource(R.string.settings_microphone_builtin)
+    val priority = remember { app.musicfetch.capture.MicrophonePriority(context) }
+    var revision by remember { mutableStateOf(0) }
+    val entries = remember(revision) { priority.entries(builtIn) }
+    val active = remember(revision) { priority.activeKey() }
+    DisposableEffect(Unit) {
+        val audio = context.getSystemService(android.media.AudioManager::class.java)
+        val callback = object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>?) { revision++ }
+            override fun onAudioDevicesRemoved(removed: Array<out android.media.AudioDeviceInfo>?) { revision++ }
+        }
+        audio?.registerAudioDeviceCallback(callback, null)
+        onDispose { audio?.unregisterAudioDeviceCallback(callback) }
+    }
+    val forgettable = { entry: app.musicfetch.capture.MicrophonePriority.Entry ->
+        !entry.connected && entry.key != app.musicfetch.capture.MicrophonePriority.BUILT_IN
+    }
+    // Keep the arrows aligned when only some rows can be forgotten.
+    val reserveForget = entries.any(forgettable)
+    Column {
+        entries.forEachIndexed { index, entry ->
+            val status = when {
+                entry.key == active -> stringResource(R.string.settings_microphone_in_use)
+                !entry.connected -> stringResource(R.string.settings_microphone_not_connected)
+                else -> null
+            }
+            ListRow(
+                headline = if (entries.size > 1) "${index + 1}  ${entry.name}" else entry.name,
+                supporting = status,
+                trailing = if (entries.size < 2) null else {
+                    {
+                        Row {
+                            androidx.compose.material3.IconButton(onClick = { priority.move(entry.key, -1); revision++ }, enabled = index > 0) {
+                                androidx.compose.material3.Icon(painterResource(R.drawable.ic_keyboard_arrow_down), modifier = Modifier.rotate(180f), contentDescription = stringResource(R.string.settings_microphone_up, entry.name))
+                            }
+                            androidx.compose.material3.IconButton(onClick = { priority.move(entry.key, 1); revision++ }, enabled = index < entries.lastIndex) {
+                                androidx.compose.material3.Icon(painterResource(R.drawable.ic_keyboard_arrow_down), contentDescription = stringResource(R.string.settings_microphone_down, entry.name))
+                            }
+                            if (forgettable(entry)) {
+                                androidx.compose.material3.IconButton(onClick = { priority.forget(entry.key); revision++ }) {
+                                    androidx.compose.material3.Icon(painterResource(R.drawable.ic_close), contentDescription = stringResource(R.string.settings_microphone_forget, entry.name))
+                                }
+                            } else if (reserveForget) {
+                                Spacer(Modifier.size(40.dp))
+                            }
+                        }
+                    }
+                },
+            )
+        }
+        Text(
+            stringResource(R.string.settings_microphone_footer),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
     }
 }
