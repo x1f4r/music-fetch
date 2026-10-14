@@ -24,6 +24,7 @@ import app.musicfetch.engine.EngineUnavailableException
 import app.musicfetch.notify.Notifications
 import app.musicfetch.platform.FileImports
 import app.musicfetch.platform.SettingsStore
+import app.musicfetch.widget.ListenWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -207,6 +208,7 @@ class AnalysisController(
             delay(FORGET_AFTER_MS)
             forget(run)
         }
+        if (run.showsProgress) scope.launch { ListenWidget.refresh(app) }
         val state = run.state.value
         if (state.kind == SessionKind.FILE) FileImports.release(app, state.input)
         val id = state.sessionId ?: return

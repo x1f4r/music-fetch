@@ -28,6 +28,7 @@ import app.musicfetch.core.SessionStatus
 import app.musicfetch.core.SourceInfo
 import app.musicfetch.core.Track
 import app.musicfetch.ui.common.ArtworkLoader
+import app.musicfetch.widget.ListenWidget
 import com.materialkolor.ktx.themeColorOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -290,6 +291,7 @@ class SessionViewModel(app: Application, private val id: String) : AndroidViewMo
                 }
             }
             graph.notifyLibraryChanged()
+            ListenWidget.refresh(getApplication())
             load()
         }
     }

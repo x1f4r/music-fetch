@@ -73,7 +73,7 @@ class ListenWidget : GlanceAppWidget() {
         val engine = runCatching { context.appGraph.engineHost.engine() }.getOrNull() ?: return@withContext null
         val entry = runCatching {
             engine.library(LibraryQuery(kinds = emptyList(), search = null, pinnedOnly = false, limit = 12u, offset = 0u))
-        }.getOrDefault(emptyList()).firstOrNull { it.status == SessionStatus.MATCHED || (it.status == SessionStatus.CANDIDATES && it.track != null) }
+        }.getOrDefault(emptyList()).firstOrNull { it.track != null && it.status != SessionStatus.RUNNING }
             ?: return@withContext null
         val track = entry.track
         // RemoteViews limit bitmap memory: artwork stays at or below 96 px.
