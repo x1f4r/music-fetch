@@ -130,7 +130,7 @@ struct CandidateInspector: View {
                 if let album = candidate.track.album, !album.isEmpty { InfoRow(label: Copy.album, value: album) }
                 if let year = candidate.track.releaseYear { InfoRow(label: Copy.released, value: String(year)) }
                 InfoRow(label: Copy.matchedByLabel, value: Copy.matchedBy(candidate.sources))
-                if let place = candidate.sources.compactMap(\.detail).first, !place.isEmpty {
+                if let place = Copy.wherePhrase(candidate.sources) {
                     InfoRow(label: Copy.whereLabel, value: place)
                 }
             }

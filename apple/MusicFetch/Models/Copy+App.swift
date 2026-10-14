@@ -24,6 +24,7 @@ extension Copy {
     static let untitled = String(localized: "Untitled")
     static let engineUnavailable = String(localized: "Music Fetch couldn't open its library.")
     static let ok = String(localized: "OK")
+    static let done = String(localized: "Done")
     static let cancel = String(localized: "Cancel")
     static let open = String(localized: "Open")
     static let source = String(localized: "Source")
@@ -37,6 +38,7 @@ extension Copy {
     static let paste = String(localized: "Paste")
     static let selectAll = String(localized: "Select All")
     static let searchLibrary = String(localized: "Search Library")
+    static let searchLyricsMenu = String(localized: "Type a Lyric…")
     static let zoomIn = String(localized: "Zoom In")
     static let zoomOut = String(localized: "Zoom Out")
     static let actualSize = String(localized: "Actual Size")
@@ -131,6 +133,15 @@ extension Copy {
     static let notHere = String(localized: "Not here?")
     static let legendYou = String(localized: "You")
     static let yourPitch = String(localized: "Your pitch")
+
+    /// "Where" in the song a candidate matched, when a source says so. Melody details
+    /// describe the transposition and tempo of the match, not a place, and are skipped.
+    static func wherePhrase(_ sources: [CandidateSource]) -> String? {
+        sources.lazy
+            .filter { $0.kind != .melody && $0.kind != .lyrics }
+            .compactMap(\.detail)
+            .first { !$0.isEmpty }
+    }
 
     static func yourHum(_ seconds: Int) -> String {
         String(localized: "Your hum · \(seconds) s")

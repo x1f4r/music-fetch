@@ -144,6 +144,7 @@ struct MelodyPane: View {
                         if settings.hasMelodyUpdate {
                             LabeledContent(Copy.updateAvailable(settings.melody.downloadBytes)) {
                                 Button(Copy.update) { settings.downloadMelody() }
+                                    .accessibilityLabel(Copy.update)
                             }
                         }
                         HStack {
@@ -166,6 +167,7 @@ struct MelodyPane: View {
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)
                             Button(Copy.cancel) { settings.cancelMelodyDownload() }
+                                .accessibilityLabel(Copy.cancel)
                         }
                     }
                 case .failed:
@@ -173,6 +175,7 @@ struct MelodyPane: View {
                         HStack(spacing: 10) {
                             Text(Copy.melodyError).foregroundStyle(.secondary)
                             Button(Copy.tryAgainTitle) { settings.downloadMelody() }
+                                .accessibilityLabel(Copy.tryAgainTitle)
                         }
                     }
                 }
@@ -193,6 +196,7 @@ struct MelodyPane: View {
             HStack(spacing: 10) {
                 Text(Copy.melodyNotInstalled(settings.melodyDownloadSize)).foregroundStyle(.secondary)
                 Button(Copy.melodyDownload) { settings.downloadMelody() }
+                    .accessibilityLabel(Copy.melodyDownload)
             }
         }
     }
@@ -232,6 +236,7 @@ struct StoragePane: View {
                         Button(Copy.showInFinder) {
                             if let url = settings.dataDirectory { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                         }
+                        .accessibilityLabel(Copy.showInFinder)
                     }
                 }
             }
@@ -249,33 +254,41 @@ struct StoragePane: View {
 // MARK: - About
 
 struct AboutPane: View {
+    @State private var showLicenses = false
+    @State private var showAcknowledgements = false
+
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    VStack(spacing: 8) {
-                        Image(nsImage: NSApp.applicationIconImage)
-                            .resizable()
-                            .frame(width: 96, height: 96)
-                            .accessibilityHidden(true)
-                        Text(Copy.versionLine(version: Self.version, build: Self.build))
-                            .font(.headline)
-                        Text(Copy.aboutLine)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
+        Form {
+            Section {
+                VStack(spacing: 8) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 96, height: 96)
+                        .accessibilityHidden(true)
+                    Text(Copy.versionLine(version: Self.version, build: Self.build))
+                        .font(.headline)
+                    Text(Copy.aboutLine)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    HStack(spacing: 12) {
+                        Button(Copy.licenses) { showLicenses = true }
+                        Button(Copy.acknowledgements) { showAcknowledgements = true }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                    .padding(.top, 8)
                 }
-                Section {
-                    NavigationLink(Copy.licenses) { LicensesView() }
-                    NavigationLink(Copy.acknowledgements) { AcknowledgementsView() }
-                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
             }
-            .formStyle(.grouped)
         }
-        .frame(minHeight: 380)
+        .formStyle(.grouped)
+        .frame(minHeight: 300)
+        .sheet(isPresented: $showLicenses) {
+            SheetPage(title: Copy.licenses) { LicensesView() }
+        }
+        .sheet(isPresented: $showAcknowledgements) {
+            SheetPage(title: Copy.acknowledgements) { AcknowledgementsView() }
+        }
     }
 
     static var version: String {
@@ -310,7 +323,6 @@ struct LicensesView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .navigationTitle(Copy.licenses)
     }
 }
 
@@ -322,6 +334,30 @@ struct AcknowledgementsView: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle(Copy.acknowledgements)
+    }
+}
+
+/// A sheet with a title bar and Done.
+struct SheetPage<Content: View>: View {
+    @Environment(\.dismiss) private var dismiss
+    var title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(title)
+                .font(.headline)
+                .padding(.vertical, 12)
+            Divider()
+            content
+            Divider()
+            HStack {
+                Spacer()
+                Button(Copy.done) { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(width: 560, height: 520)
     }
 }

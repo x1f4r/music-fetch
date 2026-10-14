@@ -161,7 +161,7 @@ nonisolated enum DemoFixtures {
             let reference = contour(seed: index, frames: 220, shift: index == 0 ? 0.1 : 0.4)
             return Candidate(
                 track: track, score: scores[index], tier: tiers[index],
-                sources: [CandidateSource(kind: .melody, score: scores[index], detail: index == 0 ? "Chorus, bar 1" : nil)],
+                sources: [CandidateSource(kind: .melody, score: scores[index], detail: index == 0 ? "transposed −2, tempo ×0.9" : nil)],
                 alignment: MelodyAlignment(frameMs: 50, query: query, reference: reference))
         }
     }

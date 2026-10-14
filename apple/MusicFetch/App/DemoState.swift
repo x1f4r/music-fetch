@@ -8,7 +8,7 @@ import MusicFetchCore
 /// States: idle, listening, hum, matching, result, candidates, mix, collection, library,
 /// session, noMatch, captureSilent, downloading, prePrompt, micDenied, melodyPrompt,
 /// lyrics, failed, settings-general, settings-services, settings-melody,
-/// settings-storage, settings-about.
+/// settings-melody-downloading, settings-storage, settings-about.
 nonisolated struct DemoState: Sendable {
     let name: String
 
@@ -34,7 +34,8 @@ nonisolated struct DemoState: Sendable {
 
     /// The settings pane to open, for `settings-<pane>`.
     var settingsPane: String? {
-        name.hasPrefix("settings-") ? String(name.dropFirst("settings-".count)) : nil
+        guard name.hasPrefix("settings-") else { return nil }
+        return name.dropFirst("settings-".count).split(separator: "-").first.map(String.init)
     }
 
     @MainActor
@@ -78,6 +79,10 @@ nonisolated struct DemoState: Sendable {
             try? await Task.sleep(for: .milliseconds(300))
             NSApp.activate()
             app.openSettingsAction?()
+            if name == "settings-melody-downloading" {
+                try? await Task.sleep(for: .milliseconds(200))
+                app.settings.downloadMelody()
+            }
         }
     }
 }

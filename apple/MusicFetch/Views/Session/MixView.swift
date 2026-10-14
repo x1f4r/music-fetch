@@ -44,12 +44,8 @@ struct MixView: View {
                 guard let id else { return }
                 withAnimation(AppModel.spring(.chrome)) { proxy.scrollTo(id) }
             }
-            .onAppear {
-                // A finished session opens with its first track in the inspector.
-                if model.selectedSegmentID == nil, !model.isRunning {
-                    model.selectedSegmentID = model.listedSegments.first?.id
-                }
-            }
+            .onAppear { selectFirstWhenFinished() }
+            .onChange(of: model.isRunning) { _, _ in selectFirstWhenFinished() }
             .onKeyPress(.space) {
                 guard let segment = model.selectedSegment else { return .ignored }
                 playOrOpen(segment)
@@ -60,6 +56,13 @@ struct MixView: View {
                 LinkOpener.openPreferred(track, defaultService: app.defaultService)
                 return .handled
             }
+        }
+    }
+
+    /// A finished session shows its first track in the inspector.
+    private func selectFirstWhenFinished() {
+        if model.selectedSegmentID == nil, !model.isRunning {
+            model.selectedSegmentID = model.listedSegments.first?.id
         }
     }
 

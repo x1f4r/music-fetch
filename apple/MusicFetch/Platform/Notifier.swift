@@ -24,7 +24,11 @@ final class Notifier: NSObject {
     func requestAuthorization() async -> Bool {
         guard let center else { return false }
         return await withCheckedContinuation { continuation in
-            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+                if let error {
+                    let code = (error as NSError).code
+                    Log.app.info("Notification permission unavailable (\(code, privacy: .public))")
+                }
                 continuation.resume(returning: granted)
             }
         }

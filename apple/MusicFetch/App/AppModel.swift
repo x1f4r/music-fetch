@@ -186,8 +186,24 @@ final class AppModel {
         }
     }
 
+    /// The session Pin/Unpin acts on: the one in the detail column, or the single
+    /// selected Library row.
+    var targetSessionID: String? {
+        if let id = currentSession?.id { return id }
+        if route == .library, libraryPath.isEmpty, library.selection.count == 1 { return library.selection.first }
+        return nil
+    }
+
+    var isTargetPinned: Bool {
+        guard let id = targetSessionID else { return false }
+        return library.entry(id: id)?.pinned ?? cachedSession(id)?.pinned ?? false
+    }
+
     /// The track ⌘C, ⌘↩ and Space act on.
     var selectedTrack: Track? {
+        if currentSession == nil, route == .library, library.selection.count == 1, let id = library.selection.first {
+            return library.entry(id: id)?.track
+        }
         guard let session = currentSession else { return nil }
         switch session.presentation {
         case .result: return session.track

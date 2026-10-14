@@ -119,6 +119,11 @@ struct MusicFetchCommands: Commands {
             }
             .keyboardShortcut("h", modifiers: [.command, .shift])
             .disabled(app.engine == nil || app.listen.isBusy)
+            Button(Copy.searchLyricsMenu) {
+                showMain()
+                app.presentLyricSearch()
+            }
+            .disabled(app.engine == nil)
             Button(Copy.stop) { app.listen.escape() }
                 .keyboardShortcut(.escape, modifiers: [])
                 .disabled(!(app.listen.stage == .listening || app.listen.stage == .matching))
@@ -145,11 +150,11 @@ struct MusicFetchCommands: Commands {
             }
             .disabled(app.selectedTrack?.previewUrl == nil)
             Divider()
-            Button(session?.pinned == true ? Copy.unpin : Copy.pin) {
-                if let session { app.library.togglePin(session.id) }
+            Button(app.isTargetPinned ? Copy.unpin : Copy.pin) {
+                if let id = app.targetSessionID { app.library.togglePin(id) }
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
-            .disabled(session == nil || session?.isRunning == true && session?.kind != .link)
+            .disabled(app.targetSessionID == nil)
         }
     }
 

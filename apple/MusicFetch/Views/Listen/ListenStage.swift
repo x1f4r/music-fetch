@@ -104,7 +104,7 @@ struct ActionRow: View {
                         ForEach(actions, id: \.self) { action in
                             Button(Copy.title(for: action)) { listen.perform(action) }
                                 .buttonStyle(.glass)
-                                .controlSize(compact ? .regular : .large)
+                                .controlSize(compact ? .small : .large)
                         }
                     }
                 }
@@ -142,7 +142,7 @@ struct SourceToggles: View {
                     .toggleStyle(.button)
                     .buttonStyle(.glass)
                     .tint(selected ? .accentColor : nil)
-                    .controlSize(compact ? .regular : .large)
+                    .controlSize(compact ? .small : .large)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }

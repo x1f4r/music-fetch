@@ -40,7 +40,7 @@ final class ListenModel {
     private(set) var stage: Stage = .idle
     /// The selected source toggle (persisted).
     var source: ListenSource {
-        didSet { UserDefaults.standard.set(source.rawValue, forKey: PreferenceKey.listenSource) }
+        didSet { if !app.isDemo { UserDefaults.standard.set(source.rawValue, forKey: PreferenceKey.listenSource) } }
     }
     /// The source of the running (or last) live session.
     private(set) var runningSource: ListenSource?

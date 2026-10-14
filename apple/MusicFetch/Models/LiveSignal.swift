@@ -9,8 +9,8 @@ import MusicFetchCore
 final class LiveSignal {
     /// Seconds of history kept for the trace band.
     static let window: TimeInterval = 8
-    /// Pitch frames arrive at 20 per second.
-    static let frameSeconds: TimeInterval = 0.05
+    /// Frame spacing until the first batch tells (the core's tracker uses 16 ms).
+    static let defaultFrameSeconds: TimeInterval = 0.016
 
     /// Level smoothed with a 100 ms exponential moving average, 0…1.
     private(set) var level: Double = 0
@@ -27,13 +27,15 @@ final class LiveSignal {
     private(set) var headMilliseconds: UInt64 = 0
     private(set) var headArrival: Date?
     private(set) var voicedFrameCount = 0
+    /// Spacing of the pitch frames, measured from the batches.
+    private(set) var frameSeconds = LiveSignal.defaultFrameSeconds
 
     /// Freezes the drawn line (matching after capture).
     var isFrozen = false
     private var frozenAt: Date?
 
     var voicedSeconds: TimeInterval {
-        Double(voicedFrameCount) * Self.frameSeconds
+        Double(voicedFrameCount) * frameSeconds
     }
 
     func reset() {
@@ -45,6 +47,7 @@ final class LiveSignal {
         headMilliseconds = 0
         headArrival = nil
         voicedFrameCount = 0
+        frameSeconds = Self.defaultFrameSeconds
         isFrozen = false
         frozenAt = nil
     }
@@ -65,6 +68,9 @@ final class LiveSignal {
     /// Appends a batch of frames and drops what scrolled out of the window.
     func push(frames batch: [PitchFrame], at now: Date = .now) {
         guard !isFrozen, !batch.isEmpty else { return }
+        if batch.count >= 2, let first = batch.first, let last = batch.last, last.tMs > first.tMs {
+            frameSeconds = Double(last.tMs - first.tMs) / 1000 / Double(batch.count - 1)
+        }
         frames.append(contentsOf: batch)
         voicedFrameCount += batch.filter { $0.midi.isFinite }.count
         history.append(contentsOf: batch)
