@@ -181,7 +181,7 @@ private fun Ruler(totalMs: Long, modifier: Modifier) {
         val style = MaterialTheme.typography.labelSmall.merge(TabularNumbers)
         val color = MaterialTheme.colorScheme.onSurfaceVariant
         val marks = listOf(0f, 0.25f, 0.5f, 0.75f, 1f)
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth()) {
             for (fraction in marks) {
                 val text = Formatters.clock((totalMs * fraction).toLong())
                 val align = when (fraction) {

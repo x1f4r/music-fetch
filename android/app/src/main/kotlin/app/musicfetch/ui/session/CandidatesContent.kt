@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -73,7 +74,7 @@ internal fun CandidatesContent(view: SessionView.Candidates, viewModel: SessionV
     val navigator = LocalNavigator.current
     val haptics = LocalHapticFeedback.current
     val preview by PreviewPlayer.state.collectAsStateWithLifecycle()
-    var expanded by rememberSaveable(view.entry.id) { mutableStateOf(0) }
+    var expanded by rememberSaveable(view.entry.id) { mutableIntStateOf(0) }
     val isHum = view.entry.kind == SessionKind.HUM || view.entry.kind == SessionKind.LISTEN
     Scaffold(
         topBar = {

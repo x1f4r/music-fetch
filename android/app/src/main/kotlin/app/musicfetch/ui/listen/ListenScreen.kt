@@ -61,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -258,7 +259,7 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
             },
             modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp),
         )
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
             Stage(
                 state = state,
                 viewModel = viewModel,
@@ -560,7 +561,7 @@ private fun stateLine(
 
 @Composable
 private fun rateLimitedLine(retryMs: Long): String {
-    var remaining by remember(retryMs) { mutableStateOf(((retryMs + 999) / 1000).toInt()) }
+    var remaining by remember(retryMs) { mutableIntStateOf(((retryMs + 999) / 1000).toInt()) }
     LaunchedEffect(retryMs) {
         while (remaining > 0) {
             delay(1000)
@@ -654,6 +655,7 @@ private fun LinkField(
     val focus = LocalFocusManager.current
     var text by rememberSaveable { mutableStateOf("") }
     var clipboardHasLink by remember { mutableStateOf(false) }
+    val fieldLabel = stringResource(R.string.field_link)
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(onPickFile) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { clipboardHasLink = clipboardLooksLikeLink(context) }
     fun submit(value: String) {
@@ -689,7 +691,7 @@ private fun LinkField(
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                         keyboardActions = KeyboardActions(onGo = { submit(text) }),
-                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = context.getString(R.string.field_link) },
+                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = fieldLabel },
                     )
                 }
                 if (text.isNotBlank()) {

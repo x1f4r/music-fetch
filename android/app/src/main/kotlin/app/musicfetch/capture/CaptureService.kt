@@ -4,6 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
@@ -38,10 +39,11 @@ class CaptureService : Service() {
 
     private fun enterForeground() {
         val state = controller.state.value
-        val type = if (state.source == CaptureSource.SYSTEM_AUDIO) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-        } else {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        val type = when {
+            state.source == CaptureSource.SYSTEM_AUDIO -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            // The microphone type exists from Android 11; before, no type is needed for it.
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            else -> 0
         }
         try {
             ServiceCompat.startForeground(this, Notifications.LISTENING_ID, Notifications.listening(this, state), type)

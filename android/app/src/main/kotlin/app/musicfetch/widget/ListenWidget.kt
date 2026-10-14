@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.glance.ColorFilter
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
@@ -106,7 +107,7 @@ class ListenWidget : GlanceAppWidget() {
                     val open = actionStartActivity(
                         android.content.Intent(
                             android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("musicfetch://session/" + android.net.Uri.encode(last.sessionId)),
+                            ("musicfetch://session/" + android.net.Uri.encode(last.sessionId)).toUri(),
                             context,
                             MainActivity::class.java,
                         ),

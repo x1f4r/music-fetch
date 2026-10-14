@@ -1,9 +1,9 @@
 package app.musicfetch.ui.common
 
 import android.content.Context
-import android.net.Uri
 import android.text.format.DateUtils
 import android.text.format.Formatter
+import androidx.core.net.toUri
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -42,14 +42,14 @@ object Formatters {
 
     /** A URL without scheme and "www.", shortened: "youtube.com/shorts/x9Zk3pQ7lTw". */
     fun shortUrl(url: String, max: Int = 42): String {
-        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val uri = runCatching { url.toUri() }.getOrNull()
         val host = uri?.host?.removePrefix("www.") ?: return ellipsize(url, max)
         val rest = (uri.encodedPath.orEmpty() + (uri.encodedQuery?.let { "?$it" } ?: "")).trimEnd('/')
         return ellipsize(host + rest, max)
     }
 
     /** The host of [url] without "www.", e.g. "tiktok.com". */
-    fun host(url: String?): String? = url?.let { runCatching { Uri.parse(it).host }.getOrNull() }?.removePrefix("www.")
+    fun host(url: String?): String? = url?.let { runCatching { it.toUri().host }.getOrNull() }?.removePrefix("www.")
 
     private fun ellipsize(text: String, max: Int): String = if (text.length <= max) text else text.take(max - 1) + "…"
 }

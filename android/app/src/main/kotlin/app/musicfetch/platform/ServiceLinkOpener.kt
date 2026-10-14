@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import androidx.core.net.toUri
 import app.musicfetch.core.Service
 import app.musicfetch.core.ServiceLink
 import java.net.URLDecoder
@@ -58,7 +59,7 @@ object ServiceLinkOpener {
     /** Intent that opens [link], in the service's app when it is installed. */
     fun intentFor(context: Context, link: ServiceLink): Intent {
         val pkg = packages[link.service]?.takeIf { isInstalled(context, it) }
-        val uri = if (pkg != null) appUri(link) else Uri.parse(link.url)
+        val uri = if (pkg != null) appUri(link) else link.url.toUri()
         return Intent(Intent.ACTION_VIEW, uri).apply {
             addCategory(Intent.CATEGORY_BROWSABLE)
             if (pkg != null) setPackage(pkg)
@@ -80,7 +81,7 @@ object ServiceLinkOpener {
     /** Open any web URL (segment deep links, sources). */
     fun openUrl(context: Context, url: String): Boolean = try {
         context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            Intent(Intent.ACTION_VIEW, url.toUri())
                 .addCategory(Intent.CATEGORY_BROWSABLE)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
@@ -97,9 +98,9 @@ object ServiceLinkOpener {
     /** The URI handed to the service's app: `spotify:search:` for Spotify searches, else the link. */
     fun appUri(link: ServiceLink): Uri {
         if (link.service == Service.SPOTIFY && link.isSearch) {
-            spotifySearchQuery(link.url)?.let { return Uri.parse("spotify:search:" + Uri.encode(it)) }
+            spotifySearchQuery(link.url)?.let { return ("spotify:search:" + Uri.encode(it)).toUri() }
         }
-        return Uri.parse(link.url)
+        return link.url.toUri()
     }
 
     /** The query of an `open.spotify.com/search/<query>` link (or `?q=`), decoded. */

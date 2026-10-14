@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.IntentCompat
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -199,7 +200,7 @@ class ShareIdentifyActivity : ComponentActivity() {
     }
 
     private fun openApp(uri: String) {
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri), this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        startActivity(Intent(Intent.ACTION_VIEW, uri.toUri(), this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         finish()
     }
 }

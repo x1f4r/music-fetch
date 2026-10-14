@@ -14,6 +14,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import app.musicfetch.MainActivity
 import app.musicfetch.R
 import app.musicfetch.capture.CaptureService
@@ -231,7 +232,7 @@ object Notifications {
     /** Opens the app at a session (`musicfetch://session/<id>`), or at the Listen stage. */
     fun openApp(context: Context, sessionId: String?): PendingIntent {
         val intent = if (sessionId != null) {
-            Intent(Intent.ACTION_VIEW, Uri.parse("musicfetch://session/" + Uri.encode(sessionId)))
+            Intent(Intent.ACTION_VIEW, ("musicfetch://session/" + Uri.encode(sessionId)).toUri())
                 .setClass(context, MainActivity::class.java)
         } else {
             Intent(context, MainActivity::class.java)

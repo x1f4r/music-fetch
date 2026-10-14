@@ -1,5 +1,6 @@
 package app.musicfetch.capture
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.os.Build
 import android.service.quicksettings.Tile
@@ -57,7 +58,9 @@ abstract class ListenTileService : TileService() {
         }
     }
 
-    @Suppress("DEPRECATION") // The Intent overload is the only one before API 34.
+    // The Intent overload is the only one before API 34; onClick uses the PendingIntent one after.
+    @Suppress("DEPRECATION")
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     private fun startTrampolineLegacy(intent: android.content.Intent) {
         startActivityAndCollapse(intent)
     }
