@@ -7,6 +7,7 @@ mod links;
 mod lyrics;
 mod media;
 mod melody;
+mod session;
 mod shazam;
 
 #[derive(Parser)]
@@ -26,9 +27,22 @@ enum Cli {
     Lyrics(lyrics::Command),
     #[command(flatten)]
     Melody(melody::MelodyCommand),
+    #[command(flatten)]
+    Session(session::Command),
+    /// Build, inspect, install or remove the melody index.
+    #[command(subcommand)]
+    Index(IndexCommand),
     /// Measure recognition quality on evaluation sets.
     #[command(subcommand)]
     Eval(EvalCommand),
+}
+
+#[derive(Subcommand)]
+enum IndexCommand {
+    #[command(flatten)]
+    Melody(melody::IndexCommand),
+    #[command(flatten)]
+    Engine(session::IndexCommand),
 }
 
 #[derive(Subcommand)]
@@ -48,6 +62,9 @@ fn main() -> anyhow::Result<()> {
         Cli::Links(command) => links::run(command)?,
         Cli::Lyrics(command) => lyrics::run(command)?,
         Cli::Melody(command) => melody::run(command)?,
+        Cli::Session(command) => session::run(command)?,
+        Cli::Index(IndexCommand::Melody(command)) => melody::run(melody::MelodyCommand::Index(command))?,
+        Cli::Index(IndexCommand::Engine(command)) => session::run_index(command)?,
         Cli::Eval(EvalCommand::Lyrics(command)) => lyrics::run(lyrics::Command::Eval(command))?,
         Cli::Eval(EvalCommand::Melody(command)) => melody::run(melody::MelodyCommand::Eval(command))?,
     }

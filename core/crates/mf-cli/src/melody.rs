@@ -49,7 +49,8 @@ pub enum MelodyCommand {
         expect: Option<String>,
     },
     /// Build or inspect a melody index.
-    #[command(subcommand)]
+    /// Dispatched through the shared `mf index` command.
+    #[command(skip)]
     Index(IndexCommand),
     /// Evaluate humming search on a query corpus.
     /// Dispatched through the shared `mf eval` command.

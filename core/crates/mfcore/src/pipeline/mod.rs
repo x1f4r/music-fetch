@@ -6,6 +6,7 @@ pub mod ctx;
 pub mod emitter;
 pub mod hum;
 pub mod live;
+pub mod melody_index;
 pub mod mix;
 pub mod recognize;
 pub mod stitch;
