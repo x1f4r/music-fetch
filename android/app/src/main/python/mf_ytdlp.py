@@ -17,6 +17,9 @@ are only used when that first attempt fails.
 - ``cache_dir``: yt-dlp's cache (player scripts, solved challenges)
 - ``socket_timeout``: seconds, default 30
 - ``extractor_args``: yt-dlp extractor arguments, for diagnostics (disables the fast path)
+
+``probe(..., with_comments=True)`` also fetches up to 40 top comments (YouTube: pinned
+first) so tracklists posted in comments can be used; they arrive in ``comments``.
 """
 
 import json
@@ -43,6 +46,8 @@ AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best"
 OUTTMPL = "%(id).80s.%(ext)s"
 MAX_MESSAGE_LENGTH = 200
 FAST_YOUTUBE_CLIENTS = ["visionos"]
+# The CLI's --write-comments --extractor-args "youtube:max_comments=40,all,0,0;comment_sort=top".
+COMMENT_EXTRACTOR_ARGS = {"youtube": {"max_comments": ["40", "all", "0", "0"], "comment_sort": ["top"]}}
 
 _YOUTUBE_URL = re.compile(
     r"^(?:https?://)?(?:[\w-]+\.)*(?:youtube\.com|youtu\.be|youtube-nocookie\.com)(?:[/:?#]|$)", re.IGNORECASE
@@ -68,21 +73,26 @@ class Canceled(DownloadCancelled):
     msg = "Canceled."
 
 
-def probe(url, opts_json):
+def probe(url, opts_json, with_comments=False):
     """Metadata for ``url`` as yt-dlp ``--dump-single-json --flat-playlist`` JSON.
 
-    The selected format is the audio stream ``download_audio`` would fetch.
+    The selected format is the audio stream ``download_audio`` would fetch. With
+    ``with_comments`` the top comments are included as ``comments``.
     """
     try:
         opts = _load_opts(opts_json)
         params = _base_params(opts)
         params.update(format=AUDIO_FORMAT, skip_download=True, extract_flat="in_playlist")
+        fast = "extractor_args" not in params
+        if with_comments:
+            params["getcomments"] = True
+            params["extractor_args"] = merge_extractor_args(params.get("extractor_args"), COMMENT_EXTRACTOR_ARGS)
 
         def extract(ydl):
             info = ydl.extract_info(url, download=False)
             return None if info is None else json.dumps(ydl.sanitize_info(info), ensure_ascii=False)
 
-        result = _extract(url, params, extract)
+        result = _extract(url, params, extract, fast=fast)
         if result is None:
             return _error("unavailable", "No media was found at this link.")
         return result
@@ -161,12 +171,19 @@ def runtime_info(opts_json):
         return _error_from_exception(exc)
 
 
-def _extract(url, params, work):
-    """Run ``work(ydl)``; for YouTube first with the fast client, then with the defaults."""
-    if is_youtube(url) and "extractor_args" not in params:
-        fast = dict(params, extractor_args={"youtube": {"player_client": FAST_YOUTUBE_CLIENTS}})
+def _extract(url, params, work, fast=None):
+    """Run ``work(ydl)``; for YouTube first with the fast client, then with the defaults.
+
+    ``fast`` defaults to "no extractor arguments were given": explicit ones are diagnostics.
+    """
+    if fast is None:
+        fast = "extractor_args" not in params
+    if is_youtube(url) and fast:
+        fast_args = merge_extractor_args(
+            params.get("extractor_args"), {"youtube": {"player_client": FAST_YOUTUBE_CLIENTS}}
+        )
         try:
-            with yt_dlp.YoutubeDL(fast) as ydl:
+            with yt_dlp.YoutubeDL(dict(params, extractor_args=fast_args)) as ydl:
                 return work(ydl)
         except DownloadError as exc:
             kind, message = classify(exc)
@@ -179,6 +196,14 @@ def _extract(url, params, work):
 
 def is_youtube(url):
     return bool(_YOUTUBE_URL.match(str(url or "").strip()))
+
+
+def merge_extractor_args(base, extra):
+    """``base`` updated with ``extra`` per extractor (``{"youtube": {"key": [values]}}``), as a copy."""
+    merged = {name: dict(args) for name, args in (base or {}).items()}
+    for name, args in extra.items():
+        merged.setdefault(name, {}).update(args)
+    return merged
 
 
 class _ProgressHook:
