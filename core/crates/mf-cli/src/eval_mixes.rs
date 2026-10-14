@@ -400,6 +400,9 @@ pub async fn run(args: MixesArgs) -> anyhow::Result<()> {
     })?;
     let mut runs: Vec<CaseRun> = Vec::new();
     for case in &manifest.cases {
+        if cancel.is_canceled() {
+            break;
+        }
         if !args.cases.is_empty() && !args.cases.contains(&case.id) {
             continue;
         }
@@ -420,6 +423,14 @@ pub async fn run(args: MixesArgs) -> anyhow::Result<()> {
             if args.verbose {
                 for line in &run.log {
                     eprintln!("     {line}");
+                }
+            }
+            // Each finished case is appended at once, so long runs can be inspected.
+            if let Ok(line) = serde_json::to_string(&run) {
+                use std::io::Write;
+                let partial = paths.reports.join("partial.jsonl");
+                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(partial) {
+                    let _ = writeln!(file, "{line}");
                 }
             }
             runs.push(run);
@@ -658,9 +669,9 @@ fn evaluate_mix(case: &Case, report: &Report) -> anyhow::Result<Metrics> {
         let err = (first as f64 - t.start as f64).abs() / 1000.0;
         signed.push((first as f64 - t.start as f64) / 1000.0);
         errors.push(err);
-        m.start_errors.push((t.label.clone(), err));
+        m.start_errors.push((t.label.clone(), (first as f64 - t.start as f64) / 1000.0));
     }
-    m.start_errors.sort_by(|a, b| b.1.total_cmp(&a.1));
+    m.start_errors.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
     errors.sort_by(f64::total_cmp);
     m.start_error_median_s = percentile(&errors, 0.5);
     m.start_error_p90_s = percentile(&errors, 0.9);
@@ -961,7 +972,7 @@ fn markdown(runs: &[CaseRun]) -> String {
                 merges += m.merges;
                 probes += r.probes;
                 hours += r.duration_s / 3600.0;
-                medians.extend(m.start_errors.iter().map(|e| e.1));
+                medians.extend(m.start_errors.iter().map(|e| e.1.abs()));
             }
             medians.sort_by(f64::total_cmp);
             out += &format!(

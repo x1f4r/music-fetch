@@ -79,6 +79,8 @@ async fn a_lone_false_answer_is_dropped() {
     let mut services = FakeServices::new(audio, plays).with_preview_of(&a, 30, 30).with_preview_of(&c, 30, 30);
     // The recognizer knows neither the unreleased track nor (mostly) anything there.
     services.overrides.push((150_000, 176_000, Some(ghost)));
+    // The misheard answer claims a start long before, while "Known One" surely played.
+    services.override_offset_ms = 200_000;
     services.overrides.push((150_000, 300_000, None));
     services.catalog.retain(|t| t.title != "Unreleased");
     let report = analyze(&services, &media.pcm, MixHints::default()).await;
@@ -209,6 +211,7 @@ fn next_probe_goes_past_the_end() {
     };
     assert_eq!(next_probe(&anchor(10, Some(100))), 110_000);
     assert_eq!(next_probe(&anchor(10, Some(400))), 160_000);
+    assert_eq!(next_probe(&anchor(10, Some(220))), 230_000);
     assert_eq!(next_probe(&anchor(10, Some(30))), 40_000);
     assert_eq!(next_probe(&anchor(10, None)), 100_000);
     // Heard after its supposed end: the duration is wrong.

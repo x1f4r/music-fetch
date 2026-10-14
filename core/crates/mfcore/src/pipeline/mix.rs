@@ -41,6 +41,8 @@ const GRID_MS: u64 = 2_000;
 const HINT_MARGIN_MS: u64 = 30_000;
 /// Longest jump after a match.
 const MAX_STEP_MS: u64 = 150_000;
+/// A recording's latest end this close is jumped to directly.
+const MAX_JUMP_TO_END_MS: u64 = 240_000;
 /// Shortest jump after a match.
 const MIN_STEP_MS: u64 = 30_000;
 /// Jump after a match whose duration is unknown.
@@ -61,6 +63,9 @@ const BEFORE_START_MS: u64 = 20_000;
 const UNRELIABLE_WINDOW: usize = 6;
 /// ...and how many of them the audio must have overruled.
 const UNRELIABLE_CONTRADICTIONS: usize = 3;
+/// A lone answer whose own start lies this long before another established
+/// recording was heard is dropped (DJ transitions are shorter).
+const OVERLAP_SLACK_MS: i64 = 60_000;
 /// A confirmation probe goes at most this far from the first answer...
 const CONFIRM_REACH_MS: u64 = 40_000;
 /// ...and needs this much room on that side.
@@ -240,6 +245,7 @@ pub async fn run<S: Services>(
     mix.confirm_lone().await?;
     mix.resolve_leftovers().await?;
     emitter.phase(Phase::Finishing, None);
+    mix.log_boundaries();
     let pieces = mix.timeline();
     mix.publish_pieces(&pieces, duration);
     mix.report.pieces = pieces;
@@ -1008,15 +1014,19 @@ impl<S: Services> Mix<'_, S> {
         let mut sorted: Vec<Anchor> = self.anchors.clone();
         sorted.sort_by_key(|a| a.at_ms);
         for (k, a) in sorted.iter().enumerate() {
-            if a.kind != AnchorKind::Recognizer || self.is_fixed(a.at_ms + a.len_ms / 2) {
+            if a.kind != AnchorKind::Recognizer
+                || self.is_fixed(a.at_ms + a.len_ms / 2)
+                || self.refuted.contains(&a.id)
+                || self.is_supported(a)
+            {
                 continue;
             }
-            let supported = self.anchors.iter().any(|b| {
-                b.id != a.id
-                    && hints::same_recording(&b.track, &a.track)
-                    && (b.kind == AnchorKind::Local || consistent_start(a, b))
-            });
-            if supported {
+            if let Some(other) = self.overlapped_by(a) {
+                self.log(format!(
+                    "dropped {} – {} (would overlap {} for minutes)",
+                    a.track.artist, a.track.title, other
+                ));
+                self.refuted.insert(a.id.clone());
                 continue;
             }
             if !self.can_probe() {
@@ -1045,18 +1055,70 @@ impl<S: Services> Mix<'_, S> {
                     self.anchors.push(b);
                 }
                 Some(b) => {
-                    self.log(format!("dropped {} – {} (not heard again)", a.track.artist, a.track.title));
-                    self.refuted.insert(a.id.clone());
+                    // Another version of the same song: the second answer names it better.
+                    if hints::same_song(&b.track, &a.track) {
+                        self.log(format!("replaced {} – {} by {}", a.track.artist, a.track.title, b.track.title));
+                        self.refuted.insert(a.id.clone());
+                    }
                     self.anchors.push(b.clone());
                     self.learn(&b).await?;
                 }
-                None => {
-                    self.log(format!("dropped {} – {} (not heard again)", a.track.artist, a.track.title));
-                    self.refuted.insert(a.id.clone());
-                }
+                // Nothing recognized there (a breakdown, a transition): keep the answer.
+                None => {}
+            }
+        }
+        // Answers placed where another recording surely plays for minutes are
+        // misidentifications (also those the confirmations added).
+        let lone: Vec<Anchor> = self
+            .anchors
+            .iter()
+            .filter(|a| a.kind == AnchorKind::Recognizer && !self.refuted.contains(&a.id) && !self.is_supported(a))
+            .cloned()
+            .collect();
+        for a in lone {
+            if let Some(other) = self.overlapped_by(&a) {
+                self.log(format!(
+                    "dropped {} – {} (would overlap {} for minutes)",
+                    a.track.artist, a.track.title, other
+                ));
+                self.refuted.insert(a.id.clone());
             }
         }
         Ok(())
+    }
+
+    /// Another answer or a local match backs this recording up.
+    fn is_supported(&self, a: &Anchor) -> bool {
+        self.anchors.iter().any(|b| {
+            b.id != a.id
+                && !self.refuted.contains(&b.id)
+                && hints::same_recording(&b.track, &a.track)
+                && (b.kind == AnchorKind::Local || consistent_start(a, b))
+        })
+    }
+
+    /// A well-established other recording heard where `a` would already have
+    /// been playing for over a minute: `a`'s own start estimate makes it
+    /// overlap that recording far longer than any transition.
+    fn overlapped_by(&self, a: &Anchor) -> Option<String> {
+        let start = a.start_est?;
+        let lo = start + OVERLAP_SLACK_MS;
+        let hi = a.at_ms as i64 - OVERLAP_SLACK_MS / 2;
+        if hi - lo < OVERLAP_SLACK_MS {
+            return None;
+        }
+        self.anchors
+            .iter()
+            .filter(|b| {
+                b.id != a.id
+                    && !self.refuted.contains(&b.id)
+                    && !hints::same_song(&b.track, &a.track)
+                    && (b.seen_until() as i64) > lo
+                    && (b.seen_from() as i64) < hi
+                    && (b.kind == AnchorKind::Local || self.is_supported(b))
+            })
+            .map(|b| format!("{} – {}", b.track.artist, b.track.title))
+            .next()
     }
 
     /// Long unexplained music after the probes: one more probe elsewhere,
@@ -1231,6 +1293,49 @@ impl<S: Services> Mix<'_, S> {
         (t, t)
     }
 
+    /// Note how each change between two recordings was placed (evaluation aid).
+    fn log_boundaries(&mut self) {
+        let mut anchors: Vec<&Anchor> = self
+            .anchors
+            .iter()
+            .filter(|a| !self.is_fixed(a.at_ms + a.len_ms / 2) && !self.refuted.contains(&a.id))
+            .collect();
+        anchors.sort_by_key(|a| a.at_ms);
+        let anchors = drop_contradicted(anchors);
+        let fmt = |t: Option<i64>| t.map_or("?".to_string(), |t| clock(t.max(0) as u64));
+        let mut lines = Vec::new();
+        for pair in anchors.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            if hints::same_recording(&a.track, &b.track) && !is_replay(a, b) {
+                continue;
+            }
+            let (end, start) = self.boundary(a, b);
+            let peaks: Vec<String> = self
+                .novelty_peaks
+                .iter()
+                .filter(|p| **p + 60_000 >= a.seen_until() && **p <= b.seen_from() + 60_000)
+                .map(|p| {
+                    format!("{}({:.2})", clock(*p), self.novelty.get((*p / 1000) as usize).copied().unwrap_or(0.0))
+                })
+                .collect();
+            lines.push(format!(
+                "change {} → {}: heard until {}, from {}, ends ≤ {}, starts {} → {}{}; novelty {}",
+                a.track.title,
+                b.track.title,
+                clock(a.seen_until()),
+                clock(b.seen_from()),
+                fmt(a.end_est),
+                fmt(b.start_est),
+                clock(end),
+                if start != end { format!("/{}", clock(start)) } else { String::new() },
+                peaks.join(" ")
+            ));
+        }
+        for line in lines {
+            self.log(line);
+        }
+    }
+
     /// Strongest novelty peak in `[lo, hi]`, else the middle.
     fn strongest_change(&self, lo: u64, hi: u64) -> u64 {
         self.novelty_peaks
@@ -1376,7 +1481,10 @@ fn next_probe(a: &Anchor) -> u64 {
     match a.end_est {
         Some(e) if e > (a.at_ms + a.len_ms) as i64 => {
             let after_end = (e + END_MARGIN_MS) as u64;
-            after_end.min(t + MAX_STEP_MS).max(t + MIN_STEP_MS)
+            // A near end is reached in one jump (one probe per fully played
+            // track); a far one (an extended mix a DJ cuts short) is not.
+            let reach = if after_end <= t + MAX_JUMP_TO_END_MS { after_end } else { t + MAX_STEP_MS };
+            reach.max(t + MIN_STEP_MS)
         }
         _ => t + UNKNOWN_STEP_MS,
     }

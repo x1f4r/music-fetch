@@ -62,6 +62,8 @@ pub struct FakeServices {
     pub asked: Mutex<Vec<u64>>,
     /// Answers overriding the timeline for windows starting in a range.
     pub overrides: Vec<(u64, u64, Option<Track>)>,
+    /// Offset the overriding answers report (where the clip sits in that recording).
+    pub override_offset_ms: i64,
     pub cancel: CancelToken,
 }
 
@@ -76,6 +78,7 @@ impl FakeServices {
             calls: AtomicU32::new(0),
             asked: Mutex::new(Vec::new()),
             overrides: Vec::new(),
+            override_offset_ms: 30_000,
             cancel: CancelToken::new(),
         }
     }
@@ -112,7 +115,7 @@ impl Services for FakeServices {
         let len = samples.len() as u64 * 1000 / SAMPLE_RATE as u64;
         let mid = at + len / 2;
         if let Some((_, _, answer)) = self.overrides.iter().find(|(lo, hi, _)| *lo <= at && at < *hi) {
-            return Ok(answer.clone().map(|track| hit(track, 30_000, 0.0)));
+            return Ok(answer.clone().map(|track| hit(track, self.override_offset_ms, 0.0)));
         }
         let Some(p) = self.plays.iter().find(|p| p.start_ms <= mid && mid < p.end_ms) else { return Ok(None) };
         let offset = p.offset_ms + ((at as i64 - p.start_ms as i64) as f32 * p.speed) as i64;
