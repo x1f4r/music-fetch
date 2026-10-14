@@ -21,10 +21,10 @@ extension Copy {
     static let pinnedSection = String(localized: "Pinned")
     static let search = String(localized: "Search")
     static let filter = String(localized: "Filter")
-    static let untitled = String(localized: "Untitled")
+    nonisolated static let untitled = String(localized: "Untitled")
 
     /// Title for sessions without one (a live session that found nothing).
-    static func fallbackTitle(_ kind: SessionKind) -> String {
+    nonisolated static func fallbackTitle(_ kind: SessionKind) -> String {
         switch kind {
         case .listen: microphone
         case .systemAudio: thisMac
