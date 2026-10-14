@@ -10,6 +10,9 @@ nonisolated enum PreferenceKey {
     static let systemAudioExplained = "systemAudioExplained"
     static let listenSource = "listenSource"
     static let settingsPane = "settingsPane"
+    static let showInspector = "showInspector"
+    /// Developer override for the melody-index manifest (e.g. a local test server).
+    static let melodyManifestOverride = "MFMelodyIndexManifestURL"
 }
 
 nonisolated enum Preferences {

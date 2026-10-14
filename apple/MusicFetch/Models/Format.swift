@@ -81,6 +81,12 @@ nonisolated enum Format {
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
+    /// A folder path with the home folder shown as "~".
+    static func abbreviatedPath(_ url: URL?) -> String {
+        guard let url else { return "" }
+        return (url.path as NSString).abbreviatingWithTildeInPath
+    }
+
     /// "Artist – Title" (what ⌘C copies).
     static func artistTitle(_ track: Track) -> String {
         track.artist.isEmpty ? track.title : "\(track.artist) – \(track.title)"

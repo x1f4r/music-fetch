@@ -45,8 +45,19 @@ actor EngineHost {
             language: language(for: locale),
             appVersion: appVersion(bundle: bundle),
             mediaTools: mediaTools,
-            melodyIndexManifestUrl: melodyIndexManifestURL
+            melodyIndexManifestUrl: manifestURL()
         )
+    }
+
+    /// The published manifest, unless a developer override is set
+    /// (`defaults write local.musicfetch.app MFMelodyIndexManifestURL <url>`).
+    nonisolated static func manifestURL(_ defaults: UserDefaults = .standard) -> String {
+        if let override = defaults.string(forKey: PreferenceKey.melodyManifestOverride),
+            override.hasPrefix("https://") || override.hasPrefix("http://127.0.0.1") || override.hasPrefix("http://localhost")
+        {
+            return override
+        }
+        return melodyIndexManifestURL
     }
 
     /// `~/Library/Application Support/Music Fetch` (or `Caches/Music Fetch`), created if needed.
