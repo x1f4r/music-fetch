@@ -307,7 +307,7 @@ final class SessionModel: Identifiable {
         if let title = source?.title, !title.isEmpty { return title }
         if let title = entry?.title, !title.isEmpty { return title }
         if let best = candidates.first { return best.track.title }
-        return Copy.untitled
+        return Copy.fallbackTitle(kind)
     }
 
     /// "YouTube · 1:00:33" under a mix title.

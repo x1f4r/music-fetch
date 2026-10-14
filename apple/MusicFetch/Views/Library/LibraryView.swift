@@ -112,7 +112,7 @@ struct LibraryRow: View {
                 url: entry.artworkUrl ?? entry.track?.artworkUrl, size: 40, cornerRadius: 6,
                 hatched: entry.artworkUrl == nil && entry.track == nil && entry.status != .running)
             VStack(alignment: .leading, spacing: 2) {
-                Text(entry.track?.title ?? entry.title)
+                Text(entry.displayTitle)
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     KindSymbol(kind: entry.kind, isMix: isMix)

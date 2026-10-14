@@ -21,7 +21,7 @@ struct Sidebar: View {
                     ForEach(pinned, id: \.id) { entry in
                         NavigationLink(value: AppModel.Route.session(entry.id)) {
                             Label {
-                                Text(entry.track?.title ?? entry.title)
+                                Text(entry.displayTitle)
                             } icon: {
                                 KindSymbol(kind: entry.kind, isMix: entry.trackCount >= 2)
                             }

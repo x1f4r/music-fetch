@@ -85,7 +85,7 @@ struct MenuBarResultRow: View {
                 HStack(spacing: 12) {
                     ArtworkView(url: entry.artworkUrl ?? entry.track?.artworkUrl, size: 40, cornerRadius: 6)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.track?.title ?? entry.title)
+                        Text(entry.displayTitle)
                             .font(.headline)
                             .lineLimit(1)
                         Text(entry.track?.artist ?? entry.subtitle ?? "")

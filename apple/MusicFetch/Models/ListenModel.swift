@@ -414,6 +414,8 @@ final class ListenModel {
     private func handleNotice(_ notice: Notice) {
         switch notice {
         case .moveCloser:
+            // Moving closer means nothing when listening to this Mac.
+            guard runningSource != .thisMac else { return }
             setNotice(.moveCloser, announcement: Copy.moveCloser)
         case .impressionDetected:
             withAnimation(app.motion(.hero)) { impression = true }

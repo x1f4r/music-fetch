@@ -22,6 +22,17 @@ extension Copy {
     static let search = String(localized: "Search")
     static let filter = String(localized: "Filter")
     static let untitled = String(localized: "Untitled")
+
+    /// Title for sessions without one (a live session that found nothing).
+    static func fallbackTitle(_ kind: SessionKind) -> String {
+        switch kind {
+        case .listen: microphone
+        case .systemAudio: thisMac
+        case .hum: hum
+        case .lyrics: typeLyric
+        case .link, .file: untitled
+        }
+    }
     static let engineUnavailable = String(localized: "Music Fetch couldn't open its library.")
     static let ok = String(localized: "OK")
     static let done = String(localized: "Done")
@@ -346,5 +357,14 @@ extension Copy {
 
     static func versionLine(version: String, build: String) -> String {
         String(localized: "Music Fetch \(version) (\(build))")
+    }
+}
+
+extension LibraryEntry {
+    /// The track title, the stored title, or a title from the session kind.
+    nonisolated var displayTitle: String {
+        if let title = track?.title, !title.isEmpty { return title }
+        if !title.isEmpty { return title }
+        return Copy.fallbackTitle(kind)
     }
 }

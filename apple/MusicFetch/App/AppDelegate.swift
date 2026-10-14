@@ -10,7 +10,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSUpdateDynamicServices()
         // The menu bar extra needs the engine even when no window opens.
         Task { await AppModel.shared?.start() }
+        // Esc stops listening wherever focus is (a menu key equivalent alone is not
+        // reliable for Escape).
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+                let listen = AppModel.shared?.listen, listen.stage == .listening || listen.stage == .matching
+            else { return event }
+            listen.escape()
+            return nil
+        }
     }
+
+    private var escapeMonitor: Any?
 
     /// Keep running after the last window closes only while the menu bar extra shows.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
