@@ -87,6 +87,8 @@ jobs:
       - name: XcodeGen
         run: brew install xcodegen
       - name: Build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: scripts/build-macos-app.sh
       - name: Verify signature
         run: |
