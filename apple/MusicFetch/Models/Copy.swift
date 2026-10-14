@@ -203,6 +203,16 @@ nonisolated enum Copy {
         case .twitch: "Twitch"
         case .shazam: "Shazam"
         case .genius: "Genius"
+        case .qobuz: "Qobuz"
+        case .pandora: "Pandora"
+        case .audiomack: "Audiomack"
+        case .anghami: "Anghami"
+        case .jioSaavn: "JioSaavn"
+        case .boomplay: "Boomplay"
+        case .kkbox: "KKBOX"
+        case .yandexMusic: "Yandex Music"
+        case .netEaseMusic: "NetEase Cloud Music"
+        case .lastFm: "Last.fm"
         case .web: String(localized: "Web")
         }
     }
