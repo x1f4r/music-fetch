@@ -6,7 +6,6 @@ import app.musicfetch.core.MelodyIndexStatus
 import app.musicfetch.core.MfException
 import app.musicfetch.core.Phase
 import app.musicfetch.core.SessionEvent
-import app.musicfetch.core.SessionObserver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -80,36 +79,33 @@ class MelodyLibrary(private val scope: CoroutineScope, private val engineHost: E
                 _download.value = MelodyDownload.Failed(e.message ?: "")
                 return@launch
             }
-            val observer = object : SessionObserver {
-                override fun onEvent(event: SessionEvent) {
-                    when (event) {
-                        is SessionEvent.Phase -> if (event.phase == Phase.DOWNLOADING) {
-                            _download.value = MelodyDownload.Running(event.fraction)
-                        }
-                        is SessionEvent.Finished -> {
-                            session = null
-                            _download.value = MelodyDownload.Idle
-                            _status.value = engine.melodyIndexStatus()
-                        }
-                        is SessionEvent.Failed -> {
-                            session = null
-                            _download.value = MelodyDownload.Failed(event.message)
-                            _status.value = engine.melodyIndexStatus()
-                        }
-                        SessionEvent.Canceled -> {
-                            session = null
-                            _download.value = MelodyDownload.Idle
-                        }
-                        else -> Unit
-                    }
-                }
-            }
+            val bridge = ObserverBridge()
             try {
-                session = engine.installMelodyIndex(observer)
+                session = engine.installMelodyIndex(bridge)
             } catch (e: MfException) {
                 Log.w(TAG, "install failed to start", e)
+                bridge.close()
                 _download.value = MelodyDownload.Failed(e.message ?: "")
+                return@launch
             }
+            bridge.events.collect { event ->
+                when (event) {
+                    is SessionEvent.Phase -> if (event.phase == Phase.DOWNLOADING) {
+                        _download.value = MelodyDownload.Running(event.fraction)
+                    }
+                    is SessionEvent.Finished -> {
+                        _download.value = MelodyDownload.Idle
+                        _status.value = engine.melodyIndexStatus()
+                    }
+                    is SessionEvent.Failed -> {
+                        _download.value = MelodyDownload.Failed(event.message)
+                        _status.value = engine.melodyIndexStatus()
+                    }
+                    SessionEvent.Canceled -> _download.value = MelodyDownload.Idle
+                    else -> Unit
+                }
+            }
+            session = null
         }
     }
 
