@@ -16,8 +16,9 @@
 # Steps: build-core-apple.sh, fetch-macos-runtime.sh, xcodegen, xcodebuild (Release,
 # arm64 + x86_64), copy the runtime into Contents/Resources/runtime, check that every
 # Mach-O carries both architectures and runs on macOS 15, sign every Mach-O in the
-# runtime ad-hoc, then sign the app with `designated => identifier "local.musicfetch.app"`
-# so macOS privacy permissions (microphone, system audio) survive rebuilds.
+# runtime ad-hoc, then sign the app with apple/Signing.rqs
+# (`designated => identifier "local.musicfetch.app"`) so macOS privacy permissions
+# (microphone, system audio) survive rebuilds.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,7 +28,7 @@ DERIVED_DATA="$BUILD_DIR/DerivedData"
 DIST_DIR="$ROOT_DIR/dist"
 APP_NAME="Music Fetch"
 BUNDLE_ID="local.musicfetch.app"
-REQUIREMENT="designated => identifier \"$BUNDLE_ID\""
+REQUIREMENTS_FILE="$APPLE_DIR/Signing.rqs"
 ARCHS=(arm64 x86_64)
 MIN_MACOS="15.0"
 BUILT_APP="$DERIVED_DATA/Build/Products/Release/$APP_NAME.app"
@@ -165,7 +166,7 @@ done < <(find "$RUNTIME_DEST" -type f -print0)
 ((signed > 0)) || die "no Mach-O files found in the runtime"
 echo "    $signed runtime binaries signed ad-hoc"
 # A fixed designated requirement keeps the TCC identity stable across ad-hoc builds.
-sign --requirements "=$REQUIREMENT" "$DIST_APP"
+sign --requirements "$REQUIREMENTS_FILE" "$DIST_APP"
 
 codesign --verify --deep --strict --verbose=1 "$DIST_APP"
 designated="$(codesign --display --requirements - "$DIST_APP" 2>/dev/null | sed -n 's/^designated => //p')"
