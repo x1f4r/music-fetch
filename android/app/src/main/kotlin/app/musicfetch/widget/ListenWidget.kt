@@ -148,10 +148,10 @@ class ListenWidget : GlanceAppWidget() {
                 modifier = GlanceModifier.size(sizeDp.dp),
             )
             Image(
-                ImageProvider(R.drawable.ic_qs_tile),
+                ImageProvider(R.drawable.widget_mark),
                 contentDescription = null,
                 colorFilter = ColorFilter.tint(GlanceTheme.colors.onPrimary),
-                modifier = GlanceModifier.size((sizeDp * 0.55f).dp),
+                modifier = GlanceModifier.size((sizeDp * 0.56f).dp, (sizeDp * 0.56f * 20f / 48f).dp),
             )
         }
     }

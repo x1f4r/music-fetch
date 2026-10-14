@@ -4,4 +4,5 @@
     <color name="ic_launcher_background">#FF0E1626</color>
     <!-- "Fetch teal", the fallback seed; identified tracks in progress notifications. -->
     <color name="progress_track">#FF1FA48A</color>
+    <color name="widget_preview_background">#FFE6F2EE</color>
 </resources>

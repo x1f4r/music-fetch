@@ -268,13 +268,16 @@ private fun SwipeRow(
         state = state,
         modifier = modifier,
         onDismiss = { value ->
-            when (value) {
-                SwipeToDismissBoxValue.StartToEnd -> onPin()
-                SwipeToDismissBoxValue.EndToStart -> onDelete()
-                SwipeToDismissBoxValue.Settled -> Unit
+            // Settle first: the swipe state is saved per row, and a row that comes back after
+            // Undo must not arrive dismissed (it would delete itself again).
+            scope.launch {
+                state.snapTo(SwipeToDismissBoxValue.Settled)
+                when (value) {
+                    SwipeToDismissBoxValue.StartToEnd -> onPin()
+                    SwipeToDismissBoxValue.EndToStart -> onDelete()
+                    SwipeToDismissBoxValue.Settled -> Unit
+                }
             }
-            // The row stays: pinning keeps it, and deletions hide it through the view model.
-            scope.launch { state.reset() }
         },
         backgroundContent = {
             val toDelete = state.dismissDirection == SwipeToDismissBoxValue.EndToStart
