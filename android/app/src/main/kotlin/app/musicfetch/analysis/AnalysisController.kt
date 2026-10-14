@@ -26,6 +26,7 @@ import app.musicfetch.platform.FileImports
 import app.musicfetch.platform.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -201,6 +202,11 @@ class AnalysisController(
 
     private fun onTerminal(run: AnalysisRun) {
         app.appGraph.notifyLibraryChanged()
+        // Screens read finished sessions from the library; keep the run only briefly.
+        scope.launch {
+            delay(FORGET_AFTER_MS)
+            forget(run)
+        }
         val state = run.state.value
         if (state.kind == SessionKind.FILE) FileImports.release(app, state.input)
         val id = state.sessionId ?: return
@@ -224,6 +230,7 @@ class AnalysisController(
 
     private companion object {
         const val TAG = "AnalysisController"
+        const val FORGET_AFTER_MS = 60_000L
 
         fun upsert(list: List<Segment>, segment: Segment): List<Segment> {
             val index = list.indexOfFirst { it.id == segment.id }

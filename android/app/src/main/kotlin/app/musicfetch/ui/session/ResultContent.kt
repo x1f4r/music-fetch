@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -59,6 +60,8 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
     val preferred by viewModel.preferred.collectAsStateWithLifecycle()
     val preview by PreviewPlayer.state.collectAsStateWithLifecycle()
     val track = view.track
+    // A preview belongs to its screen.
+    DisposableEffect(Unit) { onDispose { PreviewPlayer.stop() } }
     ArtworkTheme(seed) {
         val colors = MaterialTheme.colorScheme
         Scaffold(
