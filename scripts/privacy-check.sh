@@ -21,6 +21,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 patterns_file="${MF_PRIVATE_PATTERNS:-$HOME/.config/music-fetch/private-patterns.txt}"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# Printable strings of every file in each artifact (APKs/zips are unpacked first),
+# written to a file so grep results never depend on pipe exit codes.
+artifact_strings() { # artifact -> path of a strings dump
+  local artifact="$1" out="$tmp/$(echo "$1" | shasum | cut -c1-12).txt" src="$1"
+  if [[ ! -s "$out" ]]; then
+    if [[ -f "$artifact" && "$artifact" =~ \.(apk|zip|xpi|aab)$ ]]; then
+      src="$tmp/unpacked-$(basename "$artifact")"
+      mkdir -p "$src" && unzip -qq -o "$artifact" -d "$src" || true
+    fi
+    find "$src" -type f -print0 | xargs -0 strings -a > "$out" 2>/dev/null || true
+  fi
+  echo "$out"
+}
 status=0
 fail() { echo "privacy-check: $*" >&2; status=1; }
 
@@ -48,7 +64,7 @@ if [[ -f "$patterns_file" ]]; then
       fail "commit metadata in $range contains a private string"
     fi
     for artifact in "${artifacts[@]+"${artifacts[@]}"}"; do
-      if find "$artifact" -type f -print0 | xargs -0 strings -a 2>/dev/null | grep -qiF -- "$needle"; then
+      if grep -qiF -- "$needle" "$(artifact_strings "$artifact")"; then
         fail "$artifact contains a private string"
       fi
     done
@@ -66,8 +82,16 @@ fi
 
 for artifact in "${artifacts[@]+"${artifacts[@]}"}"; do
   echo "== $artifact"
-  if find "$artifact" -type f -print0 | xargs -0 strings -a 2>/dev/null | grep -E '(/Users/[A-Za-z0-9._-]+/|/home/[a-z][A-Za-z0-9._-]+/)' | sort -u | head -20 | grep .; then
-    fail "$artifact embeds local paths (above)"
+  dump="$(artifact_strings "$artifact")"
+  # This machine's home folder or user name must never ship.
+  if grep -E -- "(${HOME}/|/Users/${USER}/|/home/${USER}/)" "$dump" > "$tmp/own.txt"; then
+    sort -u "$tmp/own.txt" | head -20
+    fail "$artifact embeds this machine's home path (above)"
+  fi
+  # Other build-machine paths usually come from prebuilt third-party libraries; list them for review.
+  if grep -oE '(/Users/[A-Za-z0-9._-]+/|/home/[a-z][A-Za-z0-9._-]+/)' "$dump" | grep -vE "^(/Users/${USER}/|/home/${USER}/)" | sort | uniq -c | sort -rn > "$tmp/other.txt" && [[ -s "$tmp/other.txt" ]]; then
+    echo "privacy-check: note: other build paths in $artifact (third-party prebuilt code?):" >&2
+    head -10 "$tmp/other.txt" >&2
   fi
 done
 
