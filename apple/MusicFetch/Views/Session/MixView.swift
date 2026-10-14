@@ -17,6 +17,7 @@ struct MixView: View {
                         .tag(segment.id)
                         .id(segment.id)
                         .listRowInsets(EdgeInsets(top: 3, leading: 20, bottom: 3, trailing: 20))
+                        .listRowSeparator(.hidden)
                         .transition(.offset(y: 6).combined(with: .opacity))
                 }
                 if model.listedSegments.isEmpty, !model.isRunning {
@@ -42,6 +43,12 @@ struct MixView: View {
             .onChange(of: model.selectedSegmentID) { _, id in
                 guard let id else { return }
                 withAnimation(AppModel.spring(.chrome)) { proxy.scrollTo(id) }
+            }
+            .onAppear {
+                // A finished session opens with its first track in the inspector.
+                if model.selectedSegmentID == nil, !model.isRunning {
+                    model.selectedSegmentID = model.listedSegments.first?.id
+                }
             }
             .onKeyPress(.space) {
                 guard let segment = model.selectedSegment else { return .ignored }
@@ -96,7 +103,13 @@ struct MixHeader: View {
             Spacer(minLength: 12)
             if model.isRunning {
                 HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
+                    if model.phase == .downloading, model.progress == nil, let fraction = model.fraction {
+                        ProgressView(value: fraction)
+                            .progressViewStyle(.circular)
+                            .controlSize(.small)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
                     Text(model.statusText)
                         .font(.callout)
                         .foregroundStyle(.secondary)

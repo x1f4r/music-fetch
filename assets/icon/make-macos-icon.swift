@@ -69,7 +69,7 @@ struct Entry {
     let points: Int
     let scale: Int
     var pixels: Int { points * scale }
-    var filename: String { "icon_\(points)x\(points)\(scale == 2 ? "@2x" : "").png" }
+    var filename: String { "icon-\(points)pt-\(scale)x.png" }
 }
 
 let entries = [16, 32, 128, 256, 512].flatMap { [Entry(points: $0, scale: 1), Entry(points: $0, scale: 2)] }

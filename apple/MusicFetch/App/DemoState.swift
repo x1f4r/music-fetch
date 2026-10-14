@@ -68,7 +68,7 @@ nonisolated struct DemoState: Sendable {
             app.showMelodyPrompt = true
         case "lyrics":
             app.presentLyricSearch()
-            app.lyricSearch?.text = "dancing on my own"
+            app.lyricSearch?.text = "a few words I half remember"
             app.lyricSearch?.search()
         default:
             break

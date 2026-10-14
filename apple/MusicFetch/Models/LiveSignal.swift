@@ -71,7 +71,9 @@ final class LiveSignal {
         if history.count > Self.historyLimit { history.removeFirst(history.count - Self.historyLimit) }
         headMilliseconds = max(headMilliseconds, batch.map(\.tMs).max() ?? 0)
         headArrival = now
-        let cutoff = headMilliseconds > UInt64(Self.window * 1000) ? headMilliseconds - UInt64(Self.window * 1000) - 500 : 0
+        // Keep half a second beyond the window so the left edge scrolls out smoothly.
+        let keep = UInt64(Self.window * 1000) + 500
+        let cutoff = headMilliseconds > keep ? headMilliseconds - keep : 0
         if let first = frames.firstIndex(where: { $0.tMs >= cutoff }), first > 0 {
             frames.removeFirst(first)
         }

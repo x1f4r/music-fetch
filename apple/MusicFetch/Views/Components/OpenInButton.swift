@@ -33,19 +33,42 @@ struct OpenInButton: View {
     var body: some View {
         switch style {
         case .prominent:
-            Menu {
-                menuItems
-            } label: {
-                Text(title).frame(maxWidth: fillsWidth ? .infinity : nil)
-            } primaryAction: {
-                openPrimary()
+            // A split button on accent-tinted glass (the same material as the listen
+            // button, so the two can morph). Menus ignore button styles on macOS, so the
+            // two halves are drawn on one glass capsule.
+            HStack(spacing: 0) {
+                Button(action: openPrimary) {
+                    Text(title)
+                        .lineLimit(1)
+                        .padding(.leading, 16)
+                        .padding(.trailing, 12)
+                        .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(title)
+                Rectangle()
+                    .fill(.white.opacity(0.35))
+                    .frame(width: 1, height: 16)
+                    .accessibilityHidden(true)
+                Menu {
+                    menuItems
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 34, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel(Copy.openInMenu)
             }
-            .menuStyle(.button)
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .foregroundStyle(.white)
+            .glassEffect(.regular.tint(.accentColor).interactive(), in: .capsule)
             .modifier(GlassID(namespace: glassNamespace))
             .fixedSize(horizontal: !fillsWidth, vertical: true)
-            .accessibilityLabel(title)
         case .bordered:
             Button(title, action: openPrimary)
                 .buttonStyle(.bordered)

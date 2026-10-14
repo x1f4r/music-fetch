@@ -111,8 +111,9 @@ final class AppModel {
 
     // MARK: - Navigation
 
+    /// The Listen pane shows the stage (not a result): its big button is the Listen action.
     var isOnListenStage: Bool {
-        route == .listen && listen.isIdleStage
+        route == .listen && listen.shown == nil
     }
 
     func showListen() {

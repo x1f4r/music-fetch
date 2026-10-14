@@ -80,7 +80,7 @@ struct ResultView: View {
                     .padding(.top, 12)
                     .modifier(Rise(revealed: revealed, delay: 0.17))
             }
-            GlassEffectContainer(spacing: 24) {
+            GlassEffectContainer(spacing: 8) {
                 HStack(spacing: 12) {
                     OpenInButton(track: track, glassNamespace: glass)
                     ShareLink(item: shareText(track)) {

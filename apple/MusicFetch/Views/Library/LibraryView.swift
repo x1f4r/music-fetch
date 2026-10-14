@@ -28,6 +28,7 @@ struct LibraryView: View {
                             ForEach(section.entries, id: \.id) { entry in
                                 LibraryRow(entry: entry)
                                     .tag(entry.id)
+                                    .listRowSeparator(.hidden)
                             }
                         } header: {
                             Text(section.title)

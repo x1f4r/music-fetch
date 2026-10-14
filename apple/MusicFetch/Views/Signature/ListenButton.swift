@@ -53,7 +53,7 @@ struct ListenButton: View {
         .modifier(GlassID(namespace: glassNamespace))
         .scaleEffect(targeted ? 1.04 : 1)
         .animation(app.motion(.press), value: targeted)
-        .disabled(listen.stage == .matching || app.engine == nil)
+        .disabled(app.engine == nil)
         .accessibilityLabel(Copy.listenAction)
         .accessibilityValue(listen.buttonValue)
         .accessibilityHint(Copy.listenHint)

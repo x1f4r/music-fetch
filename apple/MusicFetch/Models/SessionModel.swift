@@ -366,6 +366,15 @@ final class SessionModel: Identifiable {
             return Copy.stopped(identifiedCount)
         }
         if isRunning {
+            // Before the first progress report the phase says more than "Analyzing".
+            if progress == nil {
+                switch phase {
+                case .resolving: return Copy.resolving
+                case .downloading: return Copy.downloading
+                case .decoding, .segmenting: return Copy.preparing
+                default: break
+                }
+            }
             return Copy.eta(milliseconds: progress?.etaMs)
         }
         if let completed, completed.total > 0, completed.total >= completed.identified {

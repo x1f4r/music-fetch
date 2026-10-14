@@ -19,6 +19,7 @@ struct CandidatesView: View {
                     )
                     .tag(candidate.track.identityKey)
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    .listRowSeparator(.hidden)
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(Copy.candidateAccessibility(candidate, rank: index + 1))
                 }

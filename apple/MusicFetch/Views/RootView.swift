@@ -8,6 +8,7 @@ struct RootView: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     @Namespace private var glass
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         @Bindable var app = app
@@ -16,10 +17,6 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
         } detail: {
             detail
-                .inspector(isPresented: Binding(get: { app.showInspector }, set: { app.setInspector($0) })) {
-                    InspectorView()
-                        .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
-                }
         }
         .frame(minWidth: 900, minHeight: 600)
         .sheet(item: $app.lyricSearch) { model in
@@ -85,6 +82,7 @@ struct RootView: View {
         switch app.route {
         case .listen, nil:
             ListenPane(glass: glass)
+                .appInspector()
         case .library:
             @Bindable var app = app
             NavigationStack(path: $app.libraryPath) {
@@ -92,13 +90,18 @@ struct RootView: View {
                     .navigationTitle(Copy.libraryTitle)
                     .navigationDestination(for: String.self) { id in
                         SessionScreen(id: id)
+                            .appInspector()
                     }
+                    .appInspector()
                     .toolbar { libraryToolbar }
                     .searchable(text: $app.library.search, placement: .toolbar, prompt: Copy.search)
+                    .searchFocused($searchFocused)
+                    .onChange(of: app.searchFocusRequest) { _, _ in searchFocused = true }
             }
         case .session(let id):
             NavigationStack {
                 SessionScreen(id: id)
+                    .appInspector()
             }
         }
     }
@@ -116,8 +119,8 @@ struct RootView: View {
             .labelsHidden()
             .fixedSize()
         }
-        ToolbarItem(placement: .primaryAction) { ListenToolbarButton() }
-        ToolbarItem(placement: .primaryAction) { InspectorToggle() }
+        ToolbarItem(placement: .automatic) { ListenToolbarButton() }
+        ToolbarItem(placement: .automatic) { InspectorToggle() }
     }
 }
 
@@ -129,7 +132,8 @@ struct ListenPane: View {
 
     var body: some View {
         let listen = app.listen!
-        GlassEffectContainer(spacing: 24) {
+        // Spacing 0: neighbors must not blend; the container only carries the button-to-result morph.
+        GlassEffectContainer(spacing: 0) {
             Group {
                 if let shown = listen.shown {
                     SessionContentView(model: shown, glass: glass)
@@ -156,11 +160,11 @@ struct ListenPane: View {
         .toolbar {
             ToolbarItem(placement: .principal) { LinkField() }
             if let shown = listen.shown, shown.presentation == .timeline || shown.presentation == .collection {
-                ToolbarItem(placement: .primaryAction) { ExportMenu(model: shown) }
+                ToolbarItem(placement: .automatic) { ExportMenu(model: shown) }
             }
-            ToolbarItem(placement: .primaryAction) { ListenToolbarButton() }
+            ToolbarItem(placement: .automatic) { ListenToolbarButton() }
                 .hidden(app.isOnListenStage)
-            ToolbarItem(placement: .primaryAction) { InspectorToggle() }
+            ToolbarItem(placement: .automatic) { InspectorToggle() }
         }
     }
 }
@@ -183,11 +187,13 @@ struct SessionScreen: View {
         .navigationTitle(model?.title ?? "")
         .toolbar(removing: .title)
         .toolbar {
+            // Without a title nothing pushes the actions to the trailing edge.
+            ToolbarSpacer(.flexible)
             if let model, model.presentation == .timeline || model.presentation == .collection || model.presentation == .result {
-                ToolbarItem(placement: .primaryAction) { ExportMenu(model: model) }
+                ToolbarItem(placement: .automatic) { ExportMenu(model: model) }
             }
-            ToolbarItem(placement: .primaryAction) { ListenToolbarButton() }
-            ToolbarItem(placement: .primaryAction) { InspectorToggle() }
+            ToolbarItem(placement: .automatic) { ListenToolbarButton() }
+            ToolbarItem(placement: .automatic) { InspectorToggle() }
         }
     }
 }
@@ -199,21 +205,19 @@ struct LinkField: View {
 
     var body: some View {
         @Bindable var app = app
-        TextField(Copy.pasteLink, text: $app.linkText)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 300)
-            .focused($focused)
-            .onSubmit { app.submitLinkField() }
-            .overlay(alignment: .leading) {
-                if app.linkText.isEmpty {
-                    Image(systemName: "link")
-                        .foregroundStyle(.tertiary)
-                        .padding(.leading, 8)
-                        .allowsHitTesting(false)
-                }
-            }
-            .accessibilityLabel(Copy.pasteLink)
-            .onChange(of: app.linkFieldFocusRequest) { _, _ in focused = true }
+        HStack(spacing: 6) {
+            Image(systemName: "link")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            TextField(Copy.pasteLink, text: $app.linkText)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .onSubmit { app.submitLinkField() }
+                .accessibilityLabel(Copy.pasteLink)
+        }
+        .padding(.horizontal, 12)
+        .frame(width: 300)
+        .onChange(of: app.linkFieldFocusRequest) { _, _ in focused = true }
     }
 }
 
@@ -263,5 +267,24 @@ struct ExportMenu: View {
         }
         .help(Copy.exportMenu)
         .disabled(model.isRunning && model.listedSegments.isEmpty)
+    }
+}
+
+extension View {
+    /// The inspector column (§3.1), on each screen of the detail column so it stays
+    /// visible when sessions are pushed.
+    func appInspector() -> some View {
+        modifier(AppInspector())
+    }
+}
+
+private struct AppInspector: ViewModifier {
+    @Environment(AppModel.self) private var app
+
+    func body(content: Content) -> some View {
+        content.inspector(isPresented: Binding(get: { app.showInspector }, set: { app.setInspector($0) })) {
+            InspectorView()
+                .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
+        }
     }
 }

@@ -115,6 +115,13 @@ struct LiveSignalTests {
         #expect(signal.voicedSeconds == 180 * 0.05)
         #expect(signal.history.count == 200)
     }
+
+    @Test func headJustPastTheWindowDoesNotUnderflow() {
+        let signal = LiveSignal()
+        signal.push(frames: [PitchFrame(tMs: 8_200, midi: 60, confidence: 1)])
+        signal.push(frames: [PitchFrame(tMs: 8_400, midi: 61, confidence: 1)])
+        #expect(signal.frames.count == 2)
+    }
 }
 
 struct LinkOpenerTests {
