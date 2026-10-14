@@ -16,6 +16,10 @@
 # invalidate Xcode's build.
 set -euo pipefail
 
+# Keep local paths out of the binaries.
+# shellcheck source=lib/rust-env.sh
+source "$(dirname "$0")/lib/rust-env.sh"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_DIR="$ROOT_DIR/core"
 PACKAGE_DIR="$ROOT_DIR/apple/MusicFetchCore"

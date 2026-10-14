@@ -14,7 +14,8 @@ pub enum Command {
     /// Find songs from typed or transcribed lyrics.
     Lyrics(LyricsArgs),
     /// Measure recognition quality on built-in query sets.
-    #[command(subcommand)]
+    /// Dispatched through the shared `mf eval` command.
+    #[command(skip)]
     Eval(EvalCommand),
 }
 
@@ -22,6 +23,10 @@ pub enum Command {
 pub enum EvalCommand {
     /// Lyric search: top-1/top-3 of the fused search against each backend alone.
     Lyrics(EvalArgs),
+    /// Links: mixes, single songs and playlists against a manifest with ground truth.
+    Mixes(crate::eval_mixes::MixesArgs),
+    /// Draft a mix's ground-truth tracklist from its description or comments.
+    MixDraft(crate::eval_mixes::DraftArgs),
 }
 
 #[derive(Args)]
@@ -65,6 +70,8 @@ pub fn run(command: Command) -> anyhow::Result<()> {
         match command {
             Command::Lyrics(args) => search(args).await,
             Command::Eval(EvalCommand::Lyrics(args)) => evaluate(args).await,
+            Command::Eval(EvalCommand::Mixes(args)) => crate::eval_mixes::run(args).await,
+            Command::Eval(EvalCommand::MixDraft(args)) => crate::eval_mixes::draft(args).await,
         }
     })
 }

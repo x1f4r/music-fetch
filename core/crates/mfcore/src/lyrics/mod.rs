@@ -19,6 +19,7 @@ mod plan;
 mod score;
 mod sources;
 mod text;
+mod track;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -35,6 +36,8 @@ use self::fetch::{FetchError, Fetcher, Remote, Stats};
 use self::merge::{Candidate, Sighting};
 use self::score::{Features, LyricEvidence};
 use self::sources::{Hit, ParseError};
+
+pub use self::track::{LyricsUnavailable, fetch_lyrics, lookup_lyrics};
 
 /// Results returned, at most.
 const MAX_RESULTS: usize = 5;
@@ -404,17 +407,27 @@ async fn check_lyrics(
         return Ok(evidence);
     }
     let deadline = tokio::time::Instant::now() + VERIFY_DEADLINE;
-    let mut lookups = futures_util::stream::iter(selected.iter().filter_map(|&i| candidates.get(i).map(|c| (i, c))))
-        .map(|(index, candidate)| async move { (index, check_one(fetcher, candidate, queries).await) })
-        .buffer_unordered(VERIFY_CONCURRENCY);
+    // A manual pool instead of stream adapters with closures: those make the
+    // search future fail the `Send` check when it is spawned on a runtime.
+    let items: Vec<(usize, &Candidate)> = selected.iter().filter_map(|&i| candidates.get(i).map(|c| (i, c))).collect();
+    let mut pending = items.into_iter();
+    let mut lookups = futures_util::stream::FuturesUnordered::new();
+    for (index, candidate) in pending.by_ref().take(VERIFY_CONCURRENCY) {
+        lookups.push(check_indexed(fetcher, index, candidate, queries));
+    }
     loop {
         match tokio::time::timeout_at(deadline, lookups.next()).await {
             Ok(Some((_, Err(FetchError::Canceled)))) => return Err(MfError::Canceled),
-            Ok(Some((index, Ok(found)))) => {
-                evidence.insert(index, found);
-            }
-            Ok(Some((index, Err(error)))) => {
-                tracing::debug!(?error, index, "lyrics lookup failed");
+            Ok(Some((index, result))) => {
+                match result {
+                    Ok(found) => {
+                        evidence.insert(index, found);
+                    }
+                    Err(error) => tracing::debug!(?error, index, "lyrics lookup failed"),
+                }
+                if let Some((index, candidate)) = pending.next() {
+                    lookups.push(check_indexed(fetcher, index, candidate, queries));
+                }
             }
             Ok(None) => break,
             Err(_) => {
@@ -424,6 +437,15 @@ async fn check_lyrics(
         }
     }
     Ok(evidence)
+}
+
+async fn check_indexed(
+    fetcher: &Fetcher<'_>,
+    index: usize,
+    candidate: &Candidate,
+    queries: &[align::Query],
+) -> (usize, std::result::Result<LyricEvidence, FetchError>) {
+    (index, check_one(fetcher, candidate, queries).await)
 }
 
 async fn check_one(

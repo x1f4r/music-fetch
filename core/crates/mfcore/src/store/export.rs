@@ -545,7 +545,7 @@ FILE \"Boiler Room: Berlin 'Live'.mp3\" MP3
             Some(SourceInfo { title: Some("ignored".into()), ..Default::default() }),
         );
         let mut d = d;
-        d.entry.source_url = Some("/Users/me/Music/Set 01.flac".into());
+        d.entry.source_url = Some("/Volumes/Music/Set 01.flac".into());
         let out = render(&d, ExportFormat::Cue).unwrap();
         assert!(out.contains("FILE \"Set 01.flac\" WAVE\n"), "{out}");
         assert!(out.contains("INDEX 01 00:01:00\n"), "{out}");

@@ -280,3 +280,29 @@ fn one_timestamp_per_line_in_order() {
         vec![(0, "First".into()), (190_000, "Second".into()), (3_723_000, "Third".into())]
     );
 }
+
+#[test]
+fn comments_pinned_and_uploader_first() {
+    let info = parse(json!({
+        "id": "x",
+        "title": "Mix",
+        "comments": [
+            {"id": "a", "parent": "root", "text": "great set", "author": "@fan", "like_count": 900},
+            {"id": "b", "parent": "a", "text": "reply 00:00 A - B", "author": "@other", "like_count": 5000},
+            {"id": "c", "parent": "root", "text": "00:00 A - B\n03:00 C - D", "author": "@dj",
+             "author_is_uploader": true, "like_count": 12},
+            {"id": "d", "parent": "root", "text": "Tracklist:\n00:00 A - B", "author": "@helper",
+             "is_pinned": true, "like_count": "40"},
+            {"id": "e", "parent": "root", "text": "   ", "author": "@blank"},
+            {"id": "f", "text": "no parent field", "like_count": 1000.0}
+        ]
+    }));
+    let authors: Vec<_> = info.comments.iter().map(|c| c.author.clone().unwrap_or_default()).collect();
+    assert_eq!(authors, vec!["@helper", "@dj", "", "@fan"]);
+    assert!(info.comments[0].is_pinned && !info.comments[0].author_is_uploader);
+    assert_eq!(info.comments[0].like_count, 40);
+    assert!(info.comments[1].author_is_uploader);
+    assert_eq!(info.comments[1].text, "00:00 A - B\n03:00 C - D");
+    assert_eq!(info.comments[2].like_count, 1000);
+    assert!(parse(json!({"id": "y"})).comments.is_empty());
+}

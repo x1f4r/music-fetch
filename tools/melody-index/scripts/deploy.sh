@@ -2,7 +2,7 @@
 # Copy the builder to the GPU host and install its environment there (uv, Python 3.12, CUDA torch).
 set -euo pipefail
 
-HOST="${MFIDX_HOST:-legion-cachy}"
+HOST="${MFIDX_HOST:?set MFIDX_HOST to the ssh host of the GPU machine}"
 REMOTE_ROOT="${MFIDX_REMOTE_ROOT:-melody-build}"
 here="$(cd "$(dirname "$0")/.." && pwd)"
 

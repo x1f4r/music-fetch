@@ -45,5 +45,8 @@ lru = "0.18"
 strsim = "0.11"
 # lyrics
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# melody
+tract-onnx = "0.23.8"
+memmap2 = "0.9.11"
 
 [dev-dependencies]
