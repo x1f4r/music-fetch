@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/mfcore", "crates/mf-cli", "crates/uniffi-bindgen"]
+# Patched third-party sources (see vendor/opus-decoder/VENDORED.md), not workspace crates.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "1.0.0"
@@ -27,3 +29,8 @@ strip = "debuginfo"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# opus-decoder 0.1.1 as published writes developer debug logs to a hard-coded path
+# while decoding; the vendored copy is identical except that those writes are disabled.
+[patch.crates-io]
+opus-decoder = { path = "vendor/opus-decoder" }
