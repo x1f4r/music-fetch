@@ -13,6 +13,8 @@ path = "src/main.rs"
 mfcore = { path = "../mfcore" }
 tokio.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+parking_lot = "0.12"
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 # media

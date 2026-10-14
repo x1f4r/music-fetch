@@ -6,6 +6,7 @@
 //! every token; batch calls leave 2 in reserve so a person listening never waits
 //! behind a mix. Cache hits cost nothing.
 
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -23,6 +24,23 @@ use crate::shazam::{self, Priority, ShazamMatch};
 const CACHE_NAMESPACE: &str = "shazam";
 const POSITIVE_TTL_MS: i64 = 30 * 24 * 3600 * 1000;
 const NEGATIVE_TTL_MS: i64 = 24 * 3600 * 1000;
+/// Set by evaluation tools that replay every answer from the cache: answers
+/// are then kept for this long, "no match" included.
+static REPLAY_TTL_MS: AtomicI64 = AtomicI64::new(0);
+
+/// Keep every cached answer (matches and "no match") for `ttl` in this process.
+/// For evaluation runs that must replay from the cache; apps never call it.
+pub fn keep_cached_answers_for(ttl: Duration) {
+    REPLAY_TTL_MS.store(ttl.as_millis().min(i64::MAX as u128) as i64, Ordering::Relaxed);
+}
+
+fn ttl_ms(matched: bool) -> i64 {
+    match REPLAY_TTL_MS.load(Ordering::Relaxed) {
+        0 if matched => POSITIVE_TTL_MS,
+        0 => NEGATIVE_TTL_MS,
+        replay => replay,
+    }
+}
 /// Skew below which a single Shazam match counts as an exact recording match.
 pub const TIGHT_SKEW: f32 = 0.002;
 
@@ -163,8 +181,8 @@ pub async fn shazam(ctx: &SessionCtx, samples: &[i16], priority: Priority) -> Re
     match result {
         Ok(found) => {
             let (value, ttl) = match &found {
-                Some(m) => (serde_json::to_string(m).unwrap_or_else(|_| "null".into()), POSITIVE_TTL_MS),
-                None => ("null".to_string(), NEGATIVE_TTL_MS),
+                Some(m) => (serde_json::to_string(m).unwrap_or_else(|_| "null".into()), ttl_ms(true)),
+                None => ("null".to_string(), ttl_ms(false)),
             };
             if let Err(e) = store.cache_put(CACHE_NAMESPACE, &key, &value, ttl) {
                 tracing::warn!("shazam cache write failed: {e}");
