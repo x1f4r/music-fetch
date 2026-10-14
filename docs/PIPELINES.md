@@ -270,9 +270,9 @@ Never decide by duration alone. A single song must never be split.
    - A match of X at window start T with Shazam offset o and skew s gives the start
      Sₓ = T − o/(1 + s) and, with the track duration D (enrichment), the latest end
      Eₓ = Sₓ + D/(1 + s). Only the middle of a 12 s window counts as surely X.
-   - Next probe at min(Eₓ + 10 s, T + 150 s), at least T + 30 s (just past X's latest
-     end, where the next track must play); without D, or when X was heard past Eₓ
-     (wrong duration), T + 90 s. No match → T + 25 s.
+   - Next probe at Eₓ + 10 s (just past X's latest end, where the next track must play)
+     when that is at most 4 min ahead, else T + 150 s; at least T + 30 s; without D, or
+     when X was heard past Eₓ (wrong duration), T + 90 s. No match → T + 25 s.
    - Each new recording's preview is fetched and looked for between Sₓ and Eₓ; a hit
      confirms the answer for free and shows more of where X plays. Before each probe the
      previews of everything identified so far are looked for around T (continuing or
@@ -286,9 +286,13 @@ Never decide by duration alone. A single song must never be split.
      before Sᵧ, where a short hidden track would sit; T₂ − T₁ > 4 min → probe the
      middle. Repeat until nothing qualifies or the budget (duration / 45 s + 10 probes)
      is spent.
-   - A recording heard once and not confirmed locally gets one more probe 10–40 s away
-     inside the stretch it must occupy; when that probe hears something else or nothing,
-     the lone answer is dropped (misidentifications and samples rarely repeat).
+   - A recording heard once and not confirmed locally is dropped without a probe when
+     its own start estimate would make it overlap an established recording (heard twice
+     or found locally) for over a minute — longer than any transition; that is how
+     misidentified samples and unreleased tracks show up. Otherwise it gets one more
+     probe 10–40 s away inside the stretch it must occupy: the same recording confirms
+     it, another version of the same song replaces it, anything else is kept as a
+     neighbour (and checked for overlap again), nothing keeps it as it is.
 4. Unresolved music regions ≥ 45 s: one more probe at a different position, then paid
    providers (≤ 30 calls) if configured.
 5. **Stitch** (`pipeline/stitch.rs`, ported from 0.4): bridge Track(X) → short gap →

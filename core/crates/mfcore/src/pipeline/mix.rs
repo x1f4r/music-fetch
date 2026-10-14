@@ -63,6 +63,8 @@ const BEFORE_START_MS: u64 = 20_000;
 const UNRELIABLE_WINDOW: usize = 6;
 /// ...and how many of them the audio must have overruled.
 const UNRELIABLE_CONTRADICTIONS: usize = 3;
+/// A replay must start no earlier than this before the first play's latest end.
+const REPLAY_SLACK_MS: i64 = 30_000;
 /// A lone answer whose own start lies this long before another established
 /// recording was heard is dropped (DJ transitions are shorter).
 const OVERLAP_SLACK_MS: i64 = 60_000;
@@ -348,10 +350,10 @@ impl<S: Services> Mix<'_, S> {
         self.probe_time += started.elapsed();
         match result {
             Ok(Some(hit)) => {
-                let skew = hit.skew();
+                let skew = (hit.timeskew, hit.frequency_skew);
                 let anchor = self.anchor_from_hit(at, len, hit).await;
                 self.log(format!(
-                    "probe {} → {} – {} (starts {}, skew {:.1} %)",
+                    "probe {} → {} – {} (starts {}, speed {:+.1} %, pitch {:+.1} %)",
                     clock(at),
                     anchor.track.artist,
                     anchor.track.title,
@@ -360,7 +362,8 @@ impl<S: Services> Mix<'_, S> {
                     } else {
                         clock(s as u64)
                     }),
-                    skew * 100.0
+                    skew.0 * 100.0,
+                    skew.1 * 100.0
                 ));
                 Ok(Some(anchor))
             }
@@ -1495,10 +1498,16 @@ fn consistent_start(a: &Anchor, b: &Anchor) -> bool {
     matches!((a.start_est, b.start_est), (Some(x), Some(y)) if (x - y).abs() <= stitch::SAME_START_MS)
 }
 
-/// `b` is a fresh play of `a`'s recording (it restarts after `a` was seen).
+/// `b` is a fresh play of `a`'s recording: it restarts after `a` was seen and
+/// after `a`'s play could have ended. A start estimate that merely jumps
+/// (loops, repeated sections matching each other) is the same play.
 fn is_replay(a: &Anchor, b: &Anchor) -> bool {
-    match (a.start_est, b.start_est) {
-        (Some(x), Some(y)) => y - x > stitch::SAME_START_MS && y >= a.seen_until() as i64 - stitch::SAME_START_MS,
+    match (a.start_est, b.start_est, a.end_est) {
+        (Some(x), Some(y), Some(end)) => {
+            y - x > stitch::SAME_START_MS
+                && y >= a.seen_until() as i64 - stitch::SAME_START_MS
+                && y >= end - REPLAY_SLACK_MS
+        }
         _ => false,
     }
 }
