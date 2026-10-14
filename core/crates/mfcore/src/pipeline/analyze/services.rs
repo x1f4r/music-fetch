@@ -46,6 +46,12 @@ pub trait Services: Send + Sync {
     /// Fill links, artwork, duration and preview (best effort).
     fn enrich(&self, track: Track) -> impl Future<Output = Track> + Send;
 
+    /// [`enrich`](Self::enrich) for one of many tracks of a collection: fast
+    /// catalogs only.
+    fn enrich_quick(&self, track: Track) -> impl Future<Output = Track> + Send {
+        self.enrich(track)
+    }
+
     /// A short excerpt of the recording as 16 kHz mono, when a preview exists.
     fn preview(&self, track: &Track) -> impl Future<Output = Option<Vec<i16>>> + Send;
 
@@ -150,7 +156,11 @@ impl Services for SessionServices<'_> {
     }
 
     async fn enrich(&self, track: Track) -> Track {
-        catalog::enrich(&self.ctx.engine.http, track, self.ctx.engine.country(), &self.ctx.cancel).await
+        self.ctx.engine.enrich(track, &self.ctx.cancel).await
+    }
+
+    async fn enrich_quick(&self, track: Track) -> Track {
+        self.ctx.engine.enrich_quick(track, &self.ctx.cancel).await
     }
 
     async fn preview(&self, track: &Track) -> Option<Vec<i16>> {

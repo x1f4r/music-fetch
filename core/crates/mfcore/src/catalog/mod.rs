@@ -67,6 +67,41 @@ pub async fn enrich(http: &reqwest::Client, track: Track, country: &str, cancel:
     finish(track)
 }
 
+/// Enrichment for many tracks at once (playlists and albums of streaming
+/// services): Deezer only, so a whole collection finishes in seconds. iTunes
+/// is asked only for tracks Deezer does not know, and only while nothing else
+/// waits for it. Tracks that already carry Deezer's metadata are only finished.
+pub async fn enrich_quick(http: &reqwest::Client, track: Track, country: &str, cancel: &CancelToken) -> Track {
+    let mut track = crate::links::finish_track(track);
+    if track.title.is_empty() || has_deezer_metadata(&track) {
+        return finish(track);
+    }
+    match deezer_match(http, &track, cancel).await {
+        Some(found) => merge(&mut track, &found),
+        None if !cancel.is_canceled() => {
+            if let Some(found) = apple_match(http, &track, country, 1, cancel).await {
+                merge(&mut track, &found);
+            }
+        }
+        None => {}
+    }
+    finish(track)
+}
+
+/// A track read from Deezer itself (id, ISRC, artwork and duration present).
+fn has_deezer_metadata(track: &Track) -> bool {
+    track.ids.contains_key("deezer")
+        && track.isrc.is_some()
+        && track.artwork_url.is_some()
+        && track.duration_ms.is_some()
+}
+
+/// The track as it is, with search links for every service and a refreshed
+/// identity: what a collection shows before enrichment arrives.
+pub fn with_search_links(track: Track) -> Track {
+    finish(crate::links::finish_track(track))
+}
+
 /// Best catalog match for a title/artist (and optional duration), if confident.
 ///
 /// Returns the catalog's own metadata (Deezer first, then iTunes) with its

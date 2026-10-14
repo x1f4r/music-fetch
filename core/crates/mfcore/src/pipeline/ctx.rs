@@ -83,6 +83,16 @@ impl EngineCtx {
     /// Best-effort catalog enrichment (artwork, preview, links, ISRC) through the
     /// persistent `enrich` cache. Never fails; returns the input on errors.
     pub async fn enrich(&self, track: Track, cancel: &CancelToken) -> Track {
+        self.enrich_with(track, false, cancel).await
+    }
+
+    /// [`enrich`](Self::enrich) for many tracks at once: Deezer only (iTunes
+    /// just for tracks Deezer misses, while it is idle). See `catalog::enrich_quick`.
+    pub async fn enrich_quick(&self, track: Track, cancel: &CancelToken) -> Track {
+        self.enrich_with(track, true, cancel).await
+    }
+
+    async fn enrich_with(&self, track: Track, quick: bool, cancel: &CancelToken) -> Track {
         if !self.enrichment || track.title.trim().is_empty() {
             return track;
         }
@@ -97,7 +107,11 @@ impl EngineCtx {
         if track.preview_url.as_deref().is_some_and(|url| preview_expired(url, crate::util::now_ms() / 1000)) {
             track.preview_url = None;
         }
-        let enriched = crate::catalog::enrich(&self.http, track, self.country(), cancel).await;
+        let enriched = if quick {
+            crate::catalog::enrich_quick(&self.http, track, self.country(), cancel).await
+        } else {
+            crate::catalog::enrich(&self.http, track, self.country(), cancel).await
+        };
         let found = enriched.ids.contains_key("deezer") || enriched.ids.contains_key("apple");
         if found
             && !cancel.is_canceled()
