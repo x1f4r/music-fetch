@@ -1,3 +1,4 @@
+import AudioToolbox
 import AVFoundation
 import Foundation
 
@@ -38,6 +39,7 @@ nonisolated final class MicrophoneCapture: AudioCapture, @unchecked Sendable {
             if input.isVoiceProcessingEnabled {
                 try input.setVoiceProcessingEnabled(false)
             }
+            selectPreferredDevice()
             try installTapAndStart()
             configurationObserver = NotificationCenter.default.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
@@ -56,6 +58,20 @@ nonisolated final class MicrophoneCapture: AudioCapture, @unchecked Sendable {
             handler = nil
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
+        }
+    }
+
+    /// Use the first connected microphone of the user's priority list (Settings → Audio);
+    /// without one the engine keeps the system default input.
+    private func selectPreferredDevice() {
+        guard let device = AudioDevices.preferredInputDevice(), let unit = engine.inputNode.audioUnit else { return }
+        var id = device
+        let status = AudioUnitSetProperty(
+            unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+            &id, UInt32(MemoryLayout<AudioObjectID>.size)
+        )
+        if status != noErr {
+            Log.capture.error("Couldn't select the preferred microphone (\(status, privacy: .public))")
         }
     }
 
@@ -80,6 +96,7 @@ nonisolated final class MicrophoneCapture: AudioCapture, @unchecked Sendable {
             guard handler != nil else { return }
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
+            selectPreferredDevice()
             do {
                 try installTapAndStart()
             } catch {

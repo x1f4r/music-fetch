@@ -10,6 +10,9 @@ struct SettingsView: View {
             Tab(Copy.settingsGeneral, systemImage: "gearshape", value: SettingsPane.general.rawValue) {
                 GeneralPane()
             }
+            Tab("Audio", systemImage: "mic", value: SettingsPane.audio.rawValue) {
+                AudioPane()
+            }
             Tab(Copy.settingsServices, systemImage: "key", value: SettingsPane.services.rawValue) {
                 ServicesPane()
             }
@@ -28,7 +31,7 @@ struct SettingsView: View {
 }
 
 enum SettingsPane: String {
-    case general, services, melody, storage, about
+    case general, audio, services, melody, storage, about
 }
 
 // MARK: - General
@@ -58,6 +61,106 @@ struct GeneralPane: View {
         }
         .formStyle(.grouped)
         .frame(minHeight: 260)
+    }
+}
+
+// MARK: - Audio
+
+/// Microphone priority and the output "This Mac" listens to.
+struct AudioPane: View {
+    @State private var devices = AudioDeviceList()
+    @AppStorage(AudioDevices.captureOutputKey) private var captureOutput = ""
+
+    var body: some View {
+        Form {
+            Section {
+                List {
+                    ForEach(Array(devices.orderedInputs.enumerated()), id: \.element.uid) { index, device in
+                        MicrophoneRow(
+                            device: device,
+                            rank: index + 1,
+                            connected: devices.connectedUIDs.contains(device.uid),
+                            active: device.uid == devices.activeInputUID,
+                            isFirst: index == 0,
+                            isLast: index == devices.orderedInputs.count - 1,
+                            list: devices
+                        )
+                    }
+                    .onMove { devices.move(from: $0, to: $1) }
+                }
+                .frame(minHeight: 132)
+            } header: {
+                Text("Microphone order")
+            } footer: {
+                Text("Music Fetch listens with the first connected microphone. Drag to reorder.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("Listen to", selection: $captureOutput) {
+                    Text("System output").tag("")
+                    ForEach(devices.outputs) { device in
+                        Text(device.name).tag(device.uid)
+                    }
+                    if !captureOutput.isEmpty, !devices.outputs.contains(where: { $0.uid == captureOutput }) {
+                        Text("Not connected").tag(captureOutput)
+                    }
+                }
+            } header: {
+                Text("This Mac")
+            } footer: {
+                Text("When the chosen output isn't connected, the system output is used.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minHeight: 360)
+        .onAppear { devices.refresh() }
+    }
+}
+
+private struct MicrophoneRow: View {
+    let device: AudioDevice
+    let rank: Int
+    let connected: Bool
+    let active: Bool
+    let isFirst: Bool
+    let isLast: Bool
+    let list: AudioDeviceList
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("\(rank)")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 16, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(device.name)
+                    .foregroundStyle(connected ? .primary : .secondary)
+                if active {
+                    Text("In use").font(.caption).foregroundStyle(.tint)
+                } else if !connected {
+                    Text("Not connected").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            ControlGroup {
+                Button { list.moveUp(device.uid) } label: { Image(systemName: "chevron.up") }
+                    .disabled(isFirst)
+                    .accessibilityLabel("Move \(device.name) up")
+                Button { list.moveDown(device.uid) } label: { Image(systemName: "chevron.down") }
+                    .disabled(isLast)
+                    .accessibilityLabel("Move \(device.name) down")
+            }
+            .controlGroupStyle(.navigation)
+            .fixedSize()
+        }
+        .padding(.vertical, 2)
+        .contextMenu {
+            if !connected {
+                Button("Forget \(device.name)") { list.forget(device.uid) }
+            }
+        }
     }
 }
 
