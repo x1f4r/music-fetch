@@ -228,6 +228,7 @@ pub fn session(dir: &std::path::Path, kind: SessionKind) -> (crate::pipeline::ct
         decoder: None,
         speech: None,
         runtime: tokio::runtime::Handle::current(),
+        enrichment: false,
     });
     let events = Arc::new(Events::default());
     let emitter = Emitter::new("s", events.clone(), store);

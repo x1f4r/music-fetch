@@ -323,6 +323,7 @@ fn engine(args: &MixesArgs, paths: &Paths) -> anyhow::Result<Arc<EngineCtx>> {
         store,
         shazam: Arc::new(shazam),
         budget: if args.cached_only { CallBudget::new(1e9, spacing) } else { CallBudget::new(4.0, spacing) },
+        enrichment: true,
         credentials: parking_lot::RwLock::new(Credentials::default()),
         melody: parking_lot::RwLock::new(None),
         pitch: OnceLock::new(),

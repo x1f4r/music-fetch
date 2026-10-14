@@ -78,11 +78,10 @@ pub async fn run<S: Services>(
     if total_entries > MAX_ENTRIES {
         log.push(format!("playlist truncated to {MAX_ENTRIES} of {total_entries} entries"));
     }
-    let results: Vec<Result<EntryResult>> = futures_util::stream::iter(entries.iter().copied())
-        .map(|entry| entry_result(ctx, services, entry, count, options))
-        .buffered(PARALLEL)
-        .collect()
-        .await;
+    // Futures are built up front: a closure inside `.map` would make the session
+    // future lose `Send` generality when the engine spawns it.
+    let pending: Vec<_> = entries.iter().map(|entry| entry_result(ctx, services, entry, count, options)).collect();
+    let results: Vec<Result<EntryResult>> = futures_util::stream::iter(pending).buffered(PARALLEL).collect().await;
     let mut segments = Vec::new();
     let mut probes = 0;
     let mut paid = 0;
