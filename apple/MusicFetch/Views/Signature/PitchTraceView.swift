@@ -31,10 +31,12 @@ struct PitchTraceView: View {
             return CGPoint(x: x, y: size.height / 2 - semitones * semitone)
         }
         let style = StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
+        // Unvoiced frames and octave slips beyond the band break the line.
+        let inBand: (PitchFrame) -> Bool = { $0.midi.isFinite && abs($0.midi - median) <= 12 }
         var previous: PitchFrame?
         for frame in signal.frames {
             defer { previous = frame }
-            guard frame.midi.isFinite, let last = previous, last.midi.isFinite, frame.tMs > last.tMs, frame.tMs - last.tMs <= 120
+            guard inBand(frame), let last = previous, inBand(last), frame.tMs > last.tMs, frame.tMs - last.tMs <= 120
             else { continue }
             var segment = Path()
             segment.move(to: point(last))
@@ -42,7 +44,7 @@ struct PitchTraceView: View {
             context.opacity = 0.6 + 0.4 * Double(min(max(frame.confidence, 0), 1))
             context.stroke(segment, with: .color(.accentColor), style: style)
         }
-        if let newest = signal.frames.last, newest.midi.isFinite {
+        if let newest = signal.frames.last, inBand(newest) {
             context.opacity = 1
             let center = point(newest)
             context.fill(Path(ellipseIn: CGRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8)), with: .color(.accentColor))
@@ -59,12 +61,13 @@ enum ContourPath {
         let semitone = rect.height / 24
         var drawing = false
         for (index, value) in values.enumerated() {
-            guard value.isFinite else {
+            // Unvoiced frames and octave slips beyond the ±12 band are gaps.
+            guard value.isFinite, abs(value - median) <= 12 else {
                 drawing = false
                 continue
             }
             let x = rect.minX + CGFloat(index) / CGFloat(count - 1) * rect.width
-            let y = rect.midY - CGFloat(min(max(value - median, -12), 12)) * semitone
+            let y = rect.midY - CGFloat(value - median) * semitone
             if drawing {
                 path.addLine(to: CGPoint(x: x, y: y))
             } else {
