@@ -82,8 +82,13 @@ const OVERLAP_SLACK_MS: i64 = 60_000;
 const CONFIRM_REACH_MS: u64 = 40_000;
 /// ...and needs this much room on that side.
 const CONFIRM_ROOM_MS: u64 = 20_000;
-/// A leading or trailing stretch shorter than this joins the first/last track.
+/// A leading or trailing stretch shorter than this joins the first/last track...
 const EDGE_ABSORB_MS: u64 = 30_000;
+/// ...or this, when nothing else was recognized there.
+const EDGE_ABSORB_QUIET_MS: u64 = 120_000;
+/// A local match shows a recording is audible; its first recognizer answer this
+/// soon after shows it dominates.
+const DOMINANCE_LOOKAHEAD_MS: u64 = 180_000;
 /// Paid provider calls per analysis.
 const MAX_PAID: u32 = 30;
 /// Largest DJ speed change searched by local matching (pitch faders go to ±8 %).
@@ -1168,6 +1173,11 @@ impl<S: Services> Mix<'_, S> {
         Ok(())
     }
 
+    /// Nothing but unanswered probes in `[lo, hi)`.
+    fn only_misses(&self, lo: u64, hi: u64) -> bool {
+        !self.anchors.iter().any(|a| !self.refuted.contains(&a.id) && a.at_ms + a.len_ms > lo && a.at_ms < hi)
+    }
+
     fn drop_answer(&mut self, a: &Anchor, why: &str) {
         self.log(format!("dropped {} – {} ({why})", a.track.artist, a.track.title));
         self.refuted.insert(a.id.clone());
@@ -1310,7 +1320,9 @@ impl<S: Services> Mix<'_, S> {
         // Start of the first piece.
         let first = anchors[0];
         let mut start = first.start_est.map_or(first.at_ms, |s| s.clamp(lo as i64, first.at_ms as i64) as u64);
-        if start.saturating_sub(lo) < EDGE_ABSORB_MS {
+        // Mixes open with their first track; an intro nothing else was heard in belongs to it.
+        let absorb = if self.only_misses(lo, start) { EDGE_ABSORB_QUIET_MS } else { EDGE_ABSORB_MS };
+        if start.saturating_sub(lo) < absorb {
             start = lo;
         }
         let mut current_start = start;
@@ -1321,9 +1333,11 @@ impl<S: Services> Mix<'_, S> {
                 None => {
                     let seen = a.seen_until().min(hi);
                     let end = match a.end_est {
-                        Some(e) if (e.max(seen as i64) as u64) + EDGE_ABSORB_MS < hi => e.max(seen as i64) as u64,
-                        _ => hi,
+                        Some(e) => (e.max(seen as i64) as u64).min(hi),
+                        None => hi,
                     };
+                    let absorb = if self.only_misses(end, hi) { EDGE_ABSORB_QUIET_MS } else { EDGE_ABSORB_MS };
+                    let end = if end + absorb < hi { end } else { hi };
                     (end, hi)
                 }
             };
@@ -1331,10 +1345,19 @@ impl<S: Services> Mix<'_, S> {
             bounds.push((current_start, end));
             current_start = next_start.clamp(end, hi);
         }
+        // Answers of one play (no replay in between) share its start estimate,
+        // so stitching joins their pieces even when a loop moved an estimate.
+        let mut play_start: Vec<Option<i64>> = Vec::with_capacity(anchors.len());
+        for (k, a) in anchors.iter().enumerate() {
+            let same_play =
+                k > 0 && hints::same_recording(&anchors[k - 1].track, &a.track) && !is_replay(anchors[k - 1], a);
+            play_start.push(if same_play { play_start[k - 1].or(a.start_est) } else { a.start_est });
+        }
         anchors
             .iter()
             .zip(bounds)
-            .map(|(a, (s, e))| Piece {
+            .zip(play_start)
+            .map(|((a, (s, e)), track_start)| Piece {
                 id: a.id.clone(),
                 item_index: self.options.item_index,
                 start_ms: s,
@@ -1343,7 +1366,7 @@ impl<S: Services> Mix<'_, S> {
                 track: Some(a.track.clone()),
                 evidence: vec![a.evidence.clone()],
                 alternates: Vec::new(),
-                track_start_ms: a.start_est,
+                track_start_ms: track_start,
             })
             .collect()
     }
@@ -1386,11 +1409,32 @@ impl<S: Services> Mix<'_, S> {
     /// to listen when refining it).
     fn transition(&self, a: &Anchor, b: &Anchor) -> (u64, u64) {
         let lo = a.seen_until();
-        let hi = b.seen_from().max(lo);
+        let hi = self.dominant_from(b).max(lo);
         let in_range = |t: i64| t >= lo as i64 && t <= hi as i64;
         let start = b.start_est.filter(|s| in_range(*s)).map_or(lo, |s| s as u64);
         let end = a.end_est.filter(|e| in_range(*e) && *e as u64 >= start).map_or(hi, |e| e as u64);
         (start, end.max(start))
+    }
+
+    /// From when `b`'s play surely dominates: a preview found locally only
+    /// shows the recording is audible (often its intro under the previous
+    /// track), so the first recognizer answer of the same play counts.
+    fn dominant_from(&self, b: &Anchor) -> u64 {
+        if b.kind == AnchorKind::Recognizer {
+            return b.seen_from();
+        }
+        self.anchors
+            .iter()
+            .filter(|x| {
+                x.kind == AnchorKind::Recognizer
+                    && !self.refuted.contains(&x.id)
+                    && x.at_ms >= b.at_ms
+                    && x.at_ms <= b.at_ms + DOMINANCE_LOOKAHEAD_MS
+                    && hints::same_recording(&x.track, &b.track)
+            })
+            .map(Anchor::seen_from)
+            .min()
+            .unwrap_or_else(|| b.seen_from())
     }
 
     /// Note how each change between two recordings was placed (evaluation aid).
