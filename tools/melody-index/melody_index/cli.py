@@ -94,9 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("artist")
     p.add_argument("title")
 
-    p = sub.add_parser("export", help="stage 5: JSONL + stats.json")
+    p = sub.add_parser("export", help="stage 5: JSONL + stats.json (optionally for a download tier)")
     p.add_argument("--date")
     p.add_argument("--min-agreement", type=float)
+    p.add_argument("--tier", choices=["android", "mac"], help="preset song count and index size budget")
+    p.add_argument("--max-songs", type=int, help="keep the most popular N songs")
+    p.add_argument("--budget-mb", type=float, help="estimated index size; full tracks go to the top songs that fit")
 
     p = sub.add_parser("eval-synth", help="stage 6a: synthetic hummed queries")
     p.add_argument("--n", type=int, default=300)
@@ -207,7 +210,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "export":
         from . import export
 
-        out = export.run(P, date=args.date, min_agreement=args.min_agreement)
+        out = export.run(
+            P, date=args.date, min_agreement=args.min_agreement, tier=args.tier, max_songs=args.max_songs,
+            budget_mb=args.budget_mb,
+        )
     elif args.cmd == "eval-synth":
         from . import evalset
 
