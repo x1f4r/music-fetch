@@ -159,6 +159,16 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                         onCheck = viewModel::checkMelody,
                     )
                 }
+                item { Header(R.string.settings_while_humming) }
+                item {
+                    val on = settings?.autoStop ?: true
+                    ListRow(
+                        headline = stringResource(R.string.settings_auto_stop),
+                        trailing = { Switch(checked = on, onCheckedChange = null) },
+                        modifier = Modifier.semantics { role = Role.Switch },
+                        onClick = { viewModel.setAutoStop(!on) },
+                    )
+                }
 
                 item { Header(R.string.settings_services) }
                 item {

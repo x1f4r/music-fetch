@@ -19,6 +19,7 @@ import app.musicfetch.core.Candidate
 import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ErrorCode
 import app.musicfetch.core.ListenMode
+import app.musicfetch.core.ListenOptions
 import app.musicfetch.core.LiveSession
 import app.musicfetch.core.MfException
 import app.musicfetch.core.Notice
@@ -27,6 +28,7 @@ import app.musicfetch.core.Phase
 import app.musicfetch.core.SessionEvent
 import app.musicfetch.core.SessionKind
 import app.musicfetch.core.SessionObserver
+import app.musicfetch.core.SessionStatus
 import app.musicfetch.engine.EngineHost
 import app.musicfetch.engine.EngineUnavailableException
 import app.musicfetch.notify.Notifications
@@ -217,10 +219,11 @@ class ListenController(
             fail(gen, ErrorCode.PLATFORM, message)
             return
         }
+        val options = ListenOptions(autoStop = settings.current().autoStop)
         val live = try {
-            engine.startListening(source, mode, Observer(gen))
+            engine.startListeningWith(source, mode, options, Observer(gen))
         } catch (e: MfException) {
-            Log.w(TAG, "startListening failed", e)
+            Log.w(TAG, "startListeningWith failed", e)
             audio.stop()
             fail(gen, ErrorCode.INTERNAL, e.message ?: "Couldn't start listening.")
             return
@@ -318,12 +321,31 @@ class ListenController(
                     is Outcome.NoMatch -> ListenResult.NoMatch(id, outcome.reason)
                     is Outcome.Completed -> null
                 } ?: ListenResult.Failed(id, ErrorCode.INTERNAL, "Something went wrong.")
-                end(gen, result)
+                if (result is ListenResult.NoMatch) endUnlessWaiting(gen, result) else end(gen, result)
             }
             is SessionEvent.Candidates -> lastCandidates = event.candidates
-            is SessionEvent.Failed -> end(gen, ListenResult.Failed(_state.value.sessionId, event.code, event.message))
+            is SessionEvent.Failed ->
+                endUnlessWaiting(gen, ListenResult.Failed(_state.value.sessionId, event.code, event.message))
             is SessionEvent.Canceled -> end(gen, null)
             else -> Unit
+        }
+    }
+
+    /**
+     * A session without an answer may have been saved for later because the phone is offline
+     * (status `Waiting`); the stored status tells, whatever the terminal event was.
+     */
+    private fun endUnlessWaiting(gen: Long, result: ListenResult) {
+        val id = result.sessionId ?: return end(gen, result)
+        scope.launch(Dispatchers.IO) {
+            val waiting = runCatching { engineHost.engine().session(id)?.entry?.status == SessionStatus.WAITING }
+                .getOrDefault(false)
+            if (waiting) {
+                end(gen, ListenResult.Waiting(id))
+                app.appGraph.waitingRetry.onWaitingSaved()
+            } else {
+                end(gen, result)
+            }
         }
     }
 

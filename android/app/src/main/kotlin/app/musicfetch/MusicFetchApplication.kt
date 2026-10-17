@@ -10,6 +10,7 @@ import app.musicfetch.analysis.SegmentFix
 import app.musicfetch.capture.ListenController
 import app.musicfetch.engine.EngineHost
 import app.musicfetch.engine.MelodyLibrary
+import app.musicfetch.engine.WaitingRetry
 import app.musicfetch.notify.Notifications
 import app.musicfetch.platform.CredentialStore
 import app.musicfetch.platform.LowPower
@@ -53,6 +54,7 @@ class MusicFetchApplication :
         // headroom start them now so the first link is fast; on the low-power path they start
         // when a link is about to be identified.
         if (!graph.lowPower.enabled.value) graph.engineHost.mediaBackend.warmUp()
+        graph.waitingRetry.start()
     }
 
     /** Artwork only: small caches, smaller still on weak phones. */
@@ -86,6 +88,7 @@ class AppGraph(val app: Application) {
     val analyses = AnalysisController(app, scope, engineHost, settings)
     val melody = MelodyLibrary(scope, engineHost)
     val deletions = Deletions(scope, engineHost) { notifyLibraryChanged() }
+    val waitingRetry = WaitingRetry(app, scope, engineHost)
 
     /**
      * Where results open (docs/APPS.md, "Opening links"); before the user decided, what the

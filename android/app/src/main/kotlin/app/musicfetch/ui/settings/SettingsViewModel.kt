@@ -53,6 +53,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { graph.settings.setNotifyInBackground(on) }
     }
 
+    fun setAutoStop(on: Boolean) {
+        viewModelScope.launch { graph.settings.setAutoStop(on) }
+    }
+
     fun setCredential(field: CredentialField, value: String) {
         viewModelScope.launch { graph.credentials.set(field, value) }
     }

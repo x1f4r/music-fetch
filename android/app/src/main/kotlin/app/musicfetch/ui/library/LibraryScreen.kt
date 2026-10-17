@@ -346,6 +346,14 @@ private fun LibraryRow(entry: LibraryEntry, onClick: () -> Unit) {
             if (entry.status == SessionStatus.RUNNING) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
+            } else if (entry.status == SessionStatus.WAITING) {
+                Icon(
+                    painterResource(R.drawable.ic_cloud_off),
+                    contentDescription = null,
+                    tint = colors.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
             }
             Text(
                 Formatters.timeOfDay(entry.createdAtMs),
@@ -406,6 +414,7 @@ private fun subtitle(entry: LibraryEntry): String {
     return when {
         entry.status == SessionStatus.RUNNING && count > 0 -> pluralStringResource(R.plurals.tracks_so_far, count, count)
         entry.status == SessionStatus.RUNNING -> stringResource(R.string.library_running)
+        entry.status == SessionStatus.WAITING -> stringResource(R.string.library_waiting)
         entry.status == SessionStatus.FAILED -> stringResource(R.string.library_failed)
         entry.status == SessionStatus.NO_MATCH -> stringResource(R.string.library_no_match)
         entry.status == SessionStatus.CANCELED && count == 0 -> stringResource(R.string.library_canceled)

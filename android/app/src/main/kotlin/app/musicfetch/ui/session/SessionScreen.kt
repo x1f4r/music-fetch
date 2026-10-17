@@ -49,6 +49,7 @@ import app.musicfetch.R
 import app.musicfetch.core.ExportFormat
 import app.musicfetch.core.LibraryEntry
 import app.musicfetch.core.SessionKind
+import app.musicfetch.core.SessionStatus
 import app.musicfetch.core.Track
 import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.common.ListRow
@@ -280,17 +281,27 @@ private fun EmptyContent(view: SessionView.Empty, viewModel: SessionViewModel, o
                     maxLines = 2,
                 )
             }
+            // Saved while offline: identified automatically once the phone is connected again.
+            val waiting = entry?.status == SessionStatus.WAITING
             Text(
                 when {
+                    waiting -> stringResource(R.string.library_waiting)
                     view.running -> stringResource(R.string.library_running)
                     view.failed -> view.message ?: stringResource(R.string.error_generic)
                     else -> view.message ?: stringResource(R.string.state_no_match)
                 },
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+                modifier = Modifier.padding(top = 8.dp, bottom = if (waiting) 4.dp else 16.dp),
             )
-            if (!view.running) {
+            if (waiting) {
+                Text(
+                    stringResource(R.string.session_waiting_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            } else if (!view.running) {
                 FilledTonalButton(onClick = {
                     val url = entry?.sourceUrl
                     if (entry?.kind == SessionKind.LINK && url != null) AppIntents.analyzeLater(url)

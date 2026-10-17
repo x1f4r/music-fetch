@@ -141,7 +141,7 @@ internal fun MixContent(view: SessionView.Mix, viewModel: SessionViewModel, onBa
                         onConfirm = { segment.track?.let { viewModel.correct(segment, it) } },
                         onReject = {
                             selectedId = segment.id
-                            sheetId = segment.id
+                            viewModel.reject(segment)
                         },
                         onHumIt = { humIt(viewModel, segment) },
                         modifier = Modifier.animateItem(),
@@ -374,6 +374,10 @@ private fun SegmentSheet(
                         viewModel.correct(segment, track)
                         onDismiss()
                     }) { Text(stringResource(R.string.mix_confirm)) }
+                    FilledTonalButton(onClick = {
+                        viewModel.reject(segment)
+                        onDismiss()
+                    }) { Text(stringResource(R.string.mix_not_this)) }
                 }
             }
             if (segment.alternates.isNotEmpty()) {

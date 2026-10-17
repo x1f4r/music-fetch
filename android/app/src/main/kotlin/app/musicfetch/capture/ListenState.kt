@@ -42,6 +42,9 @@ sealed interface ListenResult {
     data class NoMatch(override val sessionId: String?, val reason: NoMatchReason) : ListenResult
 
     data class Failed(override val sessionId: String?, val code: ErrorCode, val message: String) : ListenResult
+
+    /** Captured while offline: stored with status `Waiting` and identified once a connection is back. */
+    data class Waiting(override val sessionId: String) : ListenResult
 }
 
 /** Everything the Listen stage, the capture notification and the tiles show. */

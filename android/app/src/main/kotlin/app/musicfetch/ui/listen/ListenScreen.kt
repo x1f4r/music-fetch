@@ -505,6 +505,9 @@ private fun Stage(
                 done is ListenResult.Failed -> ActionRow {
                     FilledTonalButton(onClick = onTryAgain) { Text(stringResource(R.string.action_try_again)) }
                 }
+                done is ListenResult.Waiting -> ActionRow {
+                    FilledTonalButton(onClick = { viewModel.dismissResult() }) { Text(stringResource(R.string.action_ok)) }
+                }
                 else -> SourceToggles(
                     selected = when {
                         state.isActive && state.source == CaptureSource.SYSTEM_AUDIO -> ListenSource.Phone
@@ -574,6 +577,7 @@ private fun stateLine(
         }
         done is ListenResult.NoMatch -> stringResource(Notifications.noMatchText(done.reason))
         done is ListenResult.Failed -> done.message.ifBlank { stringResource(Notifications.errorText(done.code)) }
+        done is ListenResult.Waiting -> stringResource(R.string.state_offline)
         else -> stringResource(R.string.state_idle)
     }
 }

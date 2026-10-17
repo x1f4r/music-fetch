@@ -173,6 +173,10 @@ object Notifications {
                     .setContentIntent(openApp(context, null))
                 addTryAgain(context, builder, state)
             }
+            is ListenResult.Waiting -> {
+                builder.setContentTitle(context.getString(R.string.state_offline))
+                    .setContentIntent(openApp(context, result.sessionId))
+            }
         }
         notify(context, LISTEN_RESULT_ID, builder.build())
     }

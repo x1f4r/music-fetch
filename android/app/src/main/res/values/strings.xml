@@ -281,6 +281,13 @@
     <string name="provider_skip">Skip</string>
     <string name="provider_custom_edit">Edit</string>
 
+    <!-- Low power, offline, segment edits -->
+    <string name="settings_while_humming">While humming</string>
+    <string name="settings_auto_stop">Stop automatically after a pause</string>
+    <string name="state_offline">You\'re offline. Saved to identify later.</string>
+    <string name="library_waiting">Waiting for connection</string>
+    <string name="session_waiting_message">It will be identified when you\'re back online.</string>
+
     <plurals name="mix_eta">
         <item quantity="one">About %d min left</item>
         <item quantity="other">About %d min left</item>

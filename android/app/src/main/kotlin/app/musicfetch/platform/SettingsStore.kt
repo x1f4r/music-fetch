@@ -30,6 +30,8 @@ data class AppSettings(
     val customProvider: CustomProvider? = null,
     /** Post a notification when a result arrives while the app is in the background. */
     val notifyInBackground: Boolean = true,
+    /** "Stop automatically after a pause" while humming (`ListenOptions.auto_stop`). */
+    val autoStop: Boolean = true,
     /** Last selected source toggle; phone audio is never restored (it needs consent each time). */
     val listenSource: ListenSource = ListenSource.Microphone,
     /** The microphone explanation was shown once. */
@@ -60,6 +62,7 @@ class SettingsStore(context: Context) {
             provider = readProvider(prefs),
             customProvider = readCustom(prefs),
             notifyInBackground = prefs[NOTIFY] ?: true,
+            autoStop = prefs[AUTO_STOP] ?: true,
             listenSource = prefs[SOURCE]?.let { name -> ListenSource.entries.firstOrNull { it.name == name } }
                 ?.takeIf { it != ListenSource.Phone } ?: ListenSource.Microphone,
             micExplained = prefs[MIC_EXPLAINED] ?: false,
@@ -89,6 +92,7 @@ class SettingsStore(context: Context) {
     }
 
     suspend fun setNotifyInBackground(on: Boolean) = data.edit { it[NOTIFY] = on }
+    suspend fun setAutoStop(on: Boolean) = data.edit { it[AUTO_STOP] = on }
     suspend fun setListenSource(source: ListenSource) = data.edit { it[SOURCE] = source.name }
     suspend fun setMicExplained() = data.edit { it[MIC_EXPLAINED] = true }
     suspend fun setPhoneAudioExplained() = data.edit { it[PHONE_EXPLAINED] = true }
@@ -133,6 +137,7 @@ class SettingsStore(context: Context) {
         val CUSTOM_NAME = stringPreferencesKey("custom_provider_name")
         val CUSTOM_TEMPLATE = stringPreferencesKey("custom_provider_template")
         val NOTIFY = booleanPreferencesKey("notify_background")
+        val AUTO_STOP = booleanPreferencesKey("auto_stop")
         val SOURCE = stringPreferencesKey("listen_source")
         val MIC_EXPLAINED = booleanPreferencesKey("mic_explained")
         val PHONE_EXPLAINED = booleanPreferencesKey("phone_audio_explained")

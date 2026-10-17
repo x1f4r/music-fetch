@@ -11,10 +11,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
+import app.musicfetch.R
 import app.musicfetch.analysis.AnalysisState
 import app.musicfetch.analysis.SegmentFix
 import app.musicfetch.appGraph
 import app.musicfetch.core.Candidate
+import app.musicfetch.core.EngineInterface
 import app.musicfetch.core.ExportFormat
 import app.musicfetch.core.LibraryEntry
 import app.musicfetch.core.Lyrics
@@ -295,20 +297,30 @@ class SessionViewModel(app: Application, private val id: String) : AndroidViewMo
     }
 
     /** Confirm a mix segment's track, or replace it with an alternate. */
-    fun correct(segment: Segment, track: Track) {
+    fun correct(segment: Segment, track: Track) = edit("correction") { engine -> engine.correctSegment(id, segment.id, track) }
+
+    /** "Not this": the segment becomes unidentified and its track is kept as an alternate. */
+    fun reject(segment: Segment) = edit("rejection") { engine -> engine.rejectSegment(id, segment.id) }
+
+    private fun edit(what: String, change: (EngineInterface) -> Segment) {
         viewModelScope.launch {
             val engine = runCatching { graph.engineHost.engine() }.getOrNull() ?: return@launch
             val updated = withContext(Dispatchers.IO) {
                 try {
-                    engine.correctSegment(id, segment.id, track)
+                    change(engine)
                 } catch (e: MfException) {
-                    Log.w(TAG, "correction failed", e)
+                    Log.w(TAG, "$what failed", e)
                     null
                 }
-            } ?: return@launch
+            }
+            if (updated == null) {
+                _messages.value = getApplication<Application>().getString(R.string.error_generic)
+                return@launch
+            }
             _detail.update { d -> d?.copy(segments = d.segments.map { if (it.id == updated.id) updated else it }) }
             _live.update { l -> l?.copy(segments = l.segments.map { if (it.id == updated.id) updated else it }) }
             rebuild()
+            graph.notifyLibraryChanged()
         }
     }
 
