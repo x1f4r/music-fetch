@@ -23,7 +23,7 @@ from .fulltrack import Song, score_candidate, ytdlp
 from .guard import SourceGuard
 from .net import session
 from .normalize import foreign_featured_artist, primary_artist, title_core
-from .sources import Pick
+from .sources import Pick, ram_dir, ytdlp_ram_args
 
 log = logging.getLogger("mfidx.dailymotion")
 
@@ -57,7 +57,7 @@ class Dailymotion:
         )
         self.guard = self.api
         self.guards = (self.api, self.media)
-        self.cmd = ytdlp()
+        self.cmd = ytdlp() + ytdlp_ram_args()
         self.failures = 0
 
     def search(self, song: Song, limit: int = 15) -> list[dict[str, Any]]:
@@ -104,7 +104,7 @@ class Dailymotion:
             proc = subprocess.run(
                 self.cmd + ["-f", "worst[acodec!=none]/worst", "-o", "-",
                             f"https://www.dailymotion.com/video/{p.key}"],
-                capture_output=True, timeout=300, check=False,
+                capture_output=True, timeout=300, check=False, cwd=ram_dir(),
             )
         except subprocess.TimeoutExpired as e:
             self._failed("timeout")

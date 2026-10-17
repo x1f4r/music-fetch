@@ -29,7 +29,7 @@ from .extract import DecodeError, decode_audio
 from .fulltrack import Song, score_candidate, ytdlp
 from .guard import SourceGuard
 from .normalize import foreign_featured_artist
-from .sources import Pick
+from .sources import Pick, ram_dir, ytdlp_ram_args
 
 log = logging.getLogger("mfidx.youtube")
 
@@ -86,7 +86,7 @@ class YouTube:
             stop=stop,
         )
         self.guards = (self.guard,)
-        self.cmd = [a for a in ytdlp() if a != "--no-warnings"]
+        self.cmd = [a for a in ytdlp() if a != "--no-warnings"] + ytdlp_ram_args()
         pot = os.environ.get("MFIDX_POT_URL")
         if pot:
             self.cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={pot}"]
@@ -97,7 +97,7 @@ class YouTube:
         self.guard.acquire()
         self.stats["runs"] += 1
         try:
-            p = subprocess.run(self.cmd + args, capture_output=True, timeout=timeout, check=False)
+            p = subprocess.run(self.cmd + args, capture_output=True, timeout=timeout, check=False, cwd=ram_dir())
         except subprocess.TimeoutExpired as e:
             self._failed("yt-dlp timed out")
             raise YouTubeError("yt-dlp timed out") from e

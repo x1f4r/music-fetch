@@ -19,6 +19,7 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import os
 import random
 import threading
 import time
@@ -74,23 +75,27 @@ class SourceGuard:
     # ------------------------------------------------------------------ state file
 
     def _update(self, fn) -> Any:
-        with self._lock, open(self.path, "a+") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
+        """Read, change and write the state under an exclusive lock (``<name>.guard.lock``).
+
+        The state file is replaced atomically, so a process killed mid-write never leaves an
+        empty or half-written state (which would forget pauses and the 24-h count).
+        """
+        lock_path = self.path.with_name(self.path.name + ".lock")
+        with self._lock, open(lock_path, "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
             try:
-                f.seek(0)
-                raw = f.read()
                 try:
+                    raw = self.path.read_text()
                     state = json.loads(raw) if raw.strip() else {}
-                except ValueError:
+                except (OSError, ValueError):
                     state = {}
                 result = fn(state, time.time())
-                f.seek(0)
-                f.truncate()
-                f.write(json.dumps(state))
-                f.flush()
+                tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(state))
+                os.replace(tmp, self.path)
                 return result
             finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
     def state(self) -> dict[str, Any]:
         return self._update(lambda s, now: dict(s))

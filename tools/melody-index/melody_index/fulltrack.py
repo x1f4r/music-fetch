@@ -82,7 +82,8 @@ MAX_TRACK_S = 900.0
 _BAD_VIDEO_RE = re.compile(
     r"\b(?:live|en vivo|ao vivo|concert|tour|cover|karaoke|instrumental|remix|sped[ -]?up|slowed|reverb|"
     r"8d|nightcore|1 hour|10 hours|loop|reaction|tutorial|lesson|piano|guitar|drum|bass boosted|"
-    r"extended|mashup|medley|reprise|acapella|a cappella|teaser|trailer|snippet|preview|shorts?)\b",
+    r"extended|mashup|medley|reprise|acapella|a cappella|teaser|trailer|snippet|preview|shorts?|"
+    r"acoustic|sessions?|unplugged|tiny desk|lo-?fi|phonk|overlapped|rework|bootleg)\b",
     re.I,
 )
 

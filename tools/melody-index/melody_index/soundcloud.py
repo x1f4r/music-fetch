@@ -47,10 +47,11 @@ MAX_BYTES = 40_000_000
 DURATION_TOLERANCE_S = 10.0
 # Uploads that are not the recording (unless the song title says so itself).
 _NOT_RECORDING_RE = re.compile(
-    r"\b(?:nightcore|sped[ -]?up|slowed|reverb|[0-9]+d(?: audio)?|remix|rmx|bootleg|edit|flip|rework|cover|"
-    r"vip|mashup|type beat|acoustic|tiny desk|remake|live|session|unplugged|piano|guitar|instrumental|"
-    r"karaoke|bass ?boost(?:ed)?|extended|loop|hours?|reprise|demo|snippet|preview|teaser|chopped|"
-    r"screwed|tribute|medley|version|ver)\b|\s[x×]\s",
+    r"\b(?:nightcore|sped[ -]?up|slowed|reverb|[0-9]+d(?: audio)?|remix(?:es|ed)?|rmx|bootleg|edits?|flip|"
+    r"rework|covers?|vip|mashups?|type beat|acoustic|tiny desk|remake|live|sessions?|unplugged|piano|guitar|"
+    r"instrumental|karaoke|bass ?boost(?:ed)?|extended|loop|hours?|reprise|demo|snippet|preview|teaser|"
+    r"chopped|screwed|tribute|medley|versions?|ver|overlapped|a ?cappella|acapp?ella|vocals? only|lo-?fi|"
+    r"phonk|orchestral|symphonic|choir|amapiano|drill remix|jersey club)\b|\s[x×]\s",
     re.I,
 )
 # Preferred transcodings, best first (small AAC is plenty for melody extraction).

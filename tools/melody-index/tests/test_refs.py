@@ -201,3 +201,38 @@ def test_plan_refresh_adds_new_songs(tmp_path):
     conn.execute("INSERT INTO deezer(song_id, status, duration) VALUES (4, 'ok', 100)")
     assert plan.refresh(conn) == 1
     assert plan.next("soundcloud").song_id == 4  # most popular first
+
+
+def test_more_versions_are_rejected_by_title():
+    s = ("Thinkin' Bout Me", "Morgan Wallen", 177, None)
+    assert score_candidate(cand("Morgan Wallen - Thinkin' Bout Me (Abbey Road Sessions)", "x", 178), *s)[1] == "version"
+    s = ("Pink + White", "Frank Ocean", 184, None)
+    assert score_candidate(cand("pink + white - frank ocean (OVERLAPPED)", "x", 185), *s)[1] == "version"
+    assert score_candidate(cand("Frank Ocean - Pink + White (lofi)", "x", 185), *s)[1] == "version"
+    assert score_candidate(cand("Frank Ocean - Pink + White", "x", 185), *s)[1] == "ok"
+
+
+def test_ytdlp_runs_in_ram(tmp_path):
+    import os
+
+    import pytest
+
+    if not os.path.isdir("/dev/shm"):
+        pytest.skip("no /dev/shm")
+    from melody_index.config import Paths
+    from melody_index.sources import ram_dir
+    from melody_index.youtube import YouTube
+
+    yt = YouTube(Paths(tmp_path))
+    assert str(ram_dir()).startswith("/dev/shm/") and ram_dir().is_dir()
+    assert "--paths" in yt.cmd and f"temp:{ram_dir()}" in yt.cmd
+
+
+def test_guard_state_is_replaced_atomically(tmp_path):
+    g = SourceGuard(tmp_path / "a.guard", limit=10, window=60.0)
+    g.acquire()
+    g.blocked("HTTP 429")
+    state = json.loads((tmp_path / "a.guard").read_text())
+    assert state["blocks"] == 1 and state["requests"] == 1
+    assert (tmp_path / "a.guard.lock").exists()
+    assert not list(tmp_path.glob(".*.tmp"))
