@@ -55,6 +55,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--groups", type=Path, help="JSON {id: {youtube_id}} (default: eval/chad/groups.json)")
     p.add_argument("--interval", type=float, default=12.5)
 
+    p = sub.add_parser(
+        "refs", help="stage 3c: verified full tracks (SoundCloud, Dailymotion, YouTube) and iTunes windows (GPU)"
+    )
+    p.add_argument("--top", type=int, default=15000, help="songs by popularity")
+    p.add_argument("--sources", default="soundcloud,dailymotion,youtube,itunes", help="comma-separated, in order")
+    p.add_argument("--soundcloud-workers", type=int, default=2)
+    p.add_argument("--youtube-per-hour", type=int, default=40, help="YouTube downloads per hour")
+    p.add_argument("--half", action="store_true", help="fp16 inference")
+    p.add_argument("--reset", metavar="GUARD", help="close a tripped breaker (e.g. youtube, soundcloud-api) and exit")
+
+    sub.add_parser("refs-status", help="stage 3c progress per source, ETA, breakers, eval-song coverage")
+
+    p = sub.add_parser("evergreen", help="themes, classics and children's songs that charts miss")
+    p.add_argument("--file", type=Path, help="TOML list (default: the bundled evergreen.toml)")
+
     p = sub.add_parser("midi", help="stage 4: Lakh MIDI melodies")
     p.add_argument("--step", choices=["all", "catalog", "link", "extract"], default="all")
     p.add_argument("--workers", type=int)
@@ -94,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     P = paths()
-    log = setup_logging(args.cmd if args.cmd not in ("status", "show") else "cli", args.verbose)
+    log = setup_logging(args.cmd if args.cmd not in ("status", "show", "refs-status") else "cli", args.verbose)
 
     if args.cmd == "universe":
         from . import universe
@@ -130,6 +145,32 @@ def main(argv: list[str] | None = None) -> int:
         out = fulltrack.run_eval_references(
             P, args.groups or P.eval / "chad" / "groups.json", interval=args.interval
         )
+    elif args.cmd == "refs":
+        from . import refs
+
+        if args.reset:
+            from .guard import SourceGuard
+
+            SourceGuard(P.state / f"{args.reset}.guard", limit=1, window=1).reset()
+            out = {"reset": args.reset}
+        else:
+            sources = tuple(s.strip() for s in args.sources.split(",") if s.strip())
+            unknown = [s for s in sources if s not in refs.ALL_SOURCES]
+            if unknown:
+                ap.error(f"unknown sources {unknown}; choose from {refs.ALL_SOURCES}")
+            out = refs.run(
+                P, top=args.top, sources=sources, soundcloud_workers=args.soundcloud_workers,
+                youtube_per_hour=args.youtube_per_hour, half=args.half,
+            )
+    elif args.cmd == "refs-status":
+        from . import refs
+
+        print(json.dumps(refs.status(P), indent=2, ensure_ascii=False, default=str))
+        return 0
+    elif args.cmd == "evergreen":
+        from . import evergreen
+
+        out = evergreen.run(P, args.file)
     elif args.cmd == "midi":
         from . import midi
 

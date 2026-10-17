@@ -91,6 +91,14 @@ def run(
         for r in conn.execute("SELECT song_id, phrases FROM track_melody WHERE status='ok' AND phrases IS NOT NULL"):
             audio[r["song_id"]] = json.loads(r["phrases"])
 
+    # Second preview windows (stage 3c), used only where no full track exists, and the symbolic
+    # melodies of evergreen tunes.
+    from .evergreen import symbolic_phrases
+    from .refs import window_phrases
+
+    windows = window_phrases(conn)
+    symbolic = symbolic_phrases(conn)
+
     rows = conn.execute(
         "SELECT s.id, s.title, s.artist, s.year, s.score, s.origin, d.status AS dz_status, d.deezer_id, d.isrc,"
         " d.release_date, d.has_preview, p.status AS p_status, p.phrases AS pp FROM songs s"
@@ -116,6 +124,9 @@ def run(
             + [_clean_phrase(p) for p in full]
             + [_clean_phrase(p) for p in midi_phrases]
         )
+        window = [] if full else windows.get(r["id"], [])
+        tune = symbolic.get(r["id"], [])
+        phrases += [_clean_phrase(p) for p in window] + [_clean_phrase(p) for p in tune]
         if not phrases:
             continue
         rec = {
@@ -134,6 +145,8 @@ def run(
             "midi": bool(midi_phrases),
             "origin": r["origin"],
         }
+        meta["window"] = bool(window)
+        meta["symbolic"] = bool(tune)
         records.append((r["score"], rec, meta))
 
     records.sort(key=lambda t: t[0], reverse=True)
@@ -205,8 +218,10 @@ def build_stats(
         "songs": len(records),
         "songs_by_source": by_kind,
         "songs_with_full_track": full_tracks,
+        "songs_with_second_window": sum(1 for _, _, m in records if m.get("window")),
+        "songs_with_symbolic_melody": sum(1 for _, _, m in records if m.get("symbolic")),
         "songs_by_origin": {
-            o: sum(1 for _, _, m in records if m["origin"] == o) for o in ("chart", "midi")
+            o: sum(1 for _, _, m in records if m["origin"] == o) for o in ("chart", "midi", "evergreen")
         },
         "phrases": sum(phrases_by_source.values()),
         "phrases_by_source": dict(phrases_by_source),
