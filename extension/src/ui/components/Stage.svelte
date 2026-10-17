@@ -19,9 +19,11 @@
     ontypelyric?: () => void;
     /** Hum without the melody library. */
     ondownloadmelody?: () => void;
+    /** A playlist or mix finished: show it in full. */
+    onopensession?: (sessionId: string) => void;
   }
 
-  let { listen, sources, ontypelyric, ondownloadmelody }: Props = $props();
+  let { listen, sources, ontypelyric, ondownloadmelody, onopensession }: Props = $props();
 
   const stage = $derived(listen.stage);
   const running = $derived(isRunning(stage));
@@ -71,6 +73,8 @@
     <button class="btn" onclick={tryAgain}>{t('action.tryAgain')}</button>
     {#if stage.source !== 'Hum'}<button class="btn" onclick={humIt}><span class="ic ic-hum s12"></span>{t('action.humIt')}</button>{/if}
     {#if ontypelyric}<button class="btn text" onclick={ontypelyric}><span class="ic ic-text s12"></span>{t('action.typeLyric')}</button>{/if}
+  {:else if stage.phase === 'completed' && stage.sessionId && onopensession}
+    <button class="btn" onclick={() => onopensession(stage.sessionId!)}>{t('action.open')}</button>
   {:else if stage.phase === 'failed'}
     <button class="btn" onclick={() => listen.reset()}>{t('action.tryAgain')}</button>
   {/if}

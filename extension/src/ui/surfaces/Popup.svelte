@@ -150,7 +150,7 @@
       {/if}
     </div>
     <div class="stage">
-      <Stage {listen} {sources} ontypelyric={focusField} ondownloadmelody={() => void engine.installMelodyIndex()} />
+      <Stage {listen} {sources} ontypelyric={focusField} ondownloadmelody={() => void engine.installMelodyIndex()} onopensession={(id) => openApp(`/session/${id}`)} />
     </div>
     {#if stage.humming && stage.phase === 'listening'}
       <div class="hint callout">{t('mic.keepOpen')}</div>
@@ -166,7 +166,7 @@
         <button class="chip" onclick={analyzePage}><span class="ic ic-mix s14"></span><span>{t('chip.analyzePage')} <span class="host">· {pageHost}</span></span></button>
       {/if}
     </div>
-    <Stage {listen} {sources} ontypelyric={focusField} ondownloadmelody={() => void engine.installMelodyIndex()} />
+    <Stage {listen} {sources} ontypelyric={focusField} ondownloadmelody={() => void engine.installMelodyIndex()} onopensession={(id) => openApp(`/session/${id}`)} />
     {#if recent}
       <SessionRow entry={recent} extra="recent" onclick={() => openApp(`/session/${recent.id}`)} />
     {/if}

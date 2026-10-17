@@ -115,7 +115,7 @@
         {/if}
       </div>
       <div class="stage">
-        <Stage {listen} {sources} ontypelyric={() => field?.focus()} ondownloadmelody={() => void engine.installMelodyIndex()} />
+        <Stage {listen} {sources} ontypelyric={() => field?.focus()} ondownloadmelody={() => void engine.installMelodyIndex()} onopensession={(id) => void platform.openApp(`/session/${id}`)} />
       </div>
       <div class="section-head">{t('library.recent')}</div>
       <div class="list">

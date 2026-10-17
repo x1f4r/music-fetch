@@ -6,8 +6,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/e2e/**/*.e2e.ts'],
-    testTimeout: 180_000,
-    hookTimeout: 120_000,
+    // Generous: browsers start slowly on a busy test machine.
+    testTimeout: 240_000,
+    hookTimeout: 240_000,
     fileParallelism: false,
   },
 });

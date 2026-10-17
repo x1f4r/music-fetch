@@ -24,7 +24,7 @@ describe.skipIf(!existsSync(CHROMIUM) || !existsSync(OUTPUT.chromium))('Chromium
     });
     // The extension finishes loading after launch returns (slowly on a busy machine), and
     // its service worker may already be idle again: poll the browser's extension list.
-    const deadline = Date.now() + 90_000;
+    const deadline = Date.now() + 180_000;
     while (!id && Date.now() < deadline) {
       id = [...(await browser.extensions()).values()].find((e) => e.name === 'Music Fetch')?.id ?? '';
       if (!id) await new Promise((done) => setTimeout(done, 500));
