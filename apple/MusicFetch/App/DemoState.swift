@@ -137,6 +137,8 @@ nonisolated struct DemoState: Sendable {
         case "session":
             app.openInLibrary(DemoFixtures.mixID)
         case "prePrompt":
+            // The explanation comes with choosing This Mac.
+            app.listen.select(.thisMac)
             app.listen.showForDemo(.systemAudioPrePrompt)
         case "micDenied":
             app.listen.showForDemo(.microphoneDenied)
