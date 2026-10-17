@@ -11,7 +11,9 @@
 //!    placements. No note segmentation is involved, so hums whose notes split,
 //!    merge or slide still vote for the right place.
 //! 2. **Quick check.** Each placement gets a short linear-scaling search
-//!    (tempo ±8 %, ±0.3 s) on a sparse sample of the query; the best go on.
+//!    (tempo ±8 %, ±0.3 s) on a sparse sample of the query, a coarse DTW and the
+//!    rhythm-free alignment; the score model ranks them on that, and the best go
+//!    on.
 //! 3. **Linear scaling** over tempos around the placement and shifts up to
 //!    ±0.75 s, with a clipped L1 distance (3 semitones) at the median key.
 //! 4. **DTW.** Subsequence DTW between voiced frames (reference sampled at the
@@ -157,8 +159,6 @@ const BUCKET_FRAMES: f32 = 20.0;
 const BIN_FRAMES: f32 = 10.0;
 /// Placements kept per track.
 const PLACEMENTS_PER_TRACK: usize = 2;
-/// Weight of the window votes in the quick check's ranking.
-const QUICK_VOTE_WEIGHT: f32 = 0.05;
 /// Quick-check tempo factors and shifts (frames).
 const QUICK_FACTORS: [f32; 3] = [0.92, 1.0, 1.08];
 const QUICK_SHIFTS: [f32; 5] = [-6.0, -3.0, 0.0, 3.0, 6.0];
@@ -1026,6 +1026,7 @@ fn rerank(q: &Query, refs: &mut References, placements: Vec<Placement>, options:
 /// Quick linear scaling of every placement on a sparse sample; the best `keep`
 /// go on (best first), each with its quick (key, tempo, anchor ms).
 fn quick_stage(q: &Query, refs: &mut References, placements: Vec<Placement>, keep: usize) -> Vec<(f32, Placement)> {
+    let index = refs.index;
     let sample: Vec<usize> = q.voiced.iter().copied().step_by(4).collect();
     let coarse_q: Vec<f32> = q.voiced.iter().step_by(2).map(|&i| q.contour[i]).collect();
     let coarse_t: Vec<f32> = q.voiced.iter().step_by(2).map(|&i| i as f32 * CONTOUR_MS as f32).collect();
@@ -1048,8 +1049,21 @@ fn quick_stage(q: &Query, refs: &mut References, placements: Vec<Placement>, kee
             let (_, key) = linear_cost(q, r, &sample, tempo, anchor_ms, None);
             let dtw = coarse_dtw(&coarse_q, &coarse_t, q.duration_ms(), r, key, tempo, anchor_ms).unwrap_or(cost + 1.0);
             let align = r.align_cost(q, tempo, anchor_ms, &mut rows);
-            // Contour and pitch-change evidence count alike; votes break near-ties.
-            let rank = dtw + align - QUICK_VOTE_WEIGHT * p.votes.min(4.0);
+            // The score model's utility on what the quick check knows (coverage and
+            // the edit distance only come with the full alignment).
+            let quick = Features {
+                votes: p.votes,
+                linear: cost,
+                dtw,
+                coverage: 0.0,
+                tempo: tempo.log2().abs(),
+                align,
+                edit: 0.0,
+                note_votes: p.note_votes,
+                reference: reference_feature(r.voiced),
+                prior: prior_feature(index.popularity(r.song)),
+            };
+            let rank = -utility(&quick);
             out.push((rank, Placement { tempo, anchor: anchor_ms / CONTOUR_MS as f32, ..p }));
         }
     }
@@ -1089,8 +1103,8 @@ fn full_stage(q: &Query, refs: &mut References, quick: Vec<(f32, Placement)>) ->
                 align,
                 edit,
                 note_votes: p.note_votes,
-                reference: (r.voiced.max(20) as f32 / 600.0).ln(),
-                prior: ((index.popularity(r.song) + 0.05) / 0.55).ln(),
+                reference: reference_feature(r.voiced),
+                prior: prior_feature(index.popularity(r.song)),
             },
             score: 0.0,
             key,
@@ -1302,6 +1316,16 @@ fn dtw(qv: &[f32], rv: &[f32], expected: &[usize], band: usize, key: f32) -> Opt
     }
     path.reverse();
     Some((total / n as f32, path))
+}
+
+/// [`Features::reference`] of a reference with this many voiced frames.
+fn reference_feature(voiced: u32) -> f32 {
+    (voiced.max(20) as f32 / 600.0).ln()
+}
+
+/// [`Features::prior`] of a song with this popularity.
+fn prior_feature(popularity: f32) -> f32 {
+    ((popularity + 0.05) / 0.55).ln()
 }
 
 /// The model's logit for one candidate.
