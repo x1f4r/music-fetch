@@ -2,7 +2,8 @@
 //! outputs from onnxruntime, and time it on one thread.
 //!
 //! Usage: tract-bench <encoder.onnx> <features.bin> <embeddings.bin> <batch>
-//! features.bin: f32 LE (batch, 3, 160); embeddings.bin: f32 LE (batch, 128).
+//! features.bin: f32 LE (batch, 3, 160); embeddings.bin: f32 LE (batch, dim).
+//! Times the plan with a symbolic batch, then plans with a concrete batch of 1, 4 and 8.
 
 use std::time::Instant;
 
@@ -39,6 +40,23 @@ fn main() -> TractResult<()> {
         }
         let dt = t.elapsed().as_secs_f64() / reps as f64;
         println!("tract batch {n}: {:.2} ms ({:.2} ms/window)", dt * 1e3, dt * 1e3 / n as f64);
+    }
+    for n in [1usize, 4, 8] {
+        let n = n.min(batch);
+        let mut m = tract_onnx::onnx().model_for_path(onnx)?;
+        m.set_input_fact(0, f32::fact(&[n, 3, 160]).into())?;
+        let plan = m.into_optimized()?.into_runnable()?;
+        let xs = Tensor::from_shape(&[n, 3, 160], &x[..n * 3 * 160])?;
+        let out = plan.run(tvec!(xs.clone().into()))?;
+        let got = out[0].to_plain_array_view::<f32>()?;
+        let d = got.iter().zip(&want).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
+        let reps = 50;
+        let t = Instant::now();
+        for _ in 0..reps {
+            plan.run(tvec!(xs.clone().into()))?;
+        }
+        let dt = t.elapsed().as_secs_f64() / reps as f64;
+        println!("tract concrete batch {n}: {:.2} ms ({:.2} ms/window), max abs diff {d:.2e}", dt * 1e3, dt * 1e3 / n as f64);
     }
     Ok(())
 }

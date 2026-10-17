@@ -27,6 +27,8 @@ uv sync            # CUDA torch on Linux, the default wheels elsewhere
 | train | `python -m melenc.train --out runs/a --steps 24000 --batch 512 --negs 2048` | `runs/a/model.pt`, `split.json` |
 | fine-tune with tracked and real hums | `python -m melenc.train --out runs/b --init runs/a/model.pt --tracked data/tracked1.pkl --qbsh data/qbsh.pkl ...` | |
 | evaluate (brute force on the GPU) | `python -m melenc.evaluate runs/a/model.pt data/refs-notes data/eval-chad.pkl --meta per-query.csv.gz --out runs/a/eval-notes.json --save-index runs/a/index-notes.npz` | recall@1/10/100/500 alone and in union with 97f-2's retrieval |
+| what rescued hums would score in the rerank | `python -m melenc.conversion <97f-2 eval.jsonl with --trace> runs/a/eval-notes-eval-chad-ranks.json --mode sum` | top-1 / top-10 ceiling with today's score model |
+| compressed-index recall | `python -m melenc.ann_diag runs/a/model.pt runs/a/index-notes.npz data/eval-chad.pkl --songs data/refs-notes-songs.json --variants flat-h2,pq64x4fs-h2,pq64x4fs-h2-top30000` | recall per hop, code and popularity tier |
 | export | `python -m melenc.export_onnx runs/a/model.pt runs/a/encoder.onnx data/eval-chad.pkl` | ONNX plus test vectors for tract |
 | compressed index, CPU cost | `python -m melenc.latency runs/a/index-notes.npz runs/a/encoder.onnx data/eval-chad.pkl --m 16 --hop-keep 2` | IVF-PQ recall, size, one-thread latency |
 | tract check | `cargo run --release --manifest-path tract-bench/Cargo.toml -- runs/a/encoder.onnx runs/a/encoder.onnx.features.bin runs/a/encoder.onnx.embeddings.bin 64` | tract vs onnxruntime, one-thread timing |

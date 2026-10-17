@@ -183,7 +183,9 @@ def main():
         if step % a.val_every == 0 or step == a.steps:
             m = val_metrics(model, val, dev)
             print("val", json.dumps({k: round(v, 4) if isinstance(v, float) else v for k, v in m.items()}), flush=True)
-            torch.save({"model": model.state_dict(), "args": vars(a), "step": step, "val": m}, f"{a.out}/model.pt")
+            ck = {"model": model.state_dict(), "args": vars(a), "step": step, "val": m}
+            torch.save(ck, f"{a.out}/model.pt")
+            torch.save(ck, f"{a.out}/model-{step}.pt")
         if step >= a.steps:
             break
     print("done", flush=True)
