@@ -120,9 +120,11 @@ are free to evolve as long as that surface holds.
 Run in parallel, then fused by identity:
 
 - **Melody:** f0 (SwiftF0; whistle path above ~1.2 kHz via half-speed trick) → median
-  filter, octave fixing, gap handling → notes + 20 fps contour → n-gram retrieval with
-  offset voting → linear scaling → subsequence DTW with key search → note edit distance
-  → score fusion with a popularity prior. Requires the melody index (downloadable).
+  filter, octave fixing, gap handling → notes + 20 fps contour → retrieval on continuous
+  per-song contours by key-invariant window vectors (inverted multi-index, alignment
+  voting) and by note n-grams → quick DTW + rhythm-free note alignment → linear scaling →
+  subsequence DTW with key search → calibrated score fusion with a popularity prior.
+  Requires the melody index (downloadable).
 - **Lyrics:** if speech is present, the app's `SpeechToText` transcribes the captured
   audio (macOS SpeechTranscriber, Android on-device recognizer). The core searches
   6–10-word windows across iTunes, Genius lyric search, YouTube Music and Deezer,

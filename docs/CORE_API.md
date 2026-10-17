@@ -81,6 +81,9 @@ English sentences without stack traces or URLs containing secrets.
 - Manifest (`EngineConfig.melody_index_manifest_url`), JSON:
   `{"version": "2026.10.1", "url": "https://…/melody-index.mfi", "sha256": "…", "bytes": 12345678, "songs": 41234, "min_core": "1.0.0"}`
 - Installed under `data_dir/melody/` as `melody-index.mfi` + `manifest.json`.
+- File format 2 (one continuous contour per song and source, window and note indexes; see
+  `melody/index.rs`). A core that reads another format moves the file aside like a damaged
+  one, so publish each format with `min_core` set to the first core that reads it.
 - Without an index, impression sessions still run lyrics and ACRCloud humming and emit
   `Notice::MelodyIndexMissing`.
 
@@ -98,4 +101,11 @@ One song per line, produced by `tools/melody-index` and consumed by `mf index bu
 - `notes`: `[pitch, onset_ms, dur_ms]`, pitch in fractional MIDI numbers, onset relative to
   the phrase start, sorted by onset, monophonic (no overlaps).
 - `source`: `"preview"` (30 s audio preview), `"audio"` (full track audio) or `"midi"`.
+- `start_ms`: the phrase's position in its source. The phrases of one source are placed on
+  one timeline (rests between them stay rests), so a hum may span several; phrases that
+  overlap in time (two MIDI parts) become separate timelines.
 - `popularity` in 0..=1; `isrc`, `deezer_id`, `year` may be null.
+- Optional `contours`: frame melodies, e.g.
+  `[{"source": "preview", "fps": 20, "pitch": [61.25, 61.5, null, …]}]` with fractional
+  MIDI pitches and `null` for unvoiced frames (other rates are resampled to 20 fps). A source
+  with a contour ignores its phrases.
