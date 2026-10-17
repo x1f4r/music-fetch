@@ -238,6 +238,9 @@ pub fn session_with_media(
         speech: None,
         runtime: tokio::runtime::Handle::current(),
         enrichment: false,
+        low_power: Default::default(),
+        pitch_low_power: Default::default(),
+        recognizer_url: String::new(),
     });
     let events = Arc::new(Events::default());
     let emitter = Emitter::new("s", events.clone(), store);

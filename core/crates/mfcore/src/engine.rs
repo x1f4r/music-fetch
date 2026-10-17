@@ -211,11 +211,11 @@ impl Engine {
     /// Reduce CPU and memory use (weak devices, battery saver). The engine also
     /// turns this on by itself on machines with few cores or little memory.
     pub fn set_low_power(&self, enabled: bool) {
-        let _ = enabled;
+        self.ctx.low_power.store(enabled, Ordering::Relaxed);
     }
 
     pub fn is_low_power(&self) -> bool {
-        false
+        self.ctx.is_low_power()
     }
 
     /// Mark a segment as not identified ("Not this"), keeping its track as an alternate.
@@ -614,6 +614,9 @@ impl Engine {
             speech,
             runtime: runtime.handle().clone(),
             enrichment: !options.offline_catalog,
+            low_power: AtomicBool::new(crate::util::system::SystemInfo::current().is_low_end()),
+            pitch_low_power: OnceLock::new(),
+            recognizer_url: options.shazam_base_url.clone().unwrap_or_else(|| crate::shazam::client::ENDPOINT.into()),
         });
         *ctx.melody.write() = melody_index::open_installed(&ctx);
 

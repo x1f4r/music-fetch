@@ -1,8 +1,9 @@
-//! Shared helpers: cancellation, HTTP, rate limiting, temp files, time.
+//! Shared helpers: cancellation, HTTP, rate limiting, system info, time.
 
 pub mod cancel;
 pub mod http;
 pub mod ratelimit;
+pub mod system;
 
 /// Current Unix time in milliseconds.
 pub fn now_ms() -> i64 {

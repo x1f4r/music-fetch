@@ -601,6 +601,18 @@ fn invalid_calls_return_errors() {
     assert!(Engine::new(bad, None, None, None).is_err());
 }
 
+#[test]
+fn low_power_follows_the_app() {
+    let server = shazam_server(MATCH_JSON);
+    let fx = engine_with(&server, "/manifest.json");
+    let detected = mfcore::util::system::SystemInfo::current().is_low_end();
+    assert_eq!(fx.engine.is_low_power(), detected, "defaults to what the hardware suggests");
+    fx.engine.set_low_power(true);
+    assert!(fx.engine.is_low_power());
+    fx.engine.set_low_power(false);
+    assert!(!fx.engine.is_low_power());
+}
+
 // ---------------------------------------------------------------- library
 
 #[test]
