@@ -203,6 +203,15 @@ impl SessionObserver for Events {
 /// A session on an in-memory store with no network services, for running a
 /// pipeline end to end with [`FakeServices`]. The work directory is under `dir`.
 pub fn session(dir: &std::path::Path, kind: SessionKind) -> (crate::pipeline::ctx::SessionCtx, Arc<Events>) {
+    session_with_media(dir, kind, None)
+}
+
+/// [`session`] with a media backend.
+pub fn session_with_media(
+    dir: &std::path::Path,
+    kind: SessionKind,
+    media: Option<Arc<dyn crate::platform::MediaBackend>>,
+) -> (crate::pipeline::ctx::SessionCtx, Arc<Events>) {
     use crate::pipeline::ctx::{EngineCtx, SessionCtx};
     let store = Arc::new(Store::open_in_memory().expect("store"));
     store.create_session("s", kind, "test", None, 0).expect("session");
@@ -224,7 +233,7 @@ pub fn session(dir: &std::path::Path, kind: SessionKind) -> (crate::pipeline::ct
         credentials: Default::default(),
         melody: Default::default(),
         pitch: Default::default(),
-        media: None,
+        media,
         decoder: None,
         speech: None,
         runtime: tokio::runtime::Handle::current(),

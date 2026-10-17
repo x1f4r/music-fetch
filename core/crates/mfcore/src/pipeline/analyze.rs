@@ -39,6 +39,8 @@ const COMMENTS_MIN_MS: u64 = 8 * 60_000;
 const INTERACTIVE_MAX_MS: u64 = 10 * 60_000;
 /// Largest direct download.
 const MAX_DIRECT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Waits before trying a failed download again.
+const DOWNLOAD_RETRIES: [Duration; 2] = [Duration::from_millis(1500), Duration::from_secs(4)];
 /// Impression analysis looks at the start of the media.
 const IMPRESSION_MS: u64 = 30_000;
 /// Enrichment of streaming-service tracks runs this many at a time (the
@@ -422,17 +424,33 @@ pub(crate) async fn fetch_audio(
     Ok(pcm)
 }
 
+/// Download through the media backend. Sites drop connections and refuse a
+/// stream now and then, so a failed download is tried again twice, each time
+/// into a fresh directory (a broken partial file is never taken for the result).
 async fn download(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<PathBuf> {
     let backend = ctx.engine.media.clone().ok_or_else(|| MfError::Platform {
         message: "Links with media need the media download tools, which are not available.".into(),
     })?;
-    let emitter = ctx.emitter.clone();
-    let task = TaskHandle::with_progress(ctx.cancel.clone(), move |f| emitter.phase(Phase::Downloading, Some(f)));
-    let (url, dest) = (url.to_string(), dir.to_string_lossy().into_owned());
-    let path = tokio::task::spawn_blocking(move || backend.download_audio(url, dest, task))
-        .await
-        .map_err(|e| MfError::internal(format!("download: {e}")))??;
-    Ok(PathBuf::from(path))
+    let mut attempt = 0;
+    loop {
+        let dest = if attempt == 0 { dir.to_path_buf() } else { dir.join(format!("retry-{attempt}")) };
+        let emitter = ctx.emitter.clone();
+        let task = TaskHandle::with_progress(ctx.cancel.clone(), move |f| emitter.phase(Phase::Downloading, Some(f)));
+        let (url_owned, dest) = (url.to_string(), dest.to_string_lossy().into_owned());
+        let backend = backend.clone();
+        let result = tokio::task::spawn_blocking(move || backend.download_audio(url_owned, dest, task))
+            .await
+            .map_err(|e| MfError::internal(format!("download: {e}")))?;
+        match result.map_err(MfError::from) {
+            Ok(path) => return Ok(PathBuf::from(path)),
+            Err(MfError::Platform { message }) if attempt < DOWNLOAD_RETRIES.len() => {
+                tracing::info!(session = %ctx.id, "download failed ({message}); trying again");
+                ctx.cancel.sleep(DOWNLOAD_RETRIES[attempt]).await?;
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Plain HTTP download of a media file: every hop checked by the SSRF

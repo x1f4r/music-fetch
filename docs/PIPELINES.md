@@ -168,7 +168,9 @@ Rate limits from recognizers were the main failure of 0.4. Rules:
    description is probed once more with comments.
 4. Playlists: see "Playlists" below.
 5. Single media: `Phase(Downloading, fraction)` → `download_audio` (or a direct HTTP
-   download with the SSRF guard and a 2 GiB cap) into `cache_dir/sessions/<id>/` →
+   download with the SSRF guard and a 2 GiB cap) into `cache_dir/sessions/<id>/`
+   (a failed backend download is tried twice more, 1.5 s and 4 s later, each time
+   into a fresh folder; cancellation stops a running download at once) →
    `Phase(Decoding)` → `audio::decode::decode_file` → delete the download.
 6. Strategy (see below): `Impression` mode → impression analysis on the first 30 s;
    otherwise **survey → single or mix**.
