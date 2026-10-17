@@ -176,7 +176,10 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
                     let Some(t) = index.track(id) else { continue };
                     let contour: Vec<Option<f32>> = t.contour.iter().map(|m| m.is_finite().then_some(*m)).collect();
                     let source = format!("{:?}", t.source).to_lowercase();
-                    println!("{}", serde_json::json!({"song": song, "track": id, "source": source, "contour": contour}));
+                    println!(
+                        "{}",
+                        serde_json::json!({"song": song, "track": id, "source": source, "contour": contour})
+                    );
                 }
             }
             Ok(())
@@ -554,6 +557,8 @@ struct EvalRow {
     pitch_ms: f64,
     search_ms: f64,
     voiced_ms: u32,
+    /// The whistle path tracked (some of) the recording.
+    whistle: bool,
     top: Option<(String, f32)>,
     trace: matcher::Trace,
     json: String,
@@ -704,6 +709,7 @@ fn eval_one(
         pitch_ms: 0.0,
         search_ms: 0.0,
         voiced_ms: 0,
+        whistle: false,
         top: None,
         trace: Default::default(),
         json: String::new(),
@@ -717,16 +723,16 @@ fn eval_one(
         }
     };
     let t = Instant::now();
-    let frames = if run.stream {
+    let (frames, whistle) = if run.stream {
         let mut s = StreamingPitch::new(tracker.clone());
         let mut frames = Vec::new();
         for chunk in samples.chunks(320) {
             frames.extend(s.push_detailed(chunk));
         }
         frames.extend(s.finish_detailed());
-        frames
+        (frames, s.is_whistle())
     } else {
-        tracker.analyze_detailed(&samples).map(|a| a.frames).unwrap_or_default()
+        tracker.analyze_detailed(&samples).map(|a| (a.frames, a.whistle)).unwrap_or_default()
     };
     let pitch_ms = ms(t);
     let total_ms = samples.len() as u64 / 16;
@@ -736,6 +742,7 @@ fn eval_one(
     for prefix in prefixes {
         let mut row = blank(prefix);
         row.pitch_ms = pitch_ms;
+        row.whistle = whistle;
         let part: &[FrameDetail] = match prefix {
             Some(p) => &frames[..frames.partition_point(|f| f.t_ms < p)],
             None => &frames,
@@ -804,7 +811,7 @@ fn search_row(index: &MelodyIndex, query: &MelodyQuery, expected: Option<u32>, r
         "work_rank": row.work_rank, "shown": shown.iter().take(10).map(|&(i, z)| (songs[i].song, 1.0 / (1.0 + (-z).exp()))).collect::<Vec<_>>(),
         "voiced_ms": query.voiced_ms, "duration_ms": query.contour.len() as u32 * notes::CONTOUR_MS,
         "range": pct(0.95) - pct(0.05), "notes": query.notes.len(), "steps": steps::query_steps(&query.notes).len(),
-        "pitch_ms": row.pitch_ms, "search_ms": row.search_ms, "candidates": cands,
+        "pitch_ms": row.pitch_ms, "search_ms": row.search_ms, "whistle": row.whistle, "candidates": cands,
         "trace": [t.retrieval, t.linear, t.reranked], "coarse": [t.windows, t.notes, t.unpooled], "oracle_score": oracle,
     })
     .to_string();

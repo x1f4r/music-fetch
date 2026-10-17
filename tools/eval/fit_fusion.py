@@ -25,6 +25,7 @@ Options:
                          is otherwise equal)
     --cand / --query     feature subsets (default: all)
     --prefixes           also fit on prefix rows (`--prefix-ms`) and report them
+    --prefix-weight W    weight of a prefix row relative to a full one (0: report only)
     --dump FILE          cross-validated per-query predictions (JSONL)
 Only candidates in the results can be re-ranked: queries whose song is missing
 there stay misses.
@@ -80,7 +81,8 @@ def load(name, path, cuse, quse, groups, prefixes):
         hit = [i for i, a in enumerate(c) if a["label"]]
         group = groups.get(r["wav"], f"song:{r.get('expected')}")
         items.append(dict(set=name, group=group, x=x, y=hit[0] if hit else -1, q=np.array(query_x(r, quse), float),
-                          wav=r["wav"], prefix=r.get("prefix_ms"), voiced=r.get("voiced_ms")))
+                          wav=r["wav"], prefix=r.get("prefix_ms"), voiced=r.get("voiced_ms"),
+                          songs=[a["song"] for a in c]))
     return items
 
 
@@ -192,6 +194,7 @@ def main():
     ap.add_argument("--cand", default=",".join(CAND))
     ap.add_argument("--query", default=",".join(QUERY))
     ap.add_argument("--prefixes", action="store_true")
+    ap.add_argument("--prefix-weight", type=float, default=1.0, help="weight of prefix rows relative to full ones")
     ap.add_argument("--l2", type=float, default=0.05)
     ap.add_argument("--dump")
     a = ap.parse_args()
@@ -209,6 +212,7 @@ def main():
     counts = {n: sum(1 for it in items if it["set"] == n) for n in names}
     mean = np.mean(list(counts.values()))
     wmap = {n: weights.get(n, 1.0) * mean / max(1, counts[n]) for n in names}
+    weight = lambda it: wmap[it["set"]] * (a.prefix_weight if it["prefix"] is not None else 1.0)
     # Folds by group, shared across inputs.
     keys = sorted(set(it["group"] for it in items))
     perm = np.random.default_rng(11).permutation(len(keys))
@@ -216,7 +220,7 @@ def main():
     for it in items:
         it["fold"] = fold[it["group"]]
     for f in (0, 1):
-        p = fit([(it, wmap[it["set"]]) for it in items if it["fold"] != f], d, dq, a.l2)
+        p = fit([(it, weight(it)) for it in items if it["fold"] != f and weight(it) > 0], d, dq, a.l2)
         for it in items:
             if it["fold"] != f:
                 continue
@@ -225,15 +229,18 @@ def main():
                 o = np.argsort(-pr)
                 it["rank"] = int(np.where(o == it["y"])[0][0]) + 1 if it["y"] >= 0 else None
                 it["p1"] = float(pr[o[0]])
+                it["p2"] = float(pr[o[1]]) if len(o) > 1 else 0.0
+                it["top"] = it["songs"][o[0]]
                 it["ok"] = bool(o[0] == it["y"])
             else:
-                it["rank"], it["p1"], it["ok"] = None, 0.0, False
+                it["rank"], it["p1"], it["p2"], it["top"], it["ok"] = None, 0.0, 0.0, None, False
     cal = [it for it in items if it["set"] in calibrate and it["prefix"] is None]
     ab = {f: platt([it["p1"] for it in cal if it["fold"] != f], [it["ok"] for it in cal if it["fold"] != f])
           for f in (0, 1)}
     for it in items:
         A, B = ab[it["fold"]]
         it["score"] = float(1 / (1 + np.exp(-(A + B * logit(it["p1"])))))
+        it["score2"] = float(1 / (1 + np.exp(-(A + B * logit(it["p2"]))))) if it["p2"] > 0 else 0.0
     print("candidate features", cuse, "| query traits", quse, "| weights", weights or "equal")
     for name in names:
         report(name, [it for it in items if it["set"] == name and it["prefix"] is None])
@@ -246,8 +253,8 @@ def main():
         with open(a.dump, "w") as fh:
             for it in items:
                 fh.write(json.dumps({k: it[k] for k in ("set", "wav", "prefix", "voiced", "rank", "p1", "ok",
-                                                        "score")}) + "\n")
-    p = fit([(it, wmap[it["set"]]) for it in items], d, dq, a.l2)
+                                                        "score", "score2", "top")}) + "\n")
+    p = fit([(it, weight(it)) for it in items if weight(it) > 0], d, dq, a.l2)
     for it in items:
         pr = probs(p, it, d, dq)
         it["p1"] = float(pr.max()) if len(pr) else 0.0
