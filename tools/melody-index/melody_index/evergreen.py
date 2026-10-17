@@ -12,9 +12,15 @@ Item fields (``[[item]]``): ``title``, ``artist`` (composer or performer as Deez
 it), ``kind`` ("symbolic": transcription only, "audio": recording only, "both"), ``fame`` (1 =
 known to nearly everyone, 2 = very well known, 3 = well known; sets the popularity),
 ``licence`` and for symbolic items ``abc``; optional ``aliases`` (other titles, e.g. the German
-one) and ``category``. Recordings come in ``[[group]]`` tables that share ``kind``, ``licence``
-and ``category`` and list their items as ``[title, artist, fame]`` or
-``[title, artist, fame, [aliases]]``.
+one), ``artists`` (other credits, e.g. "Peter Ilyich Tchaikovsky"), ``category`` and ``deezer``:
+a Deezer track id that resolve takes as is (classical recordings are credited to performers,
+and the best-ranked match is sometimes a remix), or 0 for "no recording; transcription only".
+Recordings come in ``[[group]]`` tables that share ``kind``, ``licence`` and ``category`` and
+list their items as ``[title, artist, fame]``, ``[title, artist, fame, [aliases]]`` or inline
+tables with the item fields.
+
+Pinning an item to another Deezer track (or to none) clears the song's Deezer, preview and
+stage 3c rows, so ``resolve``, ``extract`` and ``refs`` redo them.
 """
 
 from __future__ import annotations
@@ -76,12 +82,15 @@ def load(path: Path | None = None) -> list[dict[str, Any]]:
     items = list(doc.get("item", []))
     for g in doc.get("group", []):
         for entry in g.get("items", []):
-            if not 3 <= len(entry) <= 4:
+            it = {"kind": g.get("kind", "audio"), "licence": g.get("licence"), "category": g.get("category")}
+            if isinstance(entry, dict):
+                it.update(entry)
+            elif 3 <= len(entry) <= 4:
+                it.update(title=entry[0], artist=entry[1], fame=entry[2])
+                if len(entry) == 4:
+                    it["aliases"] = list(entry[3])
+            else:
                 raise ValueError(f"evergreen group {g.get('category')!r}: bad entry {entry!r}")
-            it = {"title": entry[0], "artist": entry[1], "fame": entry[2], "kind": g.get("kind", "audio"),
-                  "licence": g.get("licence"), "category": g.get("category")}
-            if len(entry) == 4:
-                it["aliases"] = list(entry[3])
             items.append(it)
     seen: set[str] = set()
     for it in items:
@@ -117,24 +126,32 @@ def run(paths: Paths, file: Path | None = None) -> dict[str, Any]:
     with dbm.Tx(conn):
         for it in items:
             score = FAME_SCORE[int(it["fame"])]
-            aliases = [[it["artist"], a] for a in it.get("aliases", [])]
+            credits = [it["artist"]] + list(it.get("artists", []))
+            titles = [it["title"]] + list(it.get("aliases", []))
+            aliases = [[a, t] for a in credits for t in titles if [a, t] != [it["artist"], it["title"]]]
+            pin = it.get("deezer")
             row = conn.execute("SELECT id, origin, score FROM songs WHERE key=?", (it["id"],)).fetchone()
             created = 0
             if row is None:
                 cur = conn.execute(
-                    "INSERT INTO songs(key, title, artist, year, score, popularity, signals, aliases, origin, in_universe)"
-                    " VALUES (?, ?, ?, ?, ?, 0, ?, ?, 'evergreen', 1)",
+                    "INSERT INTO songs(key, title, artist, year, score, popularity, signals, aliases, deezer_hint,"
+                    " origin, in_universe) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 'evergreen', 1)",
                     (it["id"], it["title"], it["artist"], it.get("year"), score,
-                     json.dumps({"evergreen": it.get("category")}), json.dumps(aliases, ensure_ascii=False)),
+                     json.dumps({"evergreen": it.get("category")}), json.dumps(aliases, ensure_ascii=False),
+                     pin or None),
                 )
                 song_id, created = cur.lastrowid, 1
                 counts["new_songs"] += 1
+                if pin == 0:
+                    _no_recording(conn, song_id, now)
             else:
                 song_id = row["id"]
                 if row["origin"] == "evergreen":
-                    conn.execute("UPDATE songs SET score=?, in_universe=1, aliases=? WHERE id=?",
-                                 (score, json.dumps(aliases, ensure_ascii=False), song_id))
+                    conn.execute("UPDATE songs SET score=?, in_universe=1, aliases=?, deezer_hint=? WHERE id=?",
+                                 (score, json.dumps(aliases, ensure_ascii=False), pin or None, song_id))
                     counts["already_listed"] += 1
+                    if pin is not None and _repin(conn, song_id, pin, now):
+                        counts["repinned"] = counts.get("repinned", 0) + 1
                 else:
                     conn.execute("UPDATE songs SET score=MAX(score, ?), in_universe=1 WHERE id=?", (score, song_id))
                     counts["chart_songs_lifted"] += 1
@@ -157,8 +174,52 @@ def run(paths: Paths, file: Path | None = None) -> dict[str, Any]:
                      sum(len(p["notes"]) for p in ph), now),
                 )
                 counts["symbolic"] += 1
+        # Items taken off the list leave the universe (chart songs keep their lifted score until
+        # the next universe run).
+        listed = {it["id"] for it in items}
+        gone = [r for r in conn.execute("SELECT item_id, song_id FROM evergreen") if r["item_id"] not in listed]
+        for r in gone:
+            conn.execute("UPDATE songs SET in_universe=0 WHERE id=? AND origin='evergreen'", (r["song_id"],))
+            conn.execute("DELETE FROM symbolic_melody WHERE song_id=?", (r["song_id"],))
+            conn.execute("DELETE FROM evergreen WHERE item_id=?", (r["item_id"],))
+        counts["removed"] = len(gone)
     log.info("evergreen: %s", counts)
     return counts
+
+
+def _clear(conn, song_id: int) -> None:
+    """Forget a song's recording: Deezer match, preview melody and stage 3c results."""
+    conn.execute("DELETE FROM deezer WHERE song_id=?", (song_id,))
+    conn.execute("DELETE FROM preview_melody WHERE song_id=?", (song_id,))
+    for table in ("ref_attempt", "window_melody"):
+        if conn.execute("SELECT name FROM sqlite_master WHERE name=?", (table,)).fetchone():
+            conn.execute(f"DELETE FROM {table} WHERE song_id=?", (song_id,))
+    if conn.execute("SELECT name FROM sqlite_master WHERE name='track_melody'").fetchone():
+        conn.execute("DELETE FROM track_melody WHERE song_id=?", (song_id,))
+
+
+def _no_recording(conn, song_id: int, now: float) -> None:
+    """A transcription-only item: a Deezer row that resolve leaves alone."""
+    conn.execute(
+        "INSERT INTO deezer(song_id, status, attempts, error, updated_at) VALUES (?, 'skipped', 1,"
+        " 'evergreen item without a recording', ?)",
+        (song_id, now),
+    )
+
+
+def _repin(conn, song_id: int, pin: int, now: float) -> bool:
+    """Make the song's Deezer match follow the item's pin; True when something was cleared."""
+    row = conn.execute("SELECT status, deezer_id FROM deezer WHERE song_id=?", (song_id,)).fetchone()
+    if pin == 0:
+        if row is not None and row["status"] == "skipped":
+            return False
+        _clear(conn, song_id)
+        _no_recording(conn, song_id, now)
+        return True
+    if row is not None and row["status"] == "ok" and row["deezer_id"] == pin:
+        return False
+    _clear(conn, song_id)
+    return True
 
 
 def symbolic_phrases(conn) -> dict[int, list[dict[str, Any]]]:

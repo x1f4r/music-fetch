@@ -382,6 +382,7 @@ C | F3/2 F/2 F A | G3/2 F/2 G A | F3/2 F/2 A c | d3 d | c3/2 A/2 A F | G3/2 F/2 
 [[item]]
 title = "Greensleeves"
 artist = "Traditional"
+deezer = 0
 kind = "symbolic"
 fame = 2
 category = "traditional"
@@ -683,6 +684,7 @@ B,CDE FDF2 | ^EC^E2 =E=C=E2 | B,CDE FDFB | AFDF A4 |
 [[item]]
 title = "Morning Mood"
 artist = "Edvard Grieg"
+deezer = 67343979
 kind = "both"
 fame = 2
 category = "classical"
@@ -698,6 +700,7 @@ GEDC DE | GEDC DE | GEGA EA | GEDC4 |
 [[item]]
 title = "Canon in D"
 artist = "Johann Pachelbel"
+deezer = 3853949
 kind = "both"
 fame = 1
 category = "classical"
@@ -758,6 +761,7 @@ C F3/4 F/4 F2 | C G3/4 E/4 F2 |
 [[item]]
 title = "The Blue Danube"
 artist = "Johann Strauss II"
+deezer = 1044385
 kind = "both"
 fame = 2
 category = "classical"
@@ -818,6 +822,7 @@ E/E/E E/E/E | E/E/A B c4 |
 [[item]]
 title = "Galop infernal (Can-Can)"
 artist = "Jacques Offenbach"
+deezer = 64187078
 kind = "both"
 fame = 1
 category = "classical"
@@ -862,6 +867,7 @@ d^d | e c'2 e c'2 e c'4 c'2 | c'd'^d'e' c'=d'e'2 b=d'2 c'4 |
 [[item]]
 title = "Also sprach Zarathustra"
 artist = "Richard Strauss"
+deezer = 66644254
 kind = "both"
 fame = 2
 category = "classical"
@@ -928,7 +934,7 @@ items = [
   ["The Pink Panther Theme", "Henry Mancini", 1, ["Pink Panther Theme"]],
   ["Moon River", "Audrey Hepburn", 2],
   ["Peter Gunn", "Henry Mancini", 2, ["Peter Gunn Theme"]],
-  ["Back to the Future", "Alan Silvestri", 1, ["Back to the Future Theme", "Back to the Future (Main Theme)"]],
+  {title = "Back to the Future", artist = "Alan Silvestri", fame = 1, aliases = ["Back to the Future Theme", "Back to the Future (Main Theme)"], deezer = 119871328},
   ["The Avengers", "Alan Silvestri", 1, ["The Avengers Theme", "Avengers Theme"]],
   ["Forrest Gump Suite", "Alan Silvestri", 2, ["Feather Theme"]],
   ["Gonna Fly Now", "Bill Conti", 1, ["Rocky Theme", "Gonna Fly Now (Theme from Rocky)"]],
@@ -939,17 +945,16 @@ items = [
   ["Tubular Bells", "Mike Oldfield", 2, ["The Exorcist Theme"]],
   ["Batman Theme", "Danny Elfman", 2, ["The Batman Theme"]],
   ["This Is Halloween", "Danny Elfman", 2],
-  ["Main Title (Spider-Man)", "Danny Elfman", 3, ["Spider-Man Theme"]],
+  {title = "Spider-Man 2 Main Title", artist = "Danny Elfman", fame = 3, deezer = 586314},
   ["Spider-Man Theme", "Michael Bublé", 3],
-  ["Up Is Down", "Hans Zimmer", 3],
   ["Victory", "Two Steps from Hell", 2],
   ["Heart of Courage", "Two Steps from Hell", 2],
   ["Lux Aeterna", "Clint Mansell", 2, ["Requiem for a Dream Theme"]],
   ["Comptine d'un autre été, l'après-midi", "Yann Tiersen", 1, ["Amélie Theme", "Comptine d'un autre été"]],
   ["La valse d'Amélie", "Yann Tiersen", 3],
-  ["Nuvole Bianche", "Ludovico Einaudi", 1],
+  {title = "Nuvole Bianche", artist = "Ludovico Einaudi", fame = 1, deezer = 949325632},
   ["Experience", "Ludovico Einaudi", 2],
-  ["Una Mattina", "Ludovico Einaudi", 2],
+  {title = "Una Mattina", artist = "Ludovico Einaudi", fame = 2, deezer = 23712561},
   ["River Flows in You", "Yiruma", 1],
   ["Merry-Go-Round of Life", "Joe Hisaishi", 1, ["Howl's Moving Castle Theme", "Jinsei no Merry-Go-Round"]],
   ["One Summer's Day", "Joe Hisaishi", 2, ["Spirited Away Theme"]],
@@ -957,7 +962,6 @@ items = [
   ["Mia & Sebastian's Theme", "Justin Hurwitz", 2, ["La La Land Theme"]],
   ["The Mandalorian", "Ludwig Göransson", 2, ["The Mandalorian Theme"]],
   ["Wakanda", "Ludwig Göransson", 3],
-  ["Avatar: The Last Airbender Main Theme", "Jeremy Zuckerman", 3],
   ["Kiss the Rain", "Yiruma", 2],
   ["Ghostbusters", "Ray Parker Jr.", 1],
   ["The Final Countdown", "Europe", 1],
@@ -972,11 +976,10 @@ licence = "copyrighted recording; only melody features (f0, notes) are derived, 
 items = [
   ["Main Title", "Ramin Djawadi", 1, ["Game of Thrones Theme", "Game of Thrones Main Title", "Game of Thrones"]],
   ["Light of the Seven", "Ramin Djawadi", 2],
-  ["Westworld Main Title Theme", "Ramin Djawadi", 3],
-  ["The Simpsons Main Title Theme", "Danny Elfman", 1, ["The Simpsons Theme", "Simpsons Theme"]],
-  ["Doctor Who Theme", "Ron Grainer", 2],
-  ["The X-Files", "Mark Snow", 2, ["The X-Files Theme", "X-Files Theme"]],
-  ["Twin Peaks Theme", "Angelo Badalamenti", 2, ["Twin Peaks Theme (Instrumental)", "Falling"]],
+  {title = "The Simpsons Theme", artist = "Danny Elfman", fame = 1, aliases = ["The Simpsons Main Title Theme", "Simpsons Theme"], deezer = 84724989},
+  {title = "Doctor Who Theme", artist = "Murray Gold", fame = 2, artists = ["Ron Grainer"], deezer = 3507374091},
+  {title = "The X-Files", artist = "Mark Snow", fame = 2, aliases = ["The X-Files Theme", "X-Files Theme"], deezer = 3910006},
+  {title = "Twin Peaks Theme", artist = "Angelo Badalamenti", fame = 2, aliases = ["Twin Peaks Theme (Instrumental)", "Falling"], deezer = 7337260},
   ["Stranger Things", "Kyle Dixon & Michael Stein", 1, ["Stranger Things Theme", "Stranger Things Main Theme"]],
   ["The Addams Family Theme", "Vic Mizzy", 2, ["Addams Family Theme"]],
   ["I'll Be There for You", "The Rembrandts", 1, ["Friends Theme"]],
@@ -985,19 +988,18 @@ items = [
   ["Tuyo", "Rodrigo Amarante", 2, ["Narcos Theme"]],
   ["Red Right Hand", "Nick Cave & The Bad Seeds", 2, ["Peaky Blinders Theme"]],
   ["Bella ciao", "Manu Pilas", 2, ["Bella Ciao"]],
-  ["Pink Soldiers", "23", 2, ["Squid Game Theme"]],
+  {title = "Pink Soldiers", artist = "Kim SungSoo", fame = 2, aliases = ["Squid Game Theme"], artists = ["23"], deezer = 1744505967},
   ["Way Back Then", "Jung Jae Il", 2],
   ["Bloody Mary", "Lady Gaga", 2],
   ["Goo Goo Muck", "The Cramps", 3],
   ["Tatort", "Klaus Doldinger", 2, ["Tatort Titelmusik", "Tatort Theme"]],
   ["Das Boot", "Klaus Doldinger", 2, ["Das Boot Theme"]],
-  ["The Office Theme", "The Scrantones", 2, ["The Office"]],
   ["Breaking Bad Main Title Theme", "Dave Porter", 3],
   ["Seinfeld Theme", "Jonathan Wolff", 3],
   ["Sesame Street Theme", "Sesame Street", 3, ["Sing a Song", "Can You Tell Me How to Get to Sesame Street"]],
   ["SpongeBob SquarePants Theme Song", "SpongeBob SquarePants", 1, ["SpongeBob SquarePants Theme"]],
-  ["Pokémon Theme", "Jason Paige", 1, ["Pokémon Theme (Gotta Catch 'Em All)"]],
-  ["Can We Fix It?", "Bob the Builder", 2],
+  {title = "Pokémon Theme", artist = "Pokémon", fame = 1, artists = ["Jason Paige"], deezer = 3504033041},
+  {title = "Can We Fix It?", artist = "Bob the Builder", fame = 2, deezer = 952358072},
   ["Teletubbies Say Eh-Oh!", "Teletubbies", 3],
   ["Biene Maja", "Karel Gott", 1, ["Die Biene Maja"]],
   ["Hey, Pippi Langstrumpf", "Pippi Langstrumpf", 1, ["Pippi Langstrumpf"]],
@@ -1006,10 +1008,9 @@ items = [
   ["Hurra, hurra, der Pumuckl ist da", "Pumuckl", 3],
   ["Benjamin Blümchen Titellied", "Benjamin Blümchen", 3],
   ["Bibi Blocksberg Titellied", "Bibi Blocksberg", 3, ["Hex-hex"]],
-  ["Paw Patrol Theme", "PAW Patrol", 3],
-  ["Peppa Pig Theme", "Peppa Pig", 3],
+  {title = "Peppa Pig Theme", artist = "Peppa Pig", fame = 3, deezer = 2352097945},
   ["Baby Shark", "Pinkfong", 1],
-  ["I'm a Gummy Bear (The Gummy Bear Song)", "Gummibär", 2, ["The Gummy Bear Song"]],
+  {title = "The Gummy Bear Song", artist = "Gummibär", fame = 2, aliases = ["I'm a Gummy Bear"], deezer = 1558374012},
   ["Cha-La Head-Cha-La", "Hironobu Kageyama", 2, ["Dragon Ball Z Theme"]],
   ["Blue Bird", "Ikimonogakari", 2],
   ["Guren no Yumiya", "Linked Horizon", 2, ["Attack on Titan Opening"]],
@@ -1019,7 +1020,6 @@ items = [
   ["The Rumbling", "SiM", 3],
   ["A Cruel Angel's Thesis", "Yoko Takahashi", 2, ["Zankoku na Tenshi no Thesis"]],
   ["Tank!", "The Seatbelts", 2, ["Cowboy Bebop Theme"]],
-  ["Sailor Moon Theme", "The Sailor Moon Theme", 3],
 ]
 
 [[group]]
@@ -1040,19 +1040,9 @@ items = [
   ["Prelude", "Nobuo Uematsu", 3, ["Final Fantasy Prelude"]],
   ["Victory Fanfare", "Nobuo Uematsu", 3],
   ["One-Winged Angel", "Nobuo Uematsu", 3],
-  ["Green Hill Zone", "Masato Nakamura", 2],
   ["Baba Yetu", "Christopher Tin", 3],
   ["Still Alive", "Jonathan Coulton", 3],
-  ["Gerudo Valley", "Koji Kondo", 3],
-  ["Song of Storms", "Koji Kondo", 3],
-  ["Bloody Tears", "Konami Kukeiha Club", 3],
-  ["Wii Shop Channel Theme", "Kazumi Totaka", 3],
-  ["Mii Channel Theme", "Kazumi Totaka", 3],
-  ["Pac-Man Theme", "Toshio Kai", 3],
-  ["Main Theme", "Rhys Cheetham", 3, ["Fortnite Theme"]],
-  ["Gusty Garden Galaxy", "Mahito Yokota", 3],
   ["Snake Eater", "Cynthia Harrell", 3],
-  ["Vordt of the Boreal Valley", "Yuka Kitamura", 3],
 ]
 
 [[group]]
@@ -1063,12 +1053,9 @@ items = [
   ["Astronomia", "Vicetone & Tony Igy", 1, ["Coffin Dance", "Astronomia (Coffin Dance)"]],
   ["Sandstorm", "Darude", 1],
   ["Axel F", "Crazy Frog", 1, ["Crazy Frog"]],
-  ["Nyan Cat", "daniwell", 2],
-  ["I Am Very Glad, as I'm Finally Returning Back Home", "Eduard Khil", 2, ["Trololo", "Trololo Song"]],
   ["Crab Rave", "Noisestorm", 2],
   ["Running in the 90s", "Max Coveri", 2],
   ["Deja Vu", "Dave Rodgers", 2],
-  ["Gas Gas Gas", "Manuel", 2],
   ["Peanut Butter Jelly Time", "Buckwheat Boyz", 3],
   ["Caramelldansen", "Caramell", 2],
   ["Ievan Polkka", "Loituma", 2],
@@ -1090,7 +1077,6 @@ items = [
   ["Rasputin", "Boney M.", 1],
   ["Hampster Dance", "Hampton the Hampster", 3, ["The Hampsterdance Song"]],
   ["Chicken Song", "J.J. Lionel", 3, ["La danse des canards"]],
-  ["Der Ententanz", "Werner Thomas", 3, ["Chicken Dance", "Vogeltanz"]],
   ["Fliegerlied", "Donikkl", 2, ["So a schöner Tag"]],
   ["Tunak Tunak Tun", "Daler Mehndi", 2],
   ["Wellerman", "Nathan Evans", 1],
@@ -1113,7 +1099,7 @@ items = [
   ["The Little Drummer Boy", "Harry Simeone Chorale", 2],
   ["Driving Home for Christmas", "Chris Rea", 1],
   ["In der Weihnachtsbäckerei", "Rolf Zuckowski", 1],
-  ["Dicke rote Kerzen", "Rolf Zuckowski", 3],
+  {title = "Dicke rote Kerzen", artist = "Detlev Jöcker", fame = 3, deezer = 132627368},
   ["Feliz Navidad", "José Feliciano", 1],
   ["Do They Know It's Christmas?", "Band Aid", 1],
   ["Happy Xmas (War Is Over)", "John Lennon & Yoko Ono", 1],
@@ -1129,12 +1115,12 @@ items = [
   ["Fairytale of New York", "The Pogues", 1],
   ["Thank God It's Christmas", "Queen", 3],
   ["Leise rieselt der Schnee", "Rolf Zuckowski", 3],
-  ["Kling, Glöckchen, klingelingeling", "Rolf Zuckowski", 3],
+  {title = "Kling, Glöckchen, klingelingeling", artist = "Simone Sommerland", fame = 3, deezer = 21330801},
   ["O du fröhliche", "Wiener Sängerknaben", 2],
   ["Ihr Kinderlein, kommet", "Wiener Sängerknaben", 3],
   ["Süßer die Glocken nie klingen", "Wiener Sängerknaben", 3],
   ["Alle Jahre wieder", "Wiener Sängerknaben", 3],
-  ["Morgen, Kinder, wird's was geben", "Rolf Zuckowski", 3],
+  {title = "Morgen, Kinder, wird's was geben", artist = "Simone Sommerland", fame = 3, deezer = 2505965041},
   ["Lasst uns froh und munter sein", "Rolf Zuckowski", 3],
   ["O Holy Night", "Mariah Carey", 2],
   ["Hallelujah", "Pentatonix", 2],
@@ -1157,7 +1143,7 @@ items = [
   ["Badinerie", "Johann Sebastian Bach", 3, ["Orchestral Suite No. 2 in B Minor, BWV 1067: VII. Badinerie"]],
   ["Hallelujah Chorus", "George Frideric Handel", 1, ["Messiah, HWV 56: Hallelujah", "Hallelujah"]],
   ["Sarabande", "George Frideric Handel", 2, ["Keyboard Suite in D Minor, HWV 437: III. Sarabande"]],
-  ["Zadok the Priest", "George Frideric Handel", 3],
+  {title = "Zadok the Priest", artist = "George Frideric Handel", fame = 3, deezer = 65686093},
   ["Arrival of the Queen of Sheba", "George Frideric Handel", 3],
   ["Alla Hornpipe", "George Frideric Handel", 3, ["Water Music Suite No. 2 in D Major, HWV 349: II. Alla Hornpipe"]],
   ["Winter", "Antonio Vivaldi", 2, ["L'inverno", "The Four Seasons: Winter"]],
@@ -1165,40 +1151,39 @@ items = [
   ["Lacrimosa", "Wolfgang Amadeus Mozart", 1, ["Requiem in D Minor, K. 626: Lacrimosa"]],
   ["Der Hölle Rache kocht in meinem Herzen", "Wolfgang Amadeus Mozart", 2, ["Queen of the Night Aria"]],
   ["Dies irae", "Wolfgang Amadeus Mozart", 2, ["Requiem in D Minor, K. 626: Dies irae"]],
-  ["Piano Sonata No. 16 in C Major, K. 545: I. Allegro", "Wolfgang Amadeus Mozart", 3, ["Sonata facile"]],
+  {title = "Piano Sonata No. 16 in C Major, K. 545: I. Allegro", artist = "Wolfgang Amadeus Mozart", fame = 3, aliases = ["Sonata facile"], deezer = 66304135},
   ["Swan Lake", "Pyotr Ilyich Tchaikovsky", 1, ["Swan Lake, Op. 20: Scene", "Swan Lake Theme", "Schwanensee"]],
-  ["Dance of the Sugar Plum Fairy", "Pyotr Ilyich Tchaikovsky", 1],
-  ["Waltz of the Flowers", "Pyotr Ilyich Tchaikovsky", 2],
+  {title = "Dance of the Sugar Plum Fairy", artist = "Pyotr Ilyich Tchaikovsky", fame = 1, deezer = 1411649442},
+  {title = "Waltz of the Flowers", artist = "Pyotr Ilyich Tchaikovsky", fame = 2, deezer = 1411649492},
   ["Russian Dance (Trepak)", "Pyotr Ilyich Tchaikovsky", 3],
   ["1812 Overture", "Pyotr Ilyich Tchaikovsky", 2, ["1812 Overture, Op. 49"]],
-  ["Piano Concerto No. 1 in B-Flat Minor, Op. 23: I. Allegro non troppo e molto maestoso", "Pyotr Ilyich Tchaikovsky", 3],
+  {title = "Piano Concerto No. 1 in B-Flat Minor, Op. 23: I. Allegro non troppo e molto maestoso", artist = "Pyotr Ilyich Tchaikovsky", fame = 3, deezer = 72314767},
   ["Habanera", "Georges Bizet", 1, ["Carmen: Habanera", "L'amour est un oiseau rebelle"]],
   ["Toreador Song", "Georges Bizet", 2, ["Carmen: Votre toast, je peux vous le rendre", "Toreador March"]],
-  ["La donna è mobile", "Giuseppe Verdi", 1],
-  ["Libiamo ne' lieti calici", "Giuseppe Verdi", 2, ["Brindisi"]],
+  {title = "La donna è mobile", artist = "Giuseppe Verdi", fame = 1, artists = ["Luciano Pavarotti"], deezer = 1095525},
+  {title = "Libiamo ne' lieti calici", artist = "Giuseppe Verdi", fame = 2, aliases = ["Brindisi"], deezer = 7982590},
   ["Va, pensiero", "Giuseppe Verdi", 3, ["Chorus of the Hebrew Slaves"]],
-  ["Nessun dorma", "Giacomo Puccini", 1],
-  ["O mio babbino caro", "Giacomo Puccini", 2],
-  ["O Fortuna", "Carl Orff", 1, ["Carmina Burana: O Fortuna"]],
-  ["Mars, the Bringer of War", "Gustav Holst", 2],
+  {title = "Nessun dorma", artist = "Giacomo Puccini", fame = 1, artists = ["Luciano Pavarotti"], deezer = 4124348},
+  {title = "O mio babbino caro", artist = "Giacomo Puccini", fame = 2, artists = ["Maria Callas"], deezer = 86110077},
+  {title = "O Fortuna", artist = "Carl Orff", fame = 1, aliases = ["Carmina Burana: O Fortuna"], deezer = 67332242},
+  {title = "Mars, the Bringer of War", artist = "Gustav Holst", fame = 2, deezer = 67943020},
   ["Jupiter, the Bringer of Jollity", "Gustav Holst", 2, ["I Vow to Thee, My Country"]],
   ["Boléro", "Maurice Ravel", 1, ["Bolero"]],
-  ["Night on Bald Mountain", "Modest Mussorgsky", 3],
-  ["Pictures at an Exhibition: Promenade", "Modest Mussorgsky", 3],
+  {title = "Night on Bald Mountain", artist = "Modest Mussorgsky", fame = 3, deezer = 137200312},
+  {title = "Pictures at an Exhibition: Promenade", artist = "Modest Mussorgsky", fame = 3, deezer = 137200282},
   ["Flight of the Bumblebee", "Nikolai Rimsky-Korsakov", 1],
   ["Sabre Dance", "Aram Khachaturian", 2],
   ["Dance of the Knights", "Sergei Prokofiev", 1, ["Romeo and Juliet: Dance of the Knights", "Montagues and Capulets"]],
-  ["Peter and the Wolf", "Sergei Prokofiev", 3],
   ["Radetzky March", "Johann Strauss I", 1, ["Radetzky-Marsch", "Radetzky March, Op. 228"]],
   ["Barcarolle", "Jacques Offenbach", 2, ["Les contes d'Hoffmann: Barcarolle", "Belle nuit, ô nuit d'amour"]],
   ["The Swan", "Camille Saint-Saëns", 2, ["Le cygne"]],
-  ["Danse macabre", "Camille Saint-Saëns", 2],
+  {title = "Danse macabre", artist = "Camille Saint-Saëns", fame = 2, deezer = 134026176},
   ["Flower Duet", "Léo Delibes", 2, ["Lakmé: Flower Duet", "Sous le dôme épais"]],
   ["Wedding March", "Felix Mendelssohn", 1, ["A Midsummer Night's Dream: Wedding March", "Hochzeitsmarsch"]],
   ["Ride of the Valkyries", "Richard Wagner", 1, ["Walkürenritt", "Die Walküre: Ride of the Valkyries"]],
   ["Pomp and Circumstance March No. 1", "Edward Elgar", 1, ["Land of Hope and Glory", "Pomp and Circumstance"]],
   ["Nimrod", "Edward Elgar", 3, ["Enigma Variations: Nimrod"]],
-  ["Adagio for Strings", "Samuel Barber", 2],
+  {title = "Adagio for Strings", artist = "Samuel Barber", fame = 2, deezer = 5150588},
   ["Adagio in G Minor", "Tomaso Albinoni", 2],
   ["Minuet", "Luigi Boccherini", 3, ["String Quintet in E Major, Op. 13 No. 5: III. Minuetto"]],
   ["Ave Maria", "Franz Schubert", 1],
@@ -1210,9 +1195,9 @@ items = [
   ["Rhapsody in Blue", "George Gershwin", 1],
   ["Summertime", "George Gershwin", 2],
   ["Maple Leaf Rag", "Scott Joplin", 2],
-  ["Pavane", "Gabriel Fauré", 3, ["Pavane, Op. 50"]],
-  ["Méditation", "Jules Massenet", 3, ["Thaïs: Méditation"]],
-  ["Ave Maria", "Charles Gounod", 3],
+  {title = "Pavane", artist = "Gabriel Fauré", fame = 3, aliases = ["Pavane, Op. 50"], deezer = 65527031},
+  {title = "Méditation", artist = "Jules Massenet", fame = 3, aliases = ["Thaïs: Méditation"], deezer = 6973703},
+  {title = "Ave Maria", artist = "Charles Gounod", fame = 3, deezer = 2883373192},
   ["Stars and Stripes Forever", "John Philip Sousa", 2, ["The Stars and Stripes Forever"]],
   ["The Liberty Bell", "John Philip Sousa", 3, ["Monty Python Theme"]],
   ["Entry of the Gladiators", "Julius Fučík", 1, ["Einzug der Gladiatoren", "Circus Theme", "Thunder and Blazes"]],
@@ -1226,7 +1211,7 @@ category = "anthem"
 kind = "audio"
 licence = "copyrighted recording; only melody features (f0, notes) are derived, never audio"
 items = [
-  ["UEFA Champions League Anthem", "Tony Britten", 1, ["Champions League Hymne", "Champions League Theme"]],
+  {title = "UEFA Champions League Anthem", artist = "Tony Britten", fame = 1, aliases = ["Champions League Hymne", "Champions League Theme"], artists = ["UEFA"], deezer = 1701559027},
   ["We Are the Champions", "Queen", 1],
   ["Seven Nation Army", "The White Stripes", 1],
   ["You'll Never Walk Alone", "Gerry & The Pacemakers", 1],
@@ -1265,7 +1250,6 @@ items = [
   ["Skandal im Sperrbezirk", "Spider Murphy Gang", 2],
   ["Tage wie diese", "Die Toten Hosen", 1],
   ["Ein Stern (... der deinen Namen trägt)", "DJ Ötzi & Nik P.", 1, ["Ein Stern"]],
-  ["Anton aus Tirol", "DJ Ötzi", 2],
   ["Layla", "DJ Robin & Schürze", 1],
   ["Schatzi schenk mir ein Foto", "Mickie Krause", 2],
   ["Cordula Grün", "Josh.", 2],
@@ -1294,7 +1278,6 @@ items = [
   ["Du hast", "Rammstein", 1],
   ["Sonne", "Rammstein", 1],
   ["Engel", "Rammstein", 2],
-  ["Ein Hoch auf uns", "Andreas Bourani", 1],
   ["Auf uns", "Andreas Bourani", 1],
   ["Applaus, Applaus", "Sportfreunde Stiller", 2],
   ["An Tagen wie diesen", "Fettes Brot", 3],
