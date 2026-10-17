@@ -86,17 +86,17 @@ jobs:
           python3 - <<'PY'
           import re, subprocess
           text = open("display.txt").read()
-          print(text[:6000])
+          print(text[:3000])
           screen = re.search(r"Persistent screen id: (\S+)", text)
           modes = []
-          for m in re.finditer(r"mode \d+: res:(\d+)x(\d+) hz:(\d+)[^\n]*", text):
-              w, h, hz = map(int, m.groups())
+          for m in re.finditer(r"mode \d+: res:(\d+)x(\d+) hz:(\d+) color_depth:(\d+)[^\n]*", text):
+              w, h, hz, depth = map(int, m.groups())
               if "scaling:on" not in m.group(0) and 1600 <= w <= 2560:
-                  modes.append((w * h, w, h, hz))
+                  modes.append((w * h, w, h, hz, depth))
           print("modes:", sorted(set(modes))[-6:])
           if screen and modes:
-              _, w, h, hz = max(modes)
-              arg = f"id:{screen.group(1)} res:{w}x{h} hz:{hz} color_depth:8 enabled:true scaling:off origin:(0,0) degree:0"
+              _, w, h, hz, depth = max(modes)
+              arg = f"id:{screen.group(1)} res:{w}x{h} hz:{hz} color_depth:{depth} enabled:true scaling:off origin:(0,0) degree:0"
               print("displayplacer", arg)
               subprocess.run(["displayplacer", arg])
           PY

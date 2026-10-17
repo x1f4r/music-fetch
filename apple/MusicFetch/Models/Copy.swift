@@ -67,6 +67,10 @@ nonisolated enum Copy {
     static let microphone = String(localized: "Microphone")
     static let thisMac = String(localized: "This Mac")
     static let hum = String(localized: "Hum")
+    /// The Listen menus: one item per method.
+    static let listenWithMicrophone = String(localized: "Listen with Microphone")
+    static let listenToThisMac = String(localized: "Listen to This Mac")
+    static let humWhistleOrSing = String(localized: "Hum, Whistle or Sing")
 
     // MARK: Results
 

@@ -335,7 +335,7 @@ struct ListenToolbarButton: View {
         .labelStyle(.titleAndIcon)
         .disabled(app.engine == nil || listen.stage == .matching)
         .help(listen.isCapturing ? Copy.stop : Copy.listenHelp(listen.source))
-        .accessibilityLabel(Copy.listenAction)
+        .accessibilityLabel(listen.isCapturing ? Copy.stop : Copy.listenAction)
         .accessibilityValue(listen.buttonValue)
         .accessibilityIdentifier("mf.listen")
     }
