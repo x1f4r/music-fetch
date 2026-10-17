@@ -94,23 +94,25 @@ pub fn melody_candidates(matches: &[MelodyMatch]) -> Vec<Candidate> {
 /// lyrics and ACRCloud humming, fused into candidates. Emits `Candidates` events
 /// and returns the outcome; the caller emits the terminal event.
 pub async fn run_impression(ctx: &SessionCtx, audio: &[f32]) -> Result<Outcome> {
-    Ok(run_impression_detailed(ctx, audio, MelodyInput::Track, true).await?.0)
+    Ok(run_impression_detailed(ctx, audio, MelodyInput::Track, false, false).await?.0)
 }
 
 /// [`run_impression`] that also returns the final candidates (best first).
-/// `notify_missing_index`: emit `Notice::MelodyIndexMissing` when there is no
-/// index (live sessions already did when the impression started).
+/// `live`: a live session, which already sent `Notice::MelodyIndexMissing` when
+/// the impression started; `shown`: interim candidates were already emitted, so
+/// an empty final list must be emitted to clear them.
 pub async fn run_impression_detailed(
     ctx: &SessionCtx,
     audio: &[f32],
     melody: MelodyInput,
-    notify_missing_index: bool,
+    live: bool,
+    shown: bool,
 ) -> Result<(Outcome, Vec<Candidate>)> {
     ctx.cancel.check()?;
     keep_recording(ctx, audio).await;
     ctx.emitter.phase(Phase::MatchingMelody, None);
     let index = ctx.engine.melody_index();
-    if index.is_none() && notify_missing_index {
+    if index.is_none() && !live {
         ctx.emitter.notice(Notice::MelodyIndexMissing);
     }
 
@@ -125,7 +127,7 @@ pub async fn run_impression_detailed(
     }
 
     let mut fusion = Fusion::default();
-    let mut interim = false;
+    let mut interim = shown;
     loop {
         let answer = tokio::select! {
             biased;

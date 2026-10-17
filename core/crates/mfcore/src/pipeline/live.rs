@@ -337,6 +337,8 @@ struct Live {
     searched: Option<Searched>,
     next_search_ms: u64,
     confident: bool,
+    /// Interim candidates are on screen (`ListenOptions::live_candidates`).
+    shown_candidates: bool,
     keep_going_noticed: bool,
     // Recording queries.
     next_query: usize,
@@ -382,6 +384,7 @@ impl Live {
             searched: None,
             next_search_ms: 0,
             confident: false,
+            shown_candidates: false,
             keep_going_noticed: false,
             next_query: 0,
             pending_query: false,
@@ -623,7 +626,9 @@ impl Live {
         }
         if self.options.live_candidates {
             let candidates = hum::melody_candidates(&result.matches);
-            if !candidates.is_empty() {
+            // An empty list clears a previous one.
+            if !candidates.is_empty() || self.shown_candidates {
+                self.shown_candidates = !candidates.is_empty();
                 self.ctx.emitter.candidates(candidates, false);
             }
         }
@@ -900,7 +905,7 @@ impl Live {
             _ => hum::MelodyInput::Frames(std::mem::take(&mut self.details)),
         };
         let capture = std::mem::take(&mut self.capture);
-        match hum::run_impression_detailed(&self.ctx, &capture, melody, false).await {
+        match hum::run_impression_detailed(&self.ctx, &capture, melody, true, self.shown_candidates).await {
             Ok((outcome, candidates)) => {
                 let top = candidates.first().map(|c| &c.track);
                 let update = SessionUpdate {
