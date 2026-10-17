@@ -1,7 +1,8 @@
 # melody-encoder
 
 A small learned encoder for hum retrieval: 8 s of the matcher's 20 fps pitch contour in,
-a 128-d unit vector out (836k parameters, 3.4 MB as f32 ONNX). Reference windows are
+a unit vector out (64-d with `--dim 64`, the better choice: 820k parameters, 3.3 MB as f32
+ONNX, 16 bytes per window as 4-bit fast-scan PQ; 128-d needs 32). Reference windows are
 embedded offline; a query's windows are embedded on the device and searched with
 inner-product ANN. The candidates it finds are meant to join the 97f-2 matcher's own
 retrieval before the linear-scaling/DTW rerank (`core/crates/mfcore/src/melody/matcher.rs`).
