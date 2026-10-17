@@ -9,9 +9,9 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Debug builds only: plays a WAV file into the live session in real time instead of the
+ * Debug and benchmark builds only: plays a WAV file into the live session in real time instead of the
  * microphone (then silence), so capture, notifications and tiles can be exercised on an
- * emulator without sound in the room. Enabled by placing `files/debug-capture.wav`.
+ * emulator without sound in the room. Enabled by placing [app.musicfetch.platform.DevFiles.CAPTURE_WAV].
  */
 class WavReplay private constructor(
     private val file: File,
@@ -85,7 +85,6 @@ class WavReplay private constructor(
     companion object {
         private const val TAG = "WavReplay"
         private const val BLOCKS_PER_SECOND = 50
-        const val FILE_NAME = "debug-capture.wav"
 
         /** A replay of [file] when it is a PCM (16/32-bit) or float WAV, else null. */
         fun open(file: File): WavReplay? = try {

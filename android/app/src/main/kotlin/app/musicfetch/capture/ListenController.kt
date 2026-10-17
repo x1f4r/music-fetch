@@ -14,7 +14,6 @@ import android.os.Looper
 import android.service.quicksettings.TileService
 import android.util.Log
 import androidx.core.content.ContextCompat
-import app.musicfetch.BuildConfig
 import app.musicfetch.appGraph
 import app.musicfetch.core.Candidate
 import app.musicfetch.core.CaptureSource
@@ -31,6 +30,7 @@ import app.musicfetch.core.SessionObserver
 import app.musicfetch.engine.EngineHost
 import app.musicfetch.engine.EngineUnavailableException
 import app.musicfetch.notify.Notifications
+import app.musicfetch.platform.DevFiles
 import app.musicfetch.platform.SettingsStore
 import app.musicfetch.widget.ListenWidget
 import kotlinx.coroutines.CoroutineScope
@@ -40,7 +40,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
 import java.nio.ByteBuffer
 
 /** The MediaProjection consent for one phone-audio session (Android asks every time). */
@@ -252,9 +251,8 @@ class ListenController(
     }
 
     private fun openAudio(svc: CaptureService, source: CaptureSource, grant: ProjectionGrant?): PcmSource? {
-        if (BuildConfig.DEBUG && source == CaptureSource.MICROPHONE) {
-            val replay = File(app.filesDir, WavReplay.FILE_NAME)
-            if (replay.isFile) WavReplay.open(replay)?.let { return it }
+        if (source == CaptureSource.MICROPHONE) {
+            DevFiles.find(app, DevFiles.CAPTURE_WAV)?.let { replay -> WavReplay.open(replay)?.let { return it } }
         }
         if (ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             return null
@@ -370,6 +368,8 @@ class ListenController(
             if (!canceledByUser) Log.i(TAG, "session canceled by the engine")
         } else {
             _state.value = previous.copy(phase = ListenPhase.Done(result), notice = null)
+            val elapsed = System.currentTimeMillis() - previous.startedAtWallMs
+            Log.i(TAG, "${previous.mode} session ended (${result.javaClass.simpleName}) after $elapsed ms")
             onResult(previous, result)
         }
         app.appGraph.notifyLibraryChanged()

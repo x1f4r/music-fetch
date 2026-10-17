@@ -11,6 +11,7 @@ import app.musicfetch.core.MfException
 import app.musicfetch.platform.AndroidSpeechToText
 import app.musicfetch.platform.ChaquopyMediaBackend
 import app.musicfetch.platform.CredentialStore
+import app.musicfetch.platform.DevFiles
 import app.musicfetch.platform.MediaCodecDecoder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -101,22 +102,18 @@ class EngineHost(
     }
 
     /**
-     * The melody-index manifest. Debug builds read an override from
-     * `files/debug-melody-manifest-url.txt` so a locally served index can be tested.
+     * The melody-index manifest. Debug and benchmark builds read an override from
+     * [DevFiles.MELODY_MANIFEST_URL] so a locally served index can be tested.
      */
     private fun melodyManifestUrl(): String {
-        if (BuildConfig.DEBUG) {
-            val override = File(appContext.filesDir, DEBUG_MANIFEST_FILE)
-            if (override.isFile) {
-                override.readText().trim().takeIf { it.isNotEmpty() }?.let { return it }
-            }
+        DevFiles.find(appContext, DevFiles.MELODY_MANIFEST_URL)?.let { override ->
+            override.readText().trim().takeIf { it.isNotEmpty() }?.let { return it }
         }
         return MELODY_MANIFEST_URL
     }
 
     companion object {
         private const val TAG = "EngineHost"
-        private const val DEBUG_MANIFEST_FILE = "debug-melody-manifest-url.txt"
         private const val DEFAULT_COUNTRY = "US"
 
         /** Manifest of the downloadable melody index (docs/CORE_API.md, "Melody index"). */

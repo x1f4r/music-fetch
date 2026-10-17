@@ -44,11 +44,25 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Development files (microphone replay, melody-index manifest override); see DevFiles.
+            buildConfigField("boolean", "DEV_TOOLS", "true")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
+            buildConfigField("boolean", "DEV_TOOLS", "false")
+        }
+        // Release code and optimizations, profileable and with the development files, signed
+        // with the debug key: for measuring speed and memory (`assembleBenchmark`).
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+            isProfileable = true
+            buildConfigField("boolean", "DEV_TOOLS", "true")
         }
     }
 
