@@ -35,7 +35,9 @@ use crate::error::{MfError, Result};
 use crate::melody::contour::{HALF, SUB, SUBS};
 
 pub(crate) const MAGIC: &[u8; 8] = b"MFMELODY";
-pub(crate) const FORMAT: u32 = 2;
+/// File format this core reads and writes. Each format is published under its own
+/// release tag (`melody-index-<format>`); manifests name it (`Manifest::format`).
+pub const FORMAT: u32 = 2;
 pub(crate) const HEADER_LEN: usize = 256;
 pub(crate) const SECTIONS: usize = 10;
 pub(crate) const SONG_LEN: usize = 40;
@@ -146,6 +148,14 @@ pub struct MelodyIndex {
     version: String,
     codebooks: Box<[[[f32; HALF]; CODES]; 2]>,
     residuals: Box<[[[f32; SUB]; CODES]; SUBS]>,
+}
+
+/// The format number in an index file's header, when it is a melody index at all.
+pub fn file_format(path: &Path) -> Option<u32> {
+    use std::io::Read;
+    let mut head = [0u8; 12];
+    File::open(path).ok()?.read_exact(&mut head).ok()?;
+    (&head[..8] == MAGIC).then(|| u32::from_le_bytes([head[8], head[9], head[10], head[11]]))
 }
 
 impl MelodyIndex {

@@ -184,7 +184,8 @@ Output: 1–5 `Candidate`s, each with sources, a calibrated score, a tier
 - `data_dir/musicfetch.sqlite3`: sessions, segments, candidates, track cache, provider
   cache (positive results 30 days, negative 1 day). WAL, foreign keys, busy timeout.
 - `data_dir/melody/`: melody index file + manifest. Downloaded on demand from the
-  `melody-index-1` GitHub release, verified by SHA-256.
+  `melody-index-<format>` GitHub release of the index format the core reads
+  (`melody-index-2` since 1.1; 1.0.x reads `melody-index-1`), verified by SHA-256.
 - `cache_dir/sessions/<id>/`: downloads and PCM files, removed when a session finishes
   unless the user pins it.
 

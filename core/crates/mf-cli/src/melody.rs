@@ -373,6 +373,7 @@ fn index_info(path: &Path) -> anyhow::Result<()> {
     let started = Instant::now();
     let index = MelodyIndex::open(path)?;
     let opened = ms(started);
+    println!("format    {}", mfcore::melody::index::FORMAT);
     println!("version   {}", index.version());
     println!("songs     {}", index.song_count());
     println!("tracks    {}", index.track_count());

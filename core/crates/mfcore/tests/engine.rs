@@ -685,7 +685,7 @@ fn credentials_are_snapshotted_per_session() {
 fn manifest(url: &str, data: &[u8], sha: Option<String>) -> String {
     let sha = sha.unwrap_or_else(|| Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect());
     format!(
-        r#"{{"version": "2026.10.1", "url": "{url}/melody-index.mfi", "sha256": "{sha}", "bytes": {}, "songs": 2, "min_core": "1.0.0"}}"#,
+        r#"{{"version": "2026.10.1", "url": "{url}/melody-index.mfi", "sha256": "{sha}", "bytes": {}, "songs": 2, "min_core": "1.1.0", "format": 2}}"#,
         data.len()
     )
 }

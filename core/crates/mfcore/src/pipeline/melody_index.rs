@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::error::{MfError, Result};
-use crate::melody::MelodyIndex;
+use crate::melody::{MelodyIndex, index};
 use crate::model::{MelodyIndexStatus, Phase};
 use crate::pipeline::ctx::{EngineCtx, SessionCtx};
 use crate::util::cancel::CancelToken;
@@ -43,6 +43,14 @@ pub struct Manifest {
     pub songs: u32,
     #[serde(default)]
     pub min_core: Option<String>,
+    /// Index file format the manifest points at. Manifests published before
+    /// format 2 have none and point at format 1.
+    #[serde(default = "first_format")]
+    pub format: u32,
+}
+
+fn first_format() -> u32 {
+    1
 }
 
 impl Manifest {
@@ -63,6 +71,10 @@ impl Manifest {
         if let Some(min) = self.min_core.as_deref()
             && compare_versions(env!("CARGO_PKG_VERSION"), min).is_lt()
         {
+            return Err(MfError::IndexUnavailable);
+        }
+        // Another format would be downloaded only to be refused when opened.
+        if self.format != index::FORMAT {
             return Err(MfError::IndexUnavailable);
         }
         Ok(())
@@ -109,11 +121,20 @@ fn guarded<T>(f: impl FnOnce() -> T) -> Option<T> {
     catch_unwind(AssertUnwindSafe(f)).ok()
 }
 
-/// Open the installed index at startup. A damaged file is moved aside
-/// (`melody-index.mfi.corrupt-<ms>`) so a fresh download can replace it.
+/// Open the installed index at startup. An index of another format (installed
+/// by an older or newer app version) is deleted, a damaged file moved aside
+/// (`melody-index.mfi.corrupt-<ms>`), so a fresh download can replace it.
 pub fn open_installed(engine: &EngineCtx) -> Option<Arc<MelodyIndex>> {
     let path = index_path(engine);
     if !path.exists() {
+        return None;
+    }
+    if let Some(format) = index::file_format(&path)
+        && format != index::FORMAT
+    {
+        tracing::info!("removing the format {format} melody index (this version reads format {})", index::FORMAT);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(melody_dir(engine).join(MANIFEST_FILE));
         return None;
     }
     match catch_unwind(AssertUnwindSafe(|| MelodyIndex::open(&path))) {
@@ -347,9 +368,12 @@ mod tests {
             sha256: "a".repeat(64),
             bytes: 10,
             songs: 3,
-            min_core: Some("1.0.0".into()),
+            min_core: Some("1.1.0".into()),
+            format: index::FORMAT,
         };
         assert!(good.validate().is_ok());
+        // A manifest of another index format, or one from before formats were named (format 1).
+        assert_eq!(Manifest { format: index::FORMAT + 1, ..good.clone() }.validate(), Err(MfError::IndexUnavailable));
         assert!(Manifest { sha256: "xyz".into(), ..good.clone() }.validate().is_err());
         assert!(Manifest { url: "file:///etc/passwd".into(), ..good.clone() }.validate().is_err());
         assert!(Manifest { bytes: 0, ..good.clone() }.validate().is_err());
@@ -362,5 +386,26 @@ mod tests {
                 .unwrap();
         assert_eq!(parsed.songs, 0);
         assert_eq!(parsed.min_core, None);
+        assert_eq!(parsed.format, 1);
+        assert_eq!(Manifest { sha256: "a".repeat(64), ..parsed }.validate(), Err(MfError::IndexUnavailable));
+    }
+
+    #[tokio::test]
+    async fn an_index_of_another_format_is_removed_at_startup() {
+        let dir = std::env::temp_dir().join(format!("mf-melody-format-{}", crate::util::new_id()));
+        let (ctx, _) = crate::pipeline::testutil::session(&dir, crate::model::SessionKind::Hum);
+        let melody = melody_dir(&ctx.engine);
+        std::fs::create_dir_all(&melody).unwrap();
+        let mut old = b"MFMELODY".to_vec();
+        old.extend(1u32.to_le_bytes());
+        old.resize(4096, 0);
+        std::fs::write(index_path(&ctx.engine), &old).unwrap();
+        std::fs::write(melody.join(MANIFEST_FILE), "{}").unwrap();
+        assert!(open_installed(&ctx.engine).is_none());
+        assert!(!index_path(&ctx.engine).exists());
+        assert!(!melody.join(MANIFEST_FILE).exists());
+        assert!(std::fs::read_dir(&melody).unwrap().next().is_none(), "nothing is kept aside");
+        ctx.cleanup();
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
