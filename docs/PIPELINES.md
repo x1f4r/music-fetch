@@ -247,9 +247,21 @@ Never decide by duration alone. A single song must never be split.
      most probes name (the prior's version first); tier from agreement (2+ probes or a
      confirmed page prior → Confirmed).
    - Probes disagree → two more probes (35 %, 65 %); then **mix** only if two songs each
-     have ≥ 2 answers, or their start estimates line up as consecutive songs. A clear
-     majority (≥ 3) with stray single answers (samples, interpolations), or a song the
-     page names, stays a single; the strays become alternates. Ambiguity never splits.
+     have ≥ 2 answers that do not alternate in time, or their start estimates line up
+     as consecutive songs. Answers that alternate (A B A A B) are one recording known
+     under two names (a DJ set or compilation containing the song, a record sampling
+     it): a single of the page's song, else of the recording whose answers place its
+     start near the media's. A clear majority (≥ 3) with stray single answers
+     (samples, interpolations), or a song the page names, stays a single; the strays
+     become alternates. Ambiguity never splits.
+   - The page against the verdict: one recognizer answer naming another song (the
+     other probes silent or disagreeing) does not outweigh the page's song, and
+     neither does a cover by another artist when the artist's own channel uploaded
+     the media (channel named like the artist, Topic, VEVO); the page's song is
+     `Likely` from the artist's channel, else `Possible`, with the answer as first
+     alternate. The page names a version (live, remix) the recognizer only knows in
+     its original, or whose versions the answers disagree on (none named twice): the
+     page's version, the recognizer's as first alternate.
    - No probe matches → two more probes (35 %, 65 %), then paid providers; still nothing
      → the page's song as `Possible`, else one `Unidentified` segment. Never several
      `Unidentified` pieces for a short file.

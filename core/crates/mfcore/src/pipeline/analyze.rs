@@ -578,6 +578,19 @@ pub(crate) async fn analyze_pcm<S: Services>(
             log.push(format!("the page's song {} – {} plays here (preview found)", page.artist, page.title));
             verdict = survey::prefer_page_song(verdict, page);
         }
+        let heard = match &verdict {
+            Verdict::Single { track, .. } => Some(track.clone()),
+            _ => None,
+        };
+        verdict = survey::weigh_page(verdict, &prior, hints.official);
+        if let (Some(heard), Verdict::Single { track, .. }) = (heard, &verdict)
+            && !hints::same_song(&heard, track)
+        {
+            log.push(format!(
+                "the page's {} – {} outweighs one answer ({} – {})",
+                track.artist, track.title, heard.artist, heard.title
+            ));
+        }
         match verdict {
             Verdict::Single { track, evidence, alternates } => {
                 let track = services.enrich(track).await;
