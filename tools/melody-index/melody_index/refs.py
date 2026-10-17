@@ -34,7 +34,6 @@ import json
 import logging
 import threading
 import time
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -116,9 +115,12 @@ def contour(f0: np.ndarray, conf: np.ndarray, voicing: float = VOICING) -> np.nd
     n = len(m) // 10
     if n == 0:
         return np.zeros(0, np.float32)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        return np.nanmedian(m[: n * 10].reshape(n, 10), axis=1).astype(np.float32)
+    blocks = m[: n * 10].reshape(n, 10)
+    out = np.full(n, np.nan, np.float32)
+    voiced = np.isfinite(blocks).any(axis=1)
+    if voiced.any():
+        out[voiced] = np.nanmedian(blocks[voiced], axis=1)
+    return out
 
 
 def stored_contour(f0_blob: bytes, conf_blob: bytes) -> np.ndarray:
