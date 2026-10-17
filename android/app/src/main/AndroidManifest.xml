@@ -138,6 +138,11 @@
                 android:value="true" />
         </service>
 
+        <!-- "Pin" on result notifications. -->
+        <receiver
+            android:name=".notify.PinReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".widget.ListenWidgetReceiver"
             android:exported="false"

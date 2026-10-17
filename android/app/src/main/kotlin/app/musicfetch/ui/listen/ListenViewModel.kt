@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onStart
@@ -38,6 +40,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** A link or file being identified on the Listen stage, or why it could not start. */
 sealed interface LinkStage {
@@ -67,10 +70,12 @@ class ListenViewModel(app: Application) : AndroidViewModel(app) {
     val melodyStatus = graph.melody.status
     val melodyDownload = graph.melody.download
 
-    private val _recent = MutableStateFlow<LibraryEntry?>(null)
+    private val _answered = MutableStateFlow<List<LibraryEntry>>(emptyList())
 
-    /** The newest finished session with an answer, for the card at the bottom. */
-    val recent: StateFlow<LibraryEntry?> = _recent.asStateFlow()
+    /** The newest finished session with an answer, for the card at the bottom; never one being deleted. */
+    val recent: StateFlow<LibraryEntry?> = combine(_answered, graph.deletions.hidden) { answered, hidden ->
+        answered.firstOrNull { it.id !in hidden }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _link = MutableStateFlow<LinkStage>(LinkStage.None)
     val link: StateFlow<LinkStage> = _link.asStateFlow()
@@ -105,17 +110,25 @@ class ListenViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { engine.library(LibraryQuery(kinds = emptyList(), search = null, pinnedOnly = false, limit = 12u, offset = 0u)) }
                 .getOrDefault(emptyList())
         }
-        _recent.value = entries.firstOrNull {
+        _answered.value = entries.filter {
             it.status == SessionStatus.MATCHED || it.status == SessionStatus.CANDIDATES ||
                 (it.status == SessionStatus.COMPLETED && it.trackCount > 0u)
         }
     }
 
+    /** The stage is on screen (set by ListenScreen). */
+    fun stageShown(shown: Boolean) {
+        graph.listen.stageShown = shown
+    }
+
     private fun onListenState(state: ListenState) {
         val done = state.phase as? ListenPhase.Done ?: return
         val result = done.result
-        // Listens from tiles and widgets answer with a notification; the stage stays idle.
+        // Listens from tiles and widgets answer with a notification and leave the stage idle;
+        // when the stage is in front, a match opens here too.
         if (state.origin != ListenOrigin.App) {
+            val answered = result is ListenResult.Matched || result is ListenResult.Candidates
+            if (answered && graph.listen.stageShown && graph.isAppVisible) result.sessionId?.let { _openSession.trySend(it) }
             graph.listen.reset()
             return
         }
@@ -149,16 +162,24 @@ class ListenViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Start listening with the selected source; phone audio needs [grant]. */
+    /** Start listening with the selected source; phone audio needs [grant] (see [canReplayPhone]). */
     fun start(source: ListenSource, grant: ProjectionGrant? = null): Boolean {
         clearLink()
         viewModelScope.launch { graph.settings.setListenSource(source) }
         return when (source) {
             ListenSource.Microphone -> graph.listen.start(CaptureSource.MICROPHONE, ListenMode.AUTO, ListenOrigin.App)
             ListenSource.Hum -> graph.listen.start(CaptureSource.MICROPHONE, ListenMode.HUM, ListenOrigin.App)
-            ListenSource.Phone -> grant != null &&
+            ListenSource.Phone -> (grant != null || canReplayPhone()) &&
                 graph.listen.start(CaptureSource.SYSTEM_AUDIO, ListenMode.RECORDING, ListenOrigin.App, grant)
         }
+    }
+
+    /** Development builds with a phone-audio replay file listen to it without the consent dialog. */
+    fun canReplayPhone(): Boolean = graph.listen.canReplayPhone()
+
+    /** Wait (briefly) until the live session has ended, e.g. after [cancel]. */
+    suspend fun awaitIdle() {
+        withTimeoutOrNull(IDLE_TIMEOUT_MS) { listen.first { !it.isActive } }
     }
 
     fun selectSource(source: ListenSource) {
@@ -249,5 +270,6 @@ class ListenViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val TAG = "ListenViewModel"
+        const val IDLE_TIMEOUT_MS = 3_000L
     }
 }

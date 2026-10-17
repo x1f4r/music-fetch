@@ -16,6 +16,7 @@
     <string name="listen_value_humming">Humming</string>
     <string name="listen_value_matching">Matching</string>
     <string name="state_idle">Identify what\'s playing</string>
+    <string name="state_idle_phone">Identify what\'s playing on this phone</string>
     <string name="state_listening">Listening</string>
     <string name="state_move_closer">Move closer to the sound</string>
     <string name="state_hum_start">Hum, whistle or sing</string>
@@ -40,7 +41,6 @@
     <string name="action_continue">Continue</string>
     <string name="action_open_settings">Open settings</string>
     <string name="action_stop">Stop</string>
-    <string name="action_ok">OK</string>
     <string name="action_ask_google">Ask Google</string>
     <string name="source_microphone">Microphone</string>
     <string name="source_phone">Phone</string>
@@ -49,6 +49,7 @@
     <string name="field_attach">Open a file</string>
     <string name="field_identify">Identify</string>
     <string name="your_pitch">Your pitch</string>
+    <string name="listen_again">Listen again</string>
 
 
     <!-- Melody library -->
@@ -102,6 +103,7 @@
     <string name="lyrics_empty">No songs with that lyric.</string>
     <string name="lyrics_try_different">Try different words</string>
     <string name="lyrics_searching">Searching</string>
+    <string name="lyrics_search">Search</string>
 
     <!-- Mix and collections -->
     <string name="mix_eta_under_minute">Less than a minute left</string>
@@ -144,11 +146,24 @@
     <string name="library_filter_hummed">Hummed</string>
     <string name="library_filter_links">Links</string>
     <string name="library_filter_mixes">Mixes</string>
+    <string name="library_filter_pinned">Pinned</string>
     <string name="library_today">Today</string>
     <string name="library_yesterday">Yesterday</string>
     <string name="library_empty_title">Nothing identified yet</string>
     <string name="library_empty_message">Songs you identify will show up here.</string>
     <string name="library_no_results">No matches</string>
+    <string name="library_empty_heard">Nothing heard yet</string>
+    <string name="library_empty_hummed">Nothing hummed yet</string>
+    <string name="library_empty_links">No links or files yet</string>
+    <string name="library_empty_mixes">No mixes yet</string>
+    <string name="library_empty_pinned">Nothing pinned yet</string>
+    <string name="library_empty_pinned_message">Pin a song to keep it at the top of your library.</string>
+    <string name="library_select">Select</string>
+    <string name="library_select_all">Select all</string>
+    <string name="library_close_selection">Done selecting</string>
+    <string name="library_collapse">Collapse</string>
+    <string name="library_expand">Expand</string>
+    <string name="library_delete_n_message">Their tracklists and saved audio will be removed.</string>
     <string name="library_running">Identifying</string>
     <string name="library_no_match">No match</string>
     <string name="library_failed">Didn\'t finish</string>
@@ -156,6 +171,8 @@
     <string name="session_pin">Pin</string>
     <string name="session_unpin">Unpin</string>
     <string name="session_pinned">Pinned</string>
+    <string name="session_not_pinned">Not pinned</string>
+    <string name="session_unpinned">Unpinned</string>
     <string name="session_delete">Delete</string>
     <string name="session_deleted">Deleted</string>
     <string name="session_undo">Undo</string>
@@ -216,7 +233,6 @@
     <string name="notif_listening_phone">Listening to phone audio</string>
     <string name="notif_matching">Matching</string>
     <string name="notif_result_title">%1$s — %2$s</string>
-    <string name="notif_open">Open</string>
     <string name="notif_best_guess">Best guess: %1$s — %2$s</string>
     <string name="notif_see_all">See all</string>
     <string name="notif_analyzing">Analyzing %1$s</string>
@@ -288,6 +304,26 @@
     <string name="library_waiting">Waiting for connection</string>
     <string name="session_waiting_message">It will be identified when you\'re back online.</string>
 
+    <plurals name="library_selected">
+        <item quantity="one">%d selected</item>
+        <item quantity="other">%d selected</item>
+    </plurals>
+    <plurals name="library_pinned_n">
+        <item quantity="one">%d pinned</item>
+        <item quantity="other">%d pinned</item>
+    </plurals>
+    <plurals name="library_unpinned_n">
+        <item quantity="one">%d unpinned</item>
+        <item quantity="other">%d unpinned</item>
+    </plurals>
+    <plurals name="library_deleted_n">
+        <item quantity="one">%d deleted</item>
+        <item quantity="other">%d deleted</item>
+    </plurals>
+    <plurals name="library_delete_n_title">
+        <item quantity="one">Delete %d session?</item>
+        <item quantity="other">Delete %d sessions?</item>
+    </plurals>
     <plurals name="mix_eta">
         <item quantity="one">About %d min left</item>
         <item quantity="other">About %d min left</item>

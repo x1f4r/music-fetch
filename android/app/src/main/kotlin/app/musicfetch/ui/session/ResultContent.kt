@@ -1,29 +1,47 @@
 package app.musicfetch.ui.session
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
@@ -37,24 +55,34 @@ import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.musicfetch.R
 import app.musicfetch.ui.common.Formatters
 import app.musicfetch.ui.common.PreviewPlayer
+import app.musicfetch.ui.common.tag
 import app.musicfetch.ui.components.Artwork
 import app.musicfetch.ui.components.OpenInSplitButton
 import app.musicfetch.ui.theme.ArtworkTheme
 
-/** A matched track (docs/design/DESIGN.md §6.3, Android). */
+/** A matched track (docs/design/DESIGN.md §6.3, Android). [listenAgain]: show the "Listen again" dock. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel, onBack: () -> Unit) {
+internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel, onBack: () -> Unit, listenAgain: Boolean) {
     val seed by viewModel.seed.collectAsStateWithLifecycle()
     val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
     val preference by viewModel.preference.collectAsStateWithLifecycle()
@@ -62,16 +90,44 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
     val track = view.track
     // A preview belongs to its screen.
     DisposableEffect(Unit) { onDispose { PreviewPlayer.stop() } }
+    // The bar takes the container colour once content scrolls beneath it, and shows the title
+    // once the hero title has scrolled away.
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    var barBottom by remember { mutableFloatStateOf(0f) }
+    var titleBottom by remember { mutableFloatStateOf(Float.MAX_VALUE) }
+    val titleInBar by remember { derivedStateOf { titleBottom < barBottom } }
+    // Height of the hero (top spacer to the bottom of "Open in") without the artwork.
+    var measuredRest by remember(track.identityKey, view.context) { mutableStateOf<Dp?>(null) }
+    val density = LocalDensity.current
     ArtworkTheme(seed) {
         val colors = MaterialTheme.colorScheme
         Scaffold(
+            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
             topBar = {
-                BackBar(onBack, transparent = true, actions = { SessionActions(view.entry, viewModel, track = track) })
+                BackBar(
+                    onBack,
+                    transparent = true,
+                    scrollBehavior = scrollBehavior,
+                    modifier = Modifier.onGloballyPositioned { barBottom = it.boundsInRoot().bottom },
+                    actions = { SessionActions(view.entry, viewModel, track = track) },
+                    title = {
+                        AnimatedVisibility(titleInBar, enter = fadeIn(), exit = fadeOut()) {
+                            Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge)
+                        }
+                    },
+                )
             },
+            bottomBar = { if (listenAgain) ListenAgainDock() },
             containerColor = colors.surface,
             contentWindowInsets = WindowInsets(0),
         ) { padding ->
-            Box(Modifier.fillMaxSize()) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                // Short screens and large fonts: the artwork gives way, so the "Open in" button
+                // is clear of the bottom (and of the "Listen again" dock) at first sight. The
+                // rest of the hero is measured once laid out; until then it is estimated.
+                val room = maxHeight - padding.calculateTopPadding() - padding.calculateBottomPadding()
+                val heroRest = measuredRest ?: (if (view.context != null) 290.dp else 258.dp) * density.fontScale.coerceAtLeast(1f)
+                val artworkSize = (room - heroRest - 8.dp).coerceIn(120.dp, 240.dp)
                 // Wash: primaryContainer → transparent, 440 dp, 55 %.
                 Box(
                     Modifier
@@ -85,7 +141,9 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
                     Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(top = padding.calculateTopPadding())
+                        .padding(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding())
+                        // Landscape with a cutout: keep the hero clear of it.
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
                         .padding(horizontal = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -106,6 +164,7 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
                                     Modifier
                                         .clickable(role = Role.Button) { track.previewUrl?.let(PreviewPlayer::toggle) }
                                         .semantics { contentDescription = previewLabel }
+                                        .tag("result.preview")
                                 } else {
                                     Modifier
                                 },
@@ -132,7 +191,9 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
                                 }
                             },
                     ) {
-                        Artwork(track.artworkUrl, 240.dp, corner = 20.dp, contentDescription = stringResource(R.string.result_artwork))
+                        Artwork(track.artworkUrl, artworkSize, corner = 20.dp, contentDescription = stringResource(R.string.result_artwork))
+                        // The artwork plays the 30 s preview; the badge says so.
+                        if (track.previewUrl != null) PreviewBadge(playing, Modifier.align(Alignment.BottomEnd).padding(12.dp))
                     }
                     Spacer(Modifier.height(24.dp))
                     Staggered(reveal.value, 0) {
@@ -142,7 +203,9 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
                             textAlign = TextAlign.Center,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 520.dp),
+                            modifier = Modifier
+                                .widthIn(max = 520.dp)
+                                .onGloballyPositioned { titleBottom = it.boundsInRoot().bottom },
                         )
                     }
                     Spacer(Modifier.height(2.dp))
@@ -178,7 +241,14 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
                         )
                     }
                     Spacer(Modifier.height(22.dp))
-                    preference?.let { OpenInSplitButton(track, it) } ?: Spacer(Modifier.height(56.dp))
+                    Box(
+                        Modifier.onGloballyPositioned { coordinates ->
+                            val bottom = with(density) { (coordinates.positionInParent().y + coordinates.size.height).toDp() }
+                            measuredRest = bottom - artworkSize
+                        },
+                    ) {
+                        preference?.let { OpenInSplitButton(track, it) } ?: Spacer(Modifier.height(56.dp))
+                    }
                     lyrics?.let { text ->
                         Spacer(Modifier.height(40.dp))
                         Column(Modifier.fillMaxWidth()) {
@@ -190,6 +260,26 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
                     Spacer(Modifier.height(32.dp))
                 }
             }
+        }
+    }
+}
+
+/** Play/pause badge on the artwork (decorative: the artwork itself is the button). */
+@Composable
+private fun PreviewBadge(playing: Boolean, modifier: Modifier = Modifier) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f),
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shadowElevation = 2.dp,
+        modifier = modifier.size(40.dp).clearAndSetSemantics { },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                painterResource(if (playing) R.drawable.ic_pause_filled else R.drawable.ic_play_arrow_filled),
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+            )
         }
     }
 }

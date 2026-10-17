@@ -28,13 +28,19 @@ platforms.
   live `level`, `pitchTrace` (ring of the last 8 s of `PitchFrame`s), `impression: Bool`,
   `notice`, `elapsed`; result: `matched(Track) | candidates([Candidate]) |
   noMatch(reason) | offline` (`Outcome::Waiting`: saved to identify once online);
-  actions `start(source, mode)`, `stop()`, `cancel()`, `retryAsHum()`.
+  actions `start(source, mode)`, `stop()`, `cancel()`, `retryAsHum()`. Android: anything
+  outside the stage that starts a listen ("Listen again", "Hum it", deep links) goes through
+  `AppIntents.listenNow(source)`, which shows the stage and lets it start the listen with its
+  own permission, pre-prompt and consent steps.
 - `SessionModel` — for link/file/lyrics sessions and library detail: `source`,
   `phase`/`fraction`, `progress` (analyzed/total/ETA), ordered `segments` (upsert by id,
   removal), `candidates`, `items` (playlist entries), `outcome`, `error`; actions
   `cancel()`, `export(format)`, `correct(segment, track)`, `confirm(candidate)`.
 - `LibraryModel` — paged `LibraryEntry` list grouped by day, filter (All, Heard, Hummed,
-  Links, Mixes), search text, pin/delete; refreshes when sessions finish.
+  Links, Mixes; Android also Pinned), search text, pin/delete; refreshes when sessions finish.
+  Android: the pinned sessions of the filter for the section above the day groups, and a
+  selection (ids) for pinning, sharing and deleting several sessions at once. Pins apply
+  optimistically and are undone per session.
 - `SettingsModel` — default service, credentials, melody index status/install/remove,
   storage usage/clear cache, platform toggles.
 
@@ -58,7 +64,8 @@ Rules:
   Settings" (Privacy & Security → Screen & System Audio Recording).
 - System audio (Android): one-line explanation, then the MediaProjection consent each
   session; silent capture → "This app blocks audio capture. Use the microphone instead."
-- Notifications (Android 13+): requested the first time a background analysis starts.
+- Notifications (Android 13+): requested the first time a background analysis starts, and
+  before the first phone-audio listen (its result usually arrives as a notification).
 
 ## Android Quick Settings tiles
 
@@ -73,9 +80,11 @@ MediaProjection consent, `mediaProjection`) and finishes immediately. The tile s
 `STATE_ACTIVE` while capturing; tapping it again stops. The ongoing notification says
 what is being captured ("Listening with the microphone" / "Listening to phone audio"),
 shows elapsed time and has a Stop action. When the session ends the notification is
-replaced by the result: matched track (actions "Open in <default service>", "Open"),
-best impression candidate ("Best guess: … · See all"), or the no-match reason with
-"Try again". Tapping it opens the session in the app.
+replaced by the result: matched track (actions "Open in <default service>", "Pin", which
+pins in place and turns into "Unpin"), best impression candidate ("Best guess: … · See all"),
+the no-match reason with "Try again" and "Hum it", or the failure's message. Tapping it opens
+the session in the app; seeing the session in the app dismisses the notification. A match
+while the app's Listen stage is on screen opens there instead of notifying.
 
 ## Opening links
 
@@ -129,3 +138,9 @@ The apps are distributed to testers and the repository is public:
   runtime → ad-hoc sign with the stable designated requirement → zip).
 - Android: `scripts/build-android-app.sh` (runtime → core → Gradle assembleRelease →
   signed APK).
+- Android UI checks: `tools/android-ux/` builds a seed library without any network
+  (`seed.py`), synthetic replay files for the microphone dev hook (`replays.py`), installs the
+  seed (`push-seed.sh`) and drives a debug build on an emulator through test tags exposed as
+  resource ids (`ux.py`, `run-all.sh`: screenshots light, dark and at font scale 1.3). Debug and
+  benchmark builds also replay `debug-phone-capture.wav` as phone audio without the
+  MediaProjection consent. Compose UI tests: `:app:connectedDebugAndroidTest`.

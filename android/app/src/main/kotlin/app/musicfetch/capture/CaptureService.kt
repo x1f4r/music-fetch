@@ -40,7 +40,8 @@ class CaptureService : Service() {
     private fun enterForeground() {
         val state = controller.state.value
         val type = when {
-            state.source == CaptureSource.SYSTEM_AUDIO -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            // A development replay of phone audio has no projection behind it.
+            state.source == CaptureSource.SYSTEM_AUDIO && !controller.replayingPhone -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
             // The microphone type exists from Android 11; before, no type is needed for it.
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             else -> 0
