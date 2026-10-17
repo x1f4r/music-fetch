@@ -23,6 +23,9 @@ nonisolated struct DemoState: Sendable {
     var appearance: String?
     var reduceMotion = false
     var inspector: Bool?
+    /// Laid out in a window that is never shown (`-MFRender`): no activation, no
+    /// window moves, no Settings window.
+    var offscreen = false
 
     init(name: String) {
         self.name = name
@@ -31,6 +34,12 @@ nonisolated struct DemoState: Sendable {
     static func fromLaunchArguments(_ defaults: UserDefaults = .standard) -> DemoState? {
         // Unit tests host the app: keep them away from the real library.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return DemoState(name: "tests") }
+        // The offscreen harness builds its own states; the app's model stays on the fake engine.
+        if RenderHarness.isActive {
+            var state = DemoState(name: "render")
+            state.offscreen = true
+            return state
+        }
         guard let name = defaults.string(forKey: "MFDemoState"), !name.isEmpty else { return nil }
         var state = DemoState(name: name)
         state.windowSize = defaults.string(forKey: "MFWindowSize").flatMap(Self.size)
@@ -92,11 +101,11 @@ nonisolated struct DemoState: Sendable {
     @MainActor
     func apply(to app: AppModel) async {
         // Screenshots show the window in front, active when the system allows it.
-        if name != "tests" {
+        if name != "tests", !offscreen {
             NSApp.activate()
             NSApp.windows.filter(\.isVisible).forEach { $0.orderFrontRegardless() }
         }
-        if let windowSize, let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
+        if !offscreen, let windowSize, let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
             window.setContentSize(windowSize)
             if let screen = window.screen ?? NSScreen.main {
                 window.setFrameTopLeftPoint(NSPoint(x: screen.visibleFrame.minX + 16, y: screen.visibleFrame.maxY - 16))
@@ -148,7 +157,7 @@ nonisolated struct DemoState: Sendable {
         default:
             break
         }
-        if let pane = settingsPane {
+        if let pane = settingsPane, !offscreen {
             // In memory only: the Settings window reads it instead of the stored pane.
             app.demoSettingsPane = pane
             try? await Task.sleep(for: .milliseconds(300))

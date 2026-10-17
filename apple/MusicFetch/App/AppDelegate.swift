@@ -10,6 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if RenderHarness.isActive {
+            Task { await RenderHarness.run() }
+            return
+        }
+        #endif
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
         // The menu bar extra needs the engine even when no window opens.
