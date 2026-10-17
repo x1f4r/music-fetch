@@ -100,6 +100,7 @@ FINAL = {"ok", "mismatch", "no_match", "unverifiable", "same_window"}
 MAX_ERRORS = 3  # an erroring song is retried on later passes up to this many times
 MAX_TRIES = 3  # candidates downloaded per song and source (a client's ``tries`` overrides it)
 REFRESH_S = 1800.0  # new songs (evergreen items, late resolves) join the plan this often
+YOUTUBE_RUNS_PER_DAY = 2400
 VOICING = 0.04
 FPS = 10
 WINDOW_MIN_SHIFT_S = 8.0  # a second window that starts closer than this to Deezer's adds nothing
@@ -640,8 +641,10 @@ def status(paths: Paths, window: float = 3600.0, rate_window: float = 3 * 3600.0
     """Progress per source and tier, the settle rate and ETA, breakers and eval-song coverage.
 
     A song is settled when it has a full track or every full-track source has given its verdict
-    (a final status, or ``MAX_ERRORS`` errors). The ETA divides a tier's unsettled songs by the
-    number of songs settled in the last ``rate_window`` seconds.
+    (a final status, or ``MAX_ERRORS`` errors). The ETA of a tier is that of its slowest source:
+    the songs a source will still see (each weighted by the chance that the sources before it
+    miss it, from their hit rates so far) over the songs it handled per hour in the last
+    ``rate_window`` seconds; YouTube's rate is capped by its daily budget (two runs per song).
     """
     conn = dbm.connect(paths.db)
     conn.executescript(TRACK_SCHEMA)
@@ -691,17 +694,46 @@ def status(paths: Paths, window: float = 3600.0, rate_window: float = 3 * 3600.0
 
     ranked = [r["id"] for r in ranked_songs(conn)]
     rate = sum(1 for i, t in last.items() if now - t < rate_window and settled(i)) / (rate_window / 3600)
+    hit, speed = {}, {}
+    for src in FULL_SOURCES:
+        done = [v[src][0] for v in verdicts.values() if src in v and (v[src][0] in FINAL or v[src][1] >= MAX_ERRORS)]
+        hit[src] = sum(1 for x in done if x == "ok") / len(done) if len(done) >= 20 else 0.3
+        n, first = conn.execute(
+            "SELECT COUNT(*), MIN(updated_at) FROM ref_attempt WHERE source=? AND updated_at>?",
+            (src, now - rate_window),
+        ).fetchone()
+        span = min(rate_window, now - first) if first else rate_window
+        speed[src] = n / (max(span, 600.0) / 3600)
+    g = guards.get("youtube")
+    if g and speed.get("youtube"):
+        speed["youtube"] = min(speed["youtube"], YOUTUBE_RUNS_PER_DAY / 24 / 2)
+
+    def reach(i: int, src: str) -> float:
+        """Chance that song i still needs ``src``: every earlier source misses it."""
+        v = verdicts.get(i, {})
+        p = 1.0
+        for earlier in FULL_SOURCES[: FULL_SOURCES.index(src)]:
+            if earlier in v and v[earlier][0] == "ok":
+                return 0.0
+            if earlier not in v:
+                p *= 1.0 - hit[earlier]
+        return p
+
     tiers = {}
     for n in (1000, 5000, 15000):
         ids = ranked[:n]
         have = sum(1 for i in ids if i in full)
-        open_ = sum(1 for i in ids if not settled(i))
+        open_ = [i for i in ids if not settled(i)]
+        work = {src: sum(reach(i, src) for i in open_ if src not in verdicts.get(i, {})) for src in FULL_SOURCES}
+        eta = {src: (work[src] / speed[src] if speed[src] else None) for src in FULL_SOURCES}
+        known = [x for x in eta.values() if x is not None]
         tiers[f"top{n}"] = {
             "full_track": have,
             "full_track_share": round(have / max(1, len(ids)), 3),
             "window_only": sum(1 for i in ids if i not in full and i in windows),
-            "unsettled": open_,
-            "eta_h": round(open_ / rate, 1) if rate else None,
+            "unsettled": len(open_),
+            "work_by_source": {k: round(v) for k, v in work.items()},
+            "eta_h": round(max(known), 1) if known and len(known) == len(eta) else None,
         }
     evals = {}
     rank_of = {i: k for k, i in enumerate(ranked)}
@@ -717,6 +749,8 @@ def status(paths: Paths, window: float = 3600.0, rate_window: float = 3 * 3600.0
         "full_tracks": {"total": len(full), "by_source": {s: sum(1 for v in full.values() if v == s) for s in set(full.values())}},
         "full_tracks_per_hour": sum(d.get("ok_last_hour") or 0 for s, d in by_source.items() if s in FULL_SOURCES),
         "songs_settled_per_hour": round(rate, 1),
+        "songs_per_hour_by_source": {k: round(v, 1) for k, v in speed.items()},
+        "hit_rate_by_source": {k: round(v, 3) for k, v in hit.items()},
         "tiers": tiers,
         "eval_coverage": evals,
         "guards": guards,
