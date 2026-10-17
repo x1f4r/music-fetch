@@ -15,7 +15,8 @@ final class Notifier: NSObject {
 
     override init() {
         // The notification center requires a real app bundle (not unit tests).
-        center = Bundle.main.bundleURL.pathExtension == "app" ? UNUserNotificationCenter.current() : nil
+        // Nor the offscreen layout harness.
+        center = Bundle.main.bundleURL.pathExtension == "app" && !RenderHarness.isActive ? UNUserNotificationCenter.current() : nil
         super.init()
         center?.delegate = self
     }

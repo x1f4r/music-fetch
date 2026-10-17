@@ -19,6 +19,8 @@ nonisolated enum PreferenceKey {
     static let listenSource = "listenSource"
     static let settingsPane = "settingsPane"
     static let showInspector = "showInspector"
+    /// The sidebar's Pinned section is expanded.
+    static let pinnedExpanded = "sidebarPinnedExpanded"
     /// Developer override for the melody-index manifest (e.g. a local test server).
     static let melodyManifestOverride = "MFMelodyIndexManifestURL"
 }

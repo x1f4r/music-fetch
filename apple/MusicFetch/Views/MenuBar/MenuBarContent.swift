@@ -23,9 +23,14 @@ struct MenuBarContent: View {
                 .padding(.top, 4)
                 .contentTransition(.opacity)
                 .animation(.easeInOut(duration: 0.15), value: listen.stateLine)
-            ActionRow(listen: listen, compact: true)
+            SourceToggles(listen: listen, compact: true)
                 .frame(height: 28)
                 .padding(.top, 12)
+            if !listen.recoveryActions.isEmpty {
+                RecoveryRow(listen: listen, compact: true)
+                    .frame(height: 28)
+                    .padding(.top, 8)
+            }
 
             if let recent = app.library.recent {
                 Divider().padding(.top, 16)
