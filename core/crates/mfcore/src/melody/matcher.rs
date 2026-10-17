@@ -17,10 +17,14 @@
 //! 4. **DTW.** Subsequence DTW between voiced frames (reference sampled at the
 //!    estimated tempo, slopes ½–2 around it, band of 20 % of the query), cost
 //!    |q − r − k| clipped at 4; k is refined by median passes and ±½.
-//! 5. **Fusion.** A conditional logit over (votes, linear, DTW, coverage,
-//!    tempo) with a "none of these" option, then Platt scaling, gives a score
-//!    calibrated as P(correct) (fitted by tools/eval/fit_fusion.py); a
-//!    popularity prior can be added through [`MatchOptions`].
+//! 5. **Fusion.** A conditional logit over the stages' evidence, the reference
+//!    length and the song's popularity, with a "none of these" option whose
+//!    weight grows for short, narrow or simple hums, then Platt scaling, gives
+//!    a score calibrated as P(correct) on real hums (fitted by
+//!    tools/eval/fit_fusion.py). An extra popularity prior can be added through
+//!    [`MatchOptions`].
+//! 6. **Works.** Recordings with the same normalized title are one answer,
+//!    shown as the most popular one that matches nearly as well as the best.
 
 use std::collections::{HashMap, HashSet};
 
@@ -47,7 +51,8 @@ pub struct MelodyMatch {
 /// Tuning knobs; the defaults are what the app uses.
 #[derive(Debug, Clone)]
 pub struct MatchOptions {
-    /// Logit weight of ln((popularity + 0.05) / 0.55); 0 disables the prior.
+    /// Logit weight of an extra ln((popularity + 0.05) / 0.55) on top of the score
+    /// model, which already weighs popularity (default 0).
     pub popularity_weight: f32,
     /// Index cells probed per query window.
     pub probe: usize,
@@ -61,7 +66,7 @@ pub struct MatchOptions {
 
 impl Default for MatchOptions {
     fn default() -> Self {
-        Self { popularity_weight: 0.3, probe: 24, shortlist: 2000, pool: 1500, rerank: 150 }
+        Self { popularity_weight: 0.0, probe: 24, shortlist: 2000, pool: 1500, rerank: 150 }
     }
 }
 
@@ -84,6 +89,10 @@ pub struct Features {
     pub edit: f32,
     /// Note n-gram votes per query n-gram position.
     pub note_votes: f32,
+    /// ln(voiced reference frames / 600): long references match by chance more often.
+    pub reference: f32,
+    /// ln((popularity + 0.05) / 0.55): the song's popularity prior.
+    pub prior: f32,
 }
 
 /// One scored candidate with its features (for evaluation and model fitting).
@@ -113,14 +122,17 @@ pub struct Trace {
     pub reranked: Option<usize>,
 }
 
-/// Score model fitted by tools/eval/fit_fusion.py. Conditional logit over
-/// (votes, linear, dtw, coverage, tempo): each candidate's utility is
-/// MODEL_WEIGHTS · features, a "none of these" option has utility MODEL_NONE,
-/// and the softmax probability goes through Platt scaling σ(a + b·logit p)
-/// with CALIBRATION = (a, b).
-const MODEL_WEIGHTS: [f32; 8] = [20.7026, -4.1774, -7.6168, -4.0570, -3.7445, -12.2397, -1.9081, 0.2353];
-const MODEL_NONE: f32 = -15.5734;
-const CALIBRATION: (f32, f32) = (-0.4713, 0.9644);
+/// Score model fitted by tools/eval/fit_fusion.py. Conditional logit: each
+/// candidate's utility is MODEL_WEIGHTS · [`Features`] (in field order, capped as in
+/// [`utility`]); a "none of these" option has utility MODEL_NONE + MODEL_NONE_QUERY ·
+/// [`QueryTraits::model_inputs`], so short, narrow or simple hums are less
+/// conclusive; the softmax probability goes through Platt scaling σ(a + b·logit p)
+/// with CALIBRATION = (a, b), fitted on real hums.
+const MODEL_WEIGHTS: [f32; 10] =
+    [17.2829, -7.6651, -9.5203, -5.8884, -3.3172, -21.2018, -2.8179, 0.1214, -0.2713, 0.6837];
+const MODEL_NONE: f32 = -24.4657;
+const MODEL_NONE_QUERY: [f32; 3] = [1.5891, -6.0278, -7.7223];
+const CALIBRATION: (f32, f32) = (-0.6438, 0.9107);
 
 /// Retrieval tempos (query duration over reference duration), log-spaced.
 const TEMPOS: usize = 11;
@@ -261,14 +273,49 @@ pub fn score_song(index: &MelodyIndex, query: &MelodyQuery, song_id: u32) -> Opt
     let mut ranked = rerank(&q, &mut refs, placements, &options);
     // Placements of one song do not compete: score each against "none" alone.
     for s in &mut ranked {
-        score_all(std::slice::from_mut(s));
+        score_all(std::slice::from_mut(s), q.none);
     }
     ranked.sort_by(|a, b| b.score.total_cmp(&a.score));
     best_per_song(index, &q, &mut refs, ranked, 1, options.popularity_weight).into_iter().next()
 }
 
+/// What the query itself says about how conclusive any answer can be.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct QueryTraits {
+    pub voiced_ms: u32,
+    /// Pitch range, 5th to 95th percentile of the voiced contour, in semitones.
+    pub range: f32,
+    /// Pitch changes between notes.
+    pub steps: usize,
+}
+
+impl QueryTraits {
+    pub fn of(query: &MelodyQuery) -> Self {
+        let mut voiced: Vec<f32> = query.contour.iter().copied().filter(|m| m.is_finite()).collect();
+        voiced.sort_by(f32::total_cmp);
+        let pct = |p: f32| voiced.get(((voiced.len() as f32 - 1.0) * p).round() as usize).copied().unwrap_or(0.0);
+        Self { voiced_ms: query.voiced_ms, range: pct(0.95) - pct(0.05), steps: steps::query_steps(&query.notes).len() }
+    }
+
+    /// The score model's inputs: log voiced length, scaled range and step count.
+    fn model_inputs(&self) -> [f32; 3] {
+        [
+            (self.voiced_ms.max(500) as f32 / 8000.0).ln(),
+            self.range.min(24.0) / 8.0 - 1.0,
+            self.steps.min(60) as f32 / 20.0 - 1.0,
+        ]
+    }
+
+    /// Utility of the score model's "none of these" option.
+    fn none_utility(&self) -> f32 {
+        MODEL_NONE + self.model_inputs().iter().zip(MODEL_NONE_QUERY).map(|(x, w)| x * w).sum::<f32>()
+    }
+}
+
 /// The query in the forms the stages need.
 struct Query {
+    /// Utility of "none of these" for this query.
+    none: f32,
     contour: Vec<f32>,
     /// Indices of voiced contour frames.
     voiced: Vec<usize>,
@@ -306,7 +353,8 @@ impl Query {
         }
         let steps = steps::query_steps(&query.notes);
         let shape = steps::shape(&steps);
-        Some(Self { contour: query.contour.clone(), voiced, median, windows, steps, shape })
+        let none = QueryTraits::of(query).none_utility();
+        Some(Self { none, contour: query.contour.clone(), voiced, median, windows, steps, shape })
     }
 
     fn duration_ms(&self) -> f32 {
@@ -1004,6 +1052,7 @@ fn quick_stage(q: &Query, refs: &mut References, placements: Vec<Placement>, kee
 
 /// Full linear scaling, DTW and fusion; best first.
 fn full_stage(q: &Query, refs: &mut References, quick: Vec<(f32, Placement)>) -> Vec<Scored> {
+    let index = refs.index;
     let mut scored: Vec<Scored> = Vec::with_capacity(quick.len());
     let mut rows = AlignRows::default();
     for (_, p) in quick {
@@ -1032,6 +1081,8 @@ fn full_stage(q: &Query, refs: &mut References, quick: Vec<(f32, Placement)>) ->
                 align,
                 edit,
                 note_votes: p.note_votes,
+                reference: (r.voiced.max(20) as f32 / 600.0).ln(),
+                prior: ((index.popularity(r.song) + 0.05) / 0.55).ln(),
             },
             score: 0.0,
             key,
@@ -1040,7 +1091,7 @@ fn full_stage(q: &Query, refs: &mut References, quick: Vec<(f32, Placement)>) ->
             path,
         });
     }
-    score_all(&mut scored);
+    score_all(&mut scored, q.none);
     scored.sort_by(|a, b| b.score.total_cmp(&a.score));
     scored
 }
@@ -1256,29 +1307,58 @@ fn utility(f: &Features) -> f32 {
         f.align.min(2.0),
         f.edit.min(2.0),
         f.note_votes.min(6.0),
+        f.reference,
+        f.prior,
     ];
     x.iter().zip(MODEL_WEIGHTS).map(|(x, w)| x * w).sum()
 }
 
 /// Calibrated P(correct) for competing candidates: a softmax over them and a
 /// "none of these" option, then Platt scaling.
-fn score_all(scored: &mut [Scored]) {
+fn score_all(scored: &mut [Scored], none: f32) {
     let z: Vec<f32> = scored.iter().map(|s| utility(&s.features)).collect();
-    let top = z.iter().copied().fold(MODEL_NONE, f32::max);
+    let top = z.iter().copied().fold(none, f32::max);
     // Songs compete, not placements: each song enters with its best placement.
     let mut best: HashMap<u32, f32> = HashMap::with_capacity(scored.len());
     for (s, &z) in scored.iter().zip(&z) {
         let e = best.entry(s.song).or_insert(f32::NEG_INFINITY);
         *e = e.max(z);
     }
-    let total = (MODEL_NONE - top).exp() + best.values().map(|z| (z - top).exp()).sum::<f32>();
+    let total = (none - top).exp() + best.values().map(|z| (z - top).exp()).sum::<f32>();
     for (s, z) in scored.iter_mut().zip(z) {
         let p = (z - top).exp() / total;
         s.score = 1.0 / (1.0 + (-(CALIBRATION.0 + CALIBRATION.1 * logit(p))).exp());
     }
 }
 
-/// Keep each song's best candidate, apply the popularity prior and build matches.
+/// Songs of one work whose match is within this many logits of the work's best
+/// may be shown in its place.
+const WORK_MARGIN: f32 = 1.0;
+
+/// One answer per work (see [`work_key`]), best first. `songs` holds each song's
+/// best logit, best first; returns, per work, the position in `songs` of the song
+/// to show and the work's best logit. The shown song is the most popular of the
+/// work's songs that match nearly as well as its best: a hum cannot tell versions
+/// apart, and the original is the likelier answer than a cover that happens to
+/// match a little better.
+pub fn group_works(index: &MelodyIndex, songs: &[(u32, f32)]) -> Vec<(usize, f32)> {
+    let mut works: Vec<(u64, f32, usize)> = Vec::new();
+    for (i, &(song, z)) in songs.iter().enumerate() {
+        let work = work_key(index, song);
+        match works.iter_mut().find(|w| w.0 == work) {
+            Some(w) => {
+                if z >= w.1 - WORK_MARGIN && index.popularity(song) > index.popularity(songs[w.2].0) {
+                    w.2 = i;
+                }
+            }
+            None => works.push((work, z, i)),
+        }
+    }
+    works.into_iter().map(|(_, z, i)| (i, z)).collect()
+}
+
+/// Each song's best candidate with the popularity prior applied, one match per
+/// work (see [`group_works`]).
 fn best_per_song(
     index: &MelodyIndex,
     q: &Query,
@@ -1288,7 +1368,7 @@ fn best_per_song(
     popularity_weight: f32,
 ) -> Vec<MelodyMatch> {
     let mut seen = HashSet::new();
-    let mut out: Vec<(f32, Scored, SongMeta)> = Vec::new();
+    let mut songs: Vec<(f32, Scored, SongMeta)> = Vec::new();
     for s in ranked {
         if !seen.insert(s.song) {
             continue;
@@ -1297,14 +1377,24 @@ fn best_per_song(
             continue;
         };
         let z = logit(s.score) + popularity_weight * ((meta.popularity + 0.05) / 0.55).ln();
-        out.push((1.0 / (1.0 + (-z).exp()), s, meta));
+        songs.push((z, s, meta));
     }
-    out.sort_by(|a, b| b.0.total_cmp(&a.0));
-    out.truncate(k);
-    out.into_iter()
-        .map(|(score, s, song)| {
-            let alignment = alignment(q, refs.get(s.track), &s);
-            MelodyMatch { song, score, key_shift: s.key, tempo: 1.0 / s.tempo, alignment }
+    songs.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let order: Vec<(u32, f32)> = songs.iter().map(|(z, s, _)| (s.song, *z)).collect();
+    let mut works = group_works(index, &order);
+    works.truncate(k);
+    works
+        .into_iter()
+        .map(|(i, z)| {
+            let (_, s, song) = &songs[i];
+            let alignment = alignment(q, refs.get(s.track), s);
+            MelodyMatch {
+                song: song.clone(),
+                score: 1.0 / (1.0 + (-z).exp()),
+                key_shift: s.key,
+                tempo: 1.0 / s.tempo,
+                alignment,
+            }
         })
         .collect()
 }

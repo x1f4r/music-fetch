@@ -12,8 +12,8 @@ use anyhow::{Context, bail};
 use clap::Subcommand;
 use mfcore::melody::matcher::{self, MatchOptions};
 use mfcore::melody::notes::{self, MelodyQuery, query_from_details};
-use mfcore::melody::steps;
 use mfcore::melody::pitch::{FrameDetail, PitchTracker, StreamingPitch};
+use mfcore::melody::steps;
 use mfcore::melody::{MelodyIndex, builder};
 use std::sync::Mutex;
 
@@ -753,12 +753,14 @@ fn search_row(index: &MelodyIndex, query: &MelodyQuery, expected: Option<u32>, r
         1.0 / (1.0 + (-z).exp())
     };
     songs.sort_by(|a, b| prior(b).total_cmp(&prior(a)));
-    row.rank = expected.and_then(|e| songs.iter().position(|c| c.song == e).map(|p| p + 1));
+    // As the app shows them: one answer per work.
+    let logits: Vec<(u32, f32)> = songs.iter().map(|c| (c.song, logit(prior(c)))).collect();
+    let shown: Vec<(usize, f32)> = matcher::group_works(index, &logits);
+    row.rank = expected.and_then(|e| shown.iter().position(|&(i, _)| songs[i].song == e).map(|p| p + 1));
+    let song_rank = expected.and_then(|e| songs.iter().position(|c| c.song == e).map(|p| p + 1));
     let expected_work = expected.map(|e| matcher::work_key(index, e));
-    let mut works = HashSet::new();
-    row.work_rank = expected_work
-        .and_then(|w| songs.iter().filter(|c| works.insert(c.work)).position(|c| c.work == w).map(|p| p + 1));
-    row.top = songs.first().and_then(|c| index.song(c.song).map(|s| (s.title, prior(c))));
+    row.work_rank = expected_work.and_then(|w| shown.iter().position(|&(i, _)| songs[i].work == w).map(|p| p + 1));
+    row.top = shown.first().and_then(|&(i, z)| index.song(songs[i].song).map(|s| (s.title, 1.0 / (1.0 + (-z).exp()))));
     if run.trace {
         row.trace = expected.map(|e| matcher::trace(index, query, options, e)).unwrap_or_default();
     }
@@ -783,13 +785,19 @@ fn search_row(index: &MelodyIndex, query: &MelodyQuery, expected: Option<u32>, r
     let pct = |p: f32| voiced.get(((voiced.len() as f32 - 1.0) * p).round() as usize).copied().unwrap_or(0.0);
     let t = row.trace;
     row.json = serde_json::json!({
-        "wav": row.wav, "prefix_ms": row.prefix_ms, "expected": expected, "rank": row.rank, "work_rank": row.work_rank,
+        "wav": row.wav, "prefix_ms": row.prefix_ms, "expected": expected, "rank": row.rank, "song_rank": song_rank,
+        "work_rank": row.work_rank, "shown": shown.iter().take(10).map(|&(i, z)| (songs[i].song, 1.0 / (1.0 + (-z).exp()))).collect::<Vec<_>>(),
         "voiced_ms": query.voiced_ms, "duration_ms": query.contour.len() as u32 * notes::CONTOUR_MS,
         "range": pct(0.95) - pct(0.05), "notes": query.notes.len(), "steps": steps::query_steps(&query.notes).len(),
         "pitch_ms": row.pitch_ms, "search_ms": row.search_ms, "candidates": cands,
         "trace": [t.retrieval, t.linear, t.reranked], "coarse": [t.windows, t.notes], "oracle_score": oracle,
     })
     .to_string();
+}
+
+fn logit(p: f32) -> f32 {
+    let p = p.clamp(1e-6, 1.0 - 1e-6);
+    (p / (1.0 - p)).ln()
 }
 
 fn ms(since: Instant) -> f64 {
