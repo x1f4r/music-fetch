@@ -69,6 +69,7 @@ def main():
     model = load_model(a.model, dev)
     z = np.load(a.index)
     emb = z["emb"].astype(np.float32)
+    dim = emb.shape[1]
     song = z["song"]
     start = z["start"]
     rows = pickle.load(open(a.eval, "rb"))
@@ -134,19 +135,19 @@ def main():
                 train = X[rng.choice(len(X), min(len(X), 300_000), replace=False)]
                 if kind.startswith("pca"):
                     d_, m = kind[3:].split("pq")
-                    idx = faiss.index_factory(128, f"PCA{d_},PQ{m}", faiss.METRIC_INNER_PRODUCT)
+                    idx = faiss.index_factory(dim, f"PCA{d_},PQ{m}", faiss.METRIC_INNER_PRODUCT)
                 elif kind.endswith("fs"):
-                    idx = faiss.index_factory(128, "PQ" + kind[2:], faiss.METRIC_INNER_PRODUCT)  # pq64x4fs -> PQ64x4fs
+                    idx = faiss.index_factory(dim, "PQ" + kind[2:], faiss.METRIC_INNER_PRODUCT)  # pq64x4fs -> PQ64x4fs
                 elif kind.startswith("opq"):
                     m = int(kind[3:])
-                    idx = faiss.index_factory(128, f"OPQ{m},PQ{m}", faiss.METRIC_INNER_PRODUCT)
+                    idx = faiss.index_factory(dim, f"OPQ{m},PQ{m}", faiss.METRIC_INNER_PRODUCT)
                 elif kind.startswith("ivfpq"):
                     m = int(kind[5:])
-                    idx = faiss.IndexIVFPQ(faiss.IndexFlatIP(128), 128, 2048, m, 8, faiss.METRIC_INNER_PRODUCT)
+                    idx = faiss.IndexIVFPQ(faiss.IndexFlatIP(dim), dim, 2048, m, 8, faiss.METRIC_INNER_PRODUCT)
                 elif kind == "sq8":
-                    idx = faiss.IndexScalarQuantizer(128, faiss.ScalarQuantizer.QT_8bit, faiss.METRIC_INNER_PRODUCT)
+                    idx = faiss.IndexScalarQuantizer(dim, faiss.ScalarQuantizer.QT_8bit, faiss.METRIC_INNER_PRODUCT)
                 else:
-                    idx = faiss.IndexPQ(128, int(kind[2:]), 8, faiss.METRIC_INNER_PRODUCT)
+                    idx = faiss.IndexPQ(dim, int(kind[2:]), 8, faiss.METRIC_INNER_PRODUCT)
                 idx.train(train)
                 idx.add(X)
                 if kind.startswith("ivfpq"):
@@ -169,12 +170,12 @@ def main():
         X = np.ascontiguousarray(emb[mask])
         owner = song[mask]
         train = X[rng.choice(len(X), min(len(X), 300_000), replace=False)]
-        variants = [("pq16", lambda: faiss.IndexPQ(128, 16, 8, faiss.METRIC_INNER_PRODUCT)),
-                    ("pq32", lambda: faiss.IndexPQ(128, 32, 8, faiss.METRIC_INNER_PRODUCT)),
-                    ("opq16", lambda: faiss.index_factory(128, "OPQ16,PQ16", faiss.METRIC_INNER_PRODUCT))]
+        variants = [("pq16", lambda: faiss.IndexPQ(dim, 16, 8, faiss.METRIC_INNER_PRODUCT)),
+                    ("pq32", lambda: faiss.IndexPQ(dim, 32, 8, faiss.METRIC_INNER_PRODUCT)),
+                    ("opq16", lambda: faiss.index_factory(dim, "OPQ16,PQ16", faiss.METRIC_INNER_PRODUCT))]
         if hop == "h2":
-            variants.append(("sq8", lambda: faiss.IndexScalarQuantizer(128, faiss.ScalarQuantizer.QT_8bit, faiss.METRIC_INNER_PRODUCT)))
-            variants.append(("pq8", lambda: faiss.IndexPQ(128, 8, 8, faiss.METRIC_INNER_PRODUCT)))
+            variants.append(("sq8", lambda: faiss.IndexScalarQuantizer(dim, faiss.ScalarQuantizer.QT_8bit, faiss.METRIC_INNER_PRODUCT)))
+            variants.append(("pq8", lambda: faiss.IndexPQ(dim, 8, 8, faiss.METRIC_INNER_PRODUCT)))
         for vname, make in variants:
             idx = make()
             idx.train(train)
@@ -184,7 +185,7 @@ def main():
             report[f"{vname}-{hop}"] = r
             print(f"{vname}-{hop}", json.dumps(r), flush=True)
         for nprobe in (32, 128):
-            ivf = faiss.IndexIVFPQ(faiss.IndexFlatIP(128), 128, 4096, 16, 8, faiss.METRIC_INNER_PRODUCT)
+            ivf = faiss.IndexIVFPQ(faiss.IndexFlatIP(dim), dim, 4096, 16, 8, faiss.METRIC_INNER_PRODUCT)
             ivf.train(train)
             ivf.add(X)
             ivf.nprobe = nprobe
