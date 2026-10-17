@@ -288,9 +288,11 @@ Never decide by duration alone. A single song must never be split.
    "Episode … (Intro)") get one probe and otherwise become `Unidentified` or `Speech`.
    When three of the last six settled entries were overruled, the tracklist no longer
    describes the media (re-edited upload, shifted times): entries from the first of
-   them on are dropped, their probes kept, and the rest is analysed blind. Untimed
-   hints (YouTube "Music" cards) become the candidate set for local matching across the
-   whole mix before any probing.
+   them on are dropped, their probes kept, and the rest is analysed blind. A list
+   written "Title - Artist" throughout is turned around first when the catalog knows
+   at least two of its first four entries only that way. Untimed hints (YouTube
+   "Music" cards) become the candidate set for local matching across the whole mix
+   before any probing.
 3. **Adaptive probing** for everything still unexplained, in time order (probe starts
    snap to a 2 s grid so a re-analysis hits the answer cache):
    - A match of X at window start T with Shazam offset o and skew s gives the start
@@ -298,7 +300,10 @@ Never decide by duration alone. A single song must never be split.
      Eₓ = Sₓ + D/(1 + s). Only the middle of a 12 s window counts as surely X.
    - Next probe at Eₓ + 10 s (just past X's latest end, where the next track must play)
      when that is at most 4 min ahead, else T + 150 s; at least T + 30 s; without D, or
-     when X was heard past Eₓ (wrong duration), T + 90 s. No match → T + 25 s.
+     when X was heard past Eₓ (wrong duration), T + 90 s. No match → T + 25 s, twice;
+     further unanswered probes in a row double the step up to 150 s (interviews,
+     unreleased tracks and long breakdowns do not eat the budget; gap probing looks
+     between them later).
    - Each new recording's preview is fetched and looked for between Sₓ and Eₓ; a hit
      confirms the answer for free and shows more of where X plays. Before each probe the
      previews of everything identified so far are looked for around T (continuing or
@@ -331,6 +336,23 @@ Never decide by duration alone. A single song must never be split.
      probe 10–40 s away inside the stretch it must occupy: the same recording confirms
      it, another version of the same song replaces it, anything else is kept as a
      neighbour (and checked for overlap again), nothing keeps it as it is.
+   - What counts as backing: a second answer of the same recording whose start
+     estimate agrees, from a window at least 12 s away (overlapping windows hear the
+     same audio; a window within 6 s of an earlier probe is never asked again), or the
+     preview found inside the stretch the play must occupy. Two answers at a speed and
+     pitch no player produces do not back each other up (a sampled vocal repeats).
+   - Refining probes only decide which of the two neighbours dominates; a third
+     recording heard in the middle of a blend is ignored (the blend confusing the
+     recognizer far more often than a hidden track).
+   - Answers of one play that name different versions of a song (a radio edit and the
+     extended mix, a remix and its original sharing most of their audio) become one
+     recording — the version most answers name, local matches counting twice — so a
+     play is never split by version; a song heard only after the other ended (an
+     album's reprise, a replay) stays separate.
+   - A play heard over 15 s past the end its catalog duration gives (the catalog
+     knows a shorter edit) has no known end; a recording without a known end is
+     taken to last 90 s past its last hearing when nothing else was heard after it,
+     instead of being stretched over minutes nobody heard it in.
 4. Unresolved music regions ≥ 45 s: one more probe at a different position, then paid
    providers (≤ 30 calls) if configured.
 5. **Stitch** (`pipeline/stitch.rs`, ported from 0.4): bridge Track(X) → short gap →
