@@ -163,7 +163,7 @@ struct SegmentRow: View {
             Button {
                 app.humSegment(segment, in: model)
             } label: {
-                Label(Copy.humIt, image: "ContourMark")
+                Label(Copy.humIt, image: "contour.mark")
             }
             .buttonStyle(.bordered)
         } else if segment.tier == .possible, let track = segment.track {
