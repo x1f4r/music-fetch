@@ -11,6 +11,8 @@ export const LIVE_VIEWBOX = '0 0 64 40';
 const FREQUENCIES = [1.0, 2.3, 3.7];
 const AMPLITUDES = [0.6, 0.3, 0.15];
 const PHASES = [0.9, 3.1, 4.6];
+/** The amplitudes' sum, so a full-scale line stays inside the box. */
+const AMPLITUDE_SUM = AMPLITUDES.reduce((a, b) => a + b, 0);
 
 /** The live line at `level` (0..1); `phase` (radians) moves the wave between frames. */
 export function livePath(level: number, phase = 0, width = 64, height = 40, points = 64): string {
@@ -22,7 +24,7 @@ export function livePath(level: number, phase = 0, width = 64, height = 40, poin
     let y = 0;
     for (let k = 0; k < 3; k++) y += AMPLITUDES[k]! * Math.sin(2 * Math.PI * FREQUENCIES[k]! * u * 2 + PHASES[k]! + phase * (k + 1));
     const x = u * width;
-    const py = height / 2 + y * envelope * amp * (height / 2);
+    const py = height / 2 + (y / AMPLITUDE_SUM) * envelope * amp * (height / 2);
     parts.push(`${i ? 'L' : 'M'}${x.toFixed(1)} ${py.toFixed(1)}`);
   }
   return parts.join(' ');

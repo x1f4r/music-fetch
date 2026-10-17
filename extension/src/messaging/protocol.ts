@@ -15,7 +15,7 @@ export interface EngineTopics {
  */
 export interface ControlMessages {
   /** Make sure the engine host runs (creates the offscreen document on Chromium). */
-  'mf:host.ensure': { request: Record<string, never>; response: { host: EngineHostKind } };
+  'mf:host.ensure': { request: Record<never, never>; response: { host: EngineHostKind } };
 }
 
 export type EngineHostKind = 'offscreen' | 'background';
