@@ -18,6 +18,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -31,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class ChaquopyMediaBackend(context: Context) : MediaBackend {
     private val appContext = context.applicationContext
     private val threadCount = AtomicInteger()
+    private val warming = AtomicBoolean(false)
 
     private val executor = ThreadPoolExecutor(
         MAX_CONCURRENT_CALLS, MAX_CONCURRENT_CALLS, 30, TimeUnit.SECONDS, LinkedBlockingQueue(),
@@ -100,6 +102,7 @@ class ChaquopyMediaBackend(context: Context) : MediaBackend {
 
     /** Start Python and import yt-dlp in the background so the first request is fast. */
     fun warmUp() {
+        if (!warming.compareAndSet(false, true)) return
         executor.execute {
             runCatching { module }.onFailure { Log.w(TAG, "Python warm-up failed", it) }
         }

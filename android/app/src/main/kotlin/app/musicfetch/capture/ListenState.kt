@@ -151,6 +151,9 @@ class PitchRing {
         }
     }
 
+    /** Changes whenever frames are added or cleared; lets readers skip unchanged windows. */
+    fun version(): Long = synchronized(lock) { version }
+
     /** Seconds of voiced input so far in this session. */
     fun voicedSeconds(): Float = synchronized(lock) { voicedMs / 1000f }
 

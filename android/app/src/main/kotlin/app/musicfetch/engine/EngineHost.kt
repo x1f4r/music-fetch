@@ -12,6 +12,7 @@ import app.musicfetch.platform.AndroidSpeechToText
 import app.musicfetch.platform.ChaquopyMediaBackend
 import app.musicfetch.platform.CredentialStore
 import app.musicfetch.platform.DevFiles
+import app.musicfetch.platform.LowPower
 import app.musicfetch.platform.MediaCodecDecoder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +46,7 @@ class EngineHost(
     context: Context,
     private val scope: CoroutineScope,
     private val credentials: CredentialStore,
+    private val lowPower: LowPower,
 ) {
     private val appContext = context.applicationContext
     private val _state = MutableStateFlow<EngineState>(EngineState.Starting)
@@ -67,7 +69,15 @@ class EngineHost(
             }
             runCatching { engine.setCredentials(credentials.current()) }
                 .onFailure { Log.w(TAG, "credentials not applied", it) }
+            engine.setLowPower(lowPower.enabled.value)
+            Log.i(TAG, "${lowPower.device}, weak hardware ${lowPower.weakHardware}")
             _state.value = EngineState.Ready(engine)
+            launch {
+                lowPower.enabled.collect { enabled ->
+                    engine.setLowPower(enabled)
+                    Log.i(TAG, "low power ${if (enabled) "on" else "off"}")
+                }
+            }
             credentials.credentials.distinctUntilChanged().collect { engine.setCredentials(it) }
         }
     }

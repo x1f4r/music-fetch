@@ -28,6 +28,7 @@ import app.musicfetch.capture.ListenOrigin
 import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ListenMode
 import app.musicfetch.notify.Notifications
+import app.musicfetch.platform.LocalLowPower
 import app.musicfetch.ui.AppAction
 import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.navigation.AppNavigation
@@ -54,6 +55,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) AppIntents.offer(intent)
         val graph = appGraph
         setContent {
+            val lowPower by graph.lowPower.enabled.collectAsStateWithLifecycle()
             val settingsFlow = remember { graph.settings.settings }
             val settings by settingsFlow.collectAsStateWithLifecycle(initialValue = null)
             val stage = when {
@@ -61,32 +63,34 @@ class MainActivity : ComponentActivity() {
                 settings?.preference == null -> Stage.ChooseProvider
                 else -> Stage.App
             }
-            MusicFetchTheme {
-                val (navigator, stacks) = rememberNavigator()
-                val pending by AppIntents.pending.collectAsStateWithLifecycle()
-                LaunchedEffect(pending, stage) {
-                    val action = pending ?: return@LaunchedEffect
-                    if (stage != Stage.App) return@LaunchedEffect
-                    if (action is AppAction.OpenSession) Notifications.dismissResult(this@MainActivity, action.id)
-                    AppIntents.consume(action, navigator, startHum = ::startHum)
-                }
-                CompositionLocalProvider(LocalNavigator provides navigator) {
-                    AnimatedContent(
-                        targetState = stage,
-                        transitionSpec = {
-                            // Returning users go straight to the app; only the panel fades.
-                            if (initialState == Stage.Loading) {
-                                EnterTransition.None togetherWith ExitTransition.None
-                            } else {
-                                fadeIn(tween(220)) togetherWith fadeOut(tween(150))
+            CompositionLocalProvider(LocalLowPower provides lowPower) {
+                MusicFetchTheme {
+                    val (navigator, stacks) = rememberNavigator()
+                    val pending by AppIntents.pending.collectAsStateWithLifecycle()
+                    LaunchedEffect(pending, stage) {
+                        val action = pending ?: return@LaunchedEffect
+                        if (stage != Stage.App) return@LaunchedEffect
+                        if (action is AppAction.OpenSession) Notifications.dismissResult(this@MainActivity, action.id)
+                        AppIntents.consume(action, navigator, startHum = ::startHum)
+                    }
+                    CompositionLocalProvider(LocalNavigator provides navigator) {
+                        AnimatedContent(
+                            targetState = stage,
+                            transitionSpec = {
+                                // Returning users go straight to the app; only the panel fades.
+                                if (initialState == Stage.Loading) {
+                                    EnterTransition.None togetherWith ExitTransition.None
+                                } else {
+                                    fadeIn(tween(220)) togetherWith fadeOut(tween(150))
+                                }
+                            },
+                            label = "stage",
+                        ) { shown ->
+                            when (shown) {
+                                Stage.Loading -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface))
+                                Stage.ChooseProvider -> ProviderPanel()
+                                Stage.App -> AppNavigation(navigator, stacks.first, stacks.second)
                             }
-                        },
-                        label = "stage",
-                    ) { shown ->
-                        when (shown) {
-                            Stage.Loading -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface))
-                            Stage.ChooseProvider -> ProviderPanel()
-                            Stage.App -> AppNavigation(navigator, stacks.first, stacks.second)
                         }
                     }
                 }

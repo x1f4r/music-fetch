@@ -2,6 +2,7 @@ package app.musicfetch.platform
 
 import app.musicfetch.core.Service
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,5 +46,17 @@ class ProvidersTest {
         assertNull(AppSettings(provider = ProviderChoice.Custom).preference)
         val custom = CustomProvider("Radio", "https://radio.example/?q={query}")
         assertEquals("Radio", AppSettings(provider = ProviderChoice.Custom, customProvider = custom).preference?.name)
+    }
+
+    @Test
+    fun `weak hardware is a low-RAM flag, under 4 GB or at most four cores`() {
+        val strong = DeviceProfile(lowRamDevice = false, totalMemBytes = 7_600_000_000, processors = 8)
+        assertFalse(LowPower.isWeakHardware(strong))
+        assertTrue(LowPower.isWeakHardware(strong.copy(lowRamDevice = true)))
+        // A phone sold with 4 GB reports a little less.
+        assertTrue(LowPower.isWeakHardware(strong.copy(totalMemBytes = 3_700_000_000)))
+        assertTrue(LowPower.isWeakHardware(strong.copy(processors = 4)))
+        // An unknown memory size alone doesn't count.
+        assertFalse(LowPower.isWeakHardware(strong.copy(totalMemBytes = 0)))
     }
 }

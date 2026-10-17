@@ -199,6 +199,12 @@ class ListenViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { graph.settings.setTileOffered() }
     }
 
+    /**
+     * A link is probably coming (the link field got focus): start Python and yt-dlp now. The
+     * low-power path doesn't start them at launch.
+     */
+    fun prepareForLink() = graph.engineHost.mediaBackend.warmUp()
+
     /** Identify a pasted or shared link. */
     fun analyze(input: String) {
         val text = input.trim()
