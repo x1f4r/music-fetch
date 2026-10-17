@@ -6,7 +6,7 @@ import Observation
 @Observable
 final class LibraryModel {
     enum Filter: String, CaseIterable, Identifiable {
-        case all, heard, hummed, links, mixes
+        case all, heard, hummed, links, mixes, pinned
 
         var id: String { rawValue }
 
@@ -17,12 +17,13 @@ final class LibraryModel {
             case .hummed: Copy.filterHummed
             case .links: Copy.filterLinks
             case .mixes: Copy.filterMixes
+            case .pinned: Copy.filterPinned
             }
         }
 
         var kinds: [SessionKind] {
             switch self {
-            case .all: []
+            case .all, .pinned: []
             case .heard: [.listen, .systemAudio]
             case .hummed: [.hum]
             case .links: [.link, .file, .lyrics]
@@ -33,6 +34,7 @@ final class LibraryModel {
         func includes(_ entry: LibraryEntry) -> Bool {
             switch self {
             case .mixes: entry.trackCount >= 2
+            case .pinned: entry.pinned
             default: kinds.isEmpty || kinds.contains(entry.kind)
             }
         }
@@ -124,7 +126,7 @@ final class LibraryModel {
     func refresh() async {
         guard let engine = app.engine else { return }
         let text = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let query = LibraryQuery(kinds: filter.kinds, search: text.isEmpty ? nil : text, pinnedOnly: false,
+        let query = LibraryQuery(kinds: filter.kinds, search: text.isEmpty ? nil : text, pinnedOnly: filter == .pinned,
                                  limit: Self.pageSize, offset: 0)
         let pinnedQuery = LibraryQuery(kinds: [], search: nil, pinnedOnly: true, limit: 50, offset: 0)
         let recentQuery = LibraryQuery(kinds: [], search: nil, pinnedOnly: false, limit: 30, offset: 0)

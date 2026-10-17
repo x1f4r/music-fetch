@@ -257,6 +257,7 @@ extension Copy {
     static let filterHummed = String(localized: "Hummed")
     static let filterLinks = String(localized: "Links")
     static let filterMixes = String(localized: "Mixes")
+    static let filterPinned = String(localized: "Pinned")
     static let libraryEmptyTitle = String(localized: "Nothing identified yet")
     static let libraryEmptyMessage = String(localized: "Songs you identify will show up here.")
     static let libraryEmptyFiltered = String(localized: "Nothing here yet")
