@@ -111,7 +111,7 @@
     {:else}
       <div class="chip-slot">
         {#if pageHost}
-          <button class="chip" onclick={analyzePage}><span class="ic ic-mix s14"></span>{t('chip.analyzePage')} <span class="host">· {pageHost}</span></button>
+          <button class="chip" onclick={analyzePage}><span class="ic ic-mix s14"></span><span>{t('chip.analyzePage')} <span class="host">· {pageHost}</span></span></button>
         {/if}
       </div>
       <div class="stage">

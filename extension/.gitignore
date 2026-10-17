@@ -4,3 +4,4 @@ node_modules/
 web-ext-artifacts/
 stats.html
 *.log
+.e2e-artifacts/

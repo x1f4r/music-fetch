@@ -26,6 +26,8 @@
   const links = $derived(providerLinks(track, custom));
   const primary = $derived(primaryLink(links, preferred));
   const others = $derived(otherLinks(links, primary));
+  /** More rows than the menu's 256 px cap shows: a fade marks that it scrolls (design spec). */
+  const scrolls = $derived(others.length > 7);
   let open = $state(false);
   let root = $state<HTMLElement | undefined>();
   let items = $state<HTMLButtonElement[]>([]);
@@ -85,13 +87,14 @@
       {/if}
     </div>
     {#if open}
-      <div class="menu" role="menu" tabindex="-1" onkeydown={onmenukey}>
+      <div class="menu" class:scrolls role="menu" tabindex="-1" onkeydown={onmenukey}>
         {#each others as link, i (link.url)}
           <button class="mi" role="menuitem" bind:this={items[i]} onclick={() => choose(link)}>
             <span class="k">{name(link)}</span>
             {#if link.isSearch}<span class="meta">{t('result.searchMeta')}</span>{/if}
           </button>
         {/each}
+        {#if scrolls}<div class="mfade" aria-hidden="true"></div>{/if}
       </div>
     {/if}
   </div>

@@ -79,9 +79,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .mini-disc .ic-mark { width: 26px; height: 11px; color: var(--mint); filter: drop-shadow(0 0 4px rgba(91,228,199,.45)); }
 .welcome h1 { font-size: var(--fs-display); line-height: var(--lh-display); font-weight: var(--fw-bold); text-align: center; margin: 18px 0 4px; letter-spacing: -.2px; }
 .welcome .lede { text-align: center; color: var(--on-surface-variant); margin: 0 0 20px; }
-.opts { border-radius: var(--r-m); background: var(--surface-lowest); box-shadow: 0 0 0 .5px var(--hairline); overflow: hidden; }
-html[data-theme="dark"] .opts { background: var(--surface-low); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .opts { background: var(--surface-low); } }
+.opts { border-radius: var(--r-m); background: var(--surface-group); box-shadow: 0 0 0 .5px var(--hairline); overflow: hidden; }
 .opt { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 14px; width: 100%; text-align: left; }
 .opt + .opt { border-top: 1px solid var(--hairline); }
 .opt:hover { background: var(--row-hover); }
