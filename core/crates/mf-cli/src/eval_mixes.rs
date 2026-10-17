@@ -39,6 +39,13 @@ pub enum Mode {
     Both,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum HeldOut {
+    Include,
+    Exclude,
+    Only,
+}
+
 #[derive(Args)]
 pub struct MixesArgs {
     /// Manifest JSON (tools/eval/mixes/manifest.json).
@@ -51,6 +58,10 @@ pub struct MixesArgs {
     /// Only cases of this kind: mix, single, playlist.
     #[arg(long)]
     kind: Option<String>,
+    /// Held-out cases: run them too (include), leave them out while tuning
+    /// (exclude) or run only them (only).
+    #[arg(long, value_enum, default_value_t = HeldOut::Include)]
+    heldout: HeldOut,
     /// Kinds also run blind (repeatable; playlists without metadata are slow).
     #[arg(long = "blind-kind", default_values_t = ["mix".to_string(), "single".to_string()])]
     blind_kinds: Vec<String>,
@@ -72,6 +83,10 @@ pub struct MixesArgs {
     /// Never call Shazam: uncached probes count as "no match" (and are reported).
     #[arg(long)]
     cached_only: bool,
+    /// Never fetch pages or probes again when a kept probe exists (replays that
+    /// stay off the sites; implied by --cached-only).
+    #[arg(long)]
+    offline: bool,
     /// Print each case's decision log.
     #[arg(short, long)]
     verbose: bool,
@@ -131,6 +146,9 @@ pub struct Case {
     pub url: String,
     #[serde(default)]
     pub note: Option<String>,
+    /// Kept out of tuning: reported separately to show overfitting.
+    #[serde(default)]
+    pub heldout: bool,
     /// Mixes: the ground-truth tracklist.
     #[serde(default)]
     pub tracks: Vec<TruthTrack>,
@@ -247,6 +265,10 @@ impl Services for EvalServices<'_> {
         self.inner.enrich(track).await
     }
 
+    async fn enrich_quick(&self, track: Track) -> Track {
+        self.inner.enrich_quick(track).await
+    }
+
     async fn preview(&self, track: &Track) -> Option<Vec<i16>> {
         self.inner.preview(track).await
     }
@@ -331,6 +353,9 @@ fn engine(args: &MixesArgs, paths: &Paths) -> anyhow::Result<Arc<EngineCtx>> {
         decoder: None,
         speech: None,
         runtime: tokio::runtime::Handle::current(),
+        low_power: Default::default(),
+        pitch_low_power: OnceLock::new(),
+        recognizer_url: String::new(),
     }))
 }
 
@@ -340,6 +365,8 @@ struct CaseRun {
     id: String,
     kind: String,
     mode: String,
+    #[serde(default)]
+    heldout: bool,
     duration_s: f64,
     strategy: String,
     probes: u32,
@@ -408,7 +435,12 @@ pub async fn run(args: MixesArgs) -> anyhow::Result<()> {
             continue;
         }
         let kind = format!("{:?}", case.kind).to_lowercase();
-        if args.kind.as_ref().is_some_and(|k| k != &kind) {
+        let skip_heldout = match args.heldout {
+            HeldOut::Include => false,
+            HeldOut::Exclude => case.heldout,
+            HeldOut::Only => !case.heldout,
+        };
+        if skip_heldout || args.kind.as_ref().is_some_and(|k| k != &kind) {
             continue;
         }
         for mode in &modes {
@@ -455,6 +487,7 @@ async fn run_case(
         id: case.id.clone(),
         kind: kind.clone(),
         mode: format!("{mode:?}").to_lowercase(),
+        heldout: case.heldout,
         duration_s: 0.0,
         strategy: String::new(),
         probes: 0,
@@ -486,7 +519,11 @@ async fn run_case(
         cached_only: args.cached_only,
         uncached: AtomicU32::new(0),
     };
-    let options = AnalyzeOptions { use_hints: mode != Mode::Blind, media_cache: Some(paths.media.clone()) };
+    let options = AnalyzeOptions {
+        use_hints: mode != Mode::Blind,
+        media_cache: Some(paths.media.clone()),
+        offline: args.offline || args.cached_only,
+    };
     let started = Instant::now();
     let result =
         analyze::run_with(&ctx, &services, AnalyzeInput::Url(case.url.clone()), AnalyzeMode::Auto, &options).await;
@@ -928,115 +965,152 @@ fn chrono_like_stamp() -> String {
     format!("{secs}")
 }
 
+fn mix_table(runs: &[&CaseRun], mode: &str, tag: &str) -> String {
+    let mixes: Vec<&CaseRun> = runs.iter().copied().filter(|r| r.mode == mode && r.kind == "mix").collect();
+    if mixes.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("## Mixes ({mode}{tag})\n\n");
+    out += "| case | min | true | pred | recall | recall (ver.) | precision | precision (ver.) | start err med / p90 (bias) s | splits | merges | calls/h |\n";
+    out += "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+    let (mut truth, mut matched, mut matched_v, mut pred, mut correct, mut correct_v) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    let (mut splits, mut merges, mut probes, mut hours) = (0, 0, 0u32, 0.0);
+    let mut errors = Vec::new();
+    for r in &mixes {
+        let m = &r.metrics;
+        if let Some(e) = &r.error {
+            out += &format!("| {} | | | | error: {e} | | | | | | | |\n", r.id);
+            continue;
+        }
+        out += &format!(
+            "| {} | {:.0} | {} | {} | {:.1} % | {:.1} % | {:.1} % | {:.1} % | {:.1} / {:.1} ({:+.1}) | {} | {} | {:.1} |\n",
+            r.id,
+            r.duration_s / 60.0,
+            m.truth,
+            m.predicted,
+            m.recall * 100.0,
+            m.recall_version * 100.0,
+            m.precision * 100.0,
+            m.precision_version * 100.0,
+            m.start_error_median_s,
+            m.start_error_p90_s,
+            m.start_bias_s,
+            m.splits,
+            m.merges,
+            m.calls_per_hour
+        );
+        truth += m.truth as f64;
+        matched += m.recall * m.truth as f64;
+        matched_v += m.recall_version * m.truth as f64;
+        pred += m.predicted as f64;
+        correct += m.precision * m.predicted as f64;
+        correct_v += m.precision_version * m.predicted as f64;
+        splits += m.splits;
+        merges += m.merges;
+        probes += r.probes;
+        hours += r.duration_s / 3600.0;
+        errors.extend(m.start_errors.iter().map(|e| e.1.abs()));
+    }
+    errors.sort_by(f64::total_cmp);
+    out += &format!(
+        "| **all** | {:.0} | {:.0} | {:.0} | **{:.1} %** | {:.1} % | **{:.1} %** | {:.1} % | **{:.1}** / {:.1} | {} | {} | **{:.1}** |\n\n",
+        hours * 60.0,
+        truth,
+        pred,
+        100.0 * matched / truth.max(1.0),
+        100.0 * matched_v / truth.max(1.0),
+        100.0 * correct / pred.max(1.0),
+        100.0 * correct_v / pred.max(1.0),
+        percentile(&errors, 0.5),
+        percentile(&errors, 0.9),
+        splits,
+        merges,
+        probes as f64 / hours.max(1e-9)
+    );
+    out
+}
+
+fn single_table(runs: &[&CaseRun], mode: &str, tag: &str) -> String {
+    let singles: Vec<&CaseRun> = runs.iter().copied().filter(|r| r.mode == mode && r.kind == "single").collect();
+    if singles.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "## Single songs ({mode}{tag})\n\n| case | min | segments | split | correct | correct (ver.) | probes |\n|---|---:|---:|---|---|---|---:|\n"
+    );
+    for r in &singles {
+        let m = &r.metrics;
+        out += &format!(
+            "| {} | {:.1} | {} | {} | {} | {} | {} |\n",
+            r.id,
+            r.duration_s / 60.0,
+            r.segments.len(),
+            if m.single_split { "**yes**" } else { "no" },
+            m.correct,
+            m.correct_version,
+            r.probes
+        );
+    }
+    let n = singles.iter().filter(|r| r.error.is_none()).count().max(1) as f64;
+    out += &format!(
+        "\nSplits: {} · correct {:.0} % · correct version {:.0} %\n\n",
+        singles.iter().filter(|r| r.metrics.single_split).count(),
+        100.0 * singles.iter().filter(|r| r.metrics.correct).count() as f64 / n,
+        100.0 * singles.iter().filter(|r| r.metrics.correct_version).count() as f64 / n
+    );
+    out
+}
+
+fn playlist_table(runs: &[&CaseRun], mode: &str, tag: &str) -> String {
+    let lists: Vec<&CaseRun> = runs.iter().copied().filter(|r| r.mode == mode && r.kind == "playlist").collect();
+    if lists.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "## Playlists ({mode}{tag})\n\n| case | entries | right | right (ver.) | needed audio | probes | time s |\n|---|---:|---:|---:|---:|---:|---:|\n"
+    );
+    let (mut entries, mut right, mut right_v, mut audio, mut probes) = (0, 0, 0, 0, 0);
+    for r in &lists {
+        let m = &r.metrics;
+        if let Some(e) = &r.error {
+            out += &format!("| {} | | error: {e} | | | | |\n", r.id);
+            continue;
+        }
+        out += &format!(
+            "| {} | {} | {} ({:.0} %) | {} ({:.0} %) | {} | {} | {:.0} |\n",
+            r.id,
+            m.entries,
+            m.entries_correct,
+            100.0 * m.entries_correct as f64 / m.entries.max(1) as f64,
+            m.entries_correct_version,
+            100.0 * m.entries_correct_version as f64 / m.entries.max(1) as f64,
+            m.entries_with_audio,
+            r.probes,
+            r.wall_s
+        );
+        entries += m.entries;
+        right += m.entries_correct;
+        right_v += m.entries_correct_version;
+        audio += m.entries_with_audio;
+        probes += r.probes;
+    }
+    out += &format!(
+        "| **all** | {entries} | **{right} ({:.1} %)** | **{right_v} ({:.1} %)** | {audio} | {probes} | |\n\n",
+        100.0 * right as f64 / entries.max(1) as f64,
+        100.0 * right_v as f64 / entries.max(1) as f64
+    );
+    out
+}
+
 fn markdown(runs: &[CaseRun]) -> String {
     let mut out = String::from("# Mix, single and playlist evaluation\n\n");
-    for mode in ["hinted", "blind"] {
-        let mixes: Vec<&CaseRun> = runs.iter().filter(|r| r.mode == mode && r.kind == "mix").collect();
-        if !mixes.is_empty() {
-            out += &format!("## Mixes ({mode})\n\n");
-            out += "| case | min | true | pred | recall | recall (ver.) | precision | precision (ver.) | start err med / p90 (bias) s | splits | merges | calls/h |\n";
-            out += "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
-            let (mut truth, mut matched, mut matched_v, mut pred, mut correct, mut correct_v) =
-                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-            let (mut splits, mut merges, mut probes, mut hours) = (0, 0, 0u32, 0.0);
-            let mut medians = Vec::new();
-            for r in &mixes {
-                let m = &r.metrics;
-                if let Some(e) = &r.error {
-                    out += &format!("| {} | | | | error: {e} | | | | | | | |\n", r.id);
-                    continue;
-                }
-                out += &format!(
-                    "| {} | {:.0} | {} | {} | {:.1} % | {:.1} % | {:.1} % | {:.1} % | {:.1} / {:.1} ({:+.1}) | {} | {} | {:.1} |\n",
-                    r.id,
-                    r.duration_s / 60.0,
-                    m.truth,
-                    m.predicted,
-                    m.recall * 100.0,
-                    m.recall_version * 100.0,
-                    m.precision * 100.0,
-                    m.precision_version * 100.0,
-                    m.start_error_median_s,
-                    m.start_error_p90_s,
-                    m.start_bias_s,
-                    m.splits,
-                    m.merges,
-                    m.calls_per_hour
-                );
-                truth += m.truth as f64;
-                matched += m.recall * m.truth as f64;
-                matched_v += m.recall_version * m.truth as f64;
-                pred += m.predicted as f64;
-                correct += m.precision * m.predicted as f64;
-                correct_v += m.precision_version * m.predicted as f64;
-                splits += m.splits;
-                merges += m.merges;
-                probes += r.probes;
-                hours += r.duration_s / 3600.0;
-                medians.extend(m.start_errors.iter().map(|e| e.1.abs()));
-            }
-            medians.sort_by(f64::total_cmp);
-            out += &format!(
-                "| **all** | {:.0} | {:.0} | {:.0} | **{:.1} %** | {:.1} % | **{:.1} %** | {:.1} % | **{:.1}** / {:.1} | {} | {} | **{:.1}** |\n\n",
-                hours * 60.0,
-                truth,
-                pred,
-                100.0 * matched / truth.max(1.0),
-                100.0 * matched_v / truth.max(1.0),
-                100.0 * correct / pred.max(1.0),
-                100.0 * correct_v / pred.max(1.0),
-                percentile(&medians, 0.5),
-                percentile(&medians, 0.9),
-                splits,
-                merges,
-                probes as f64 / hours.max(1e-9)
-            );
-        }
-        let singles: Vec<&CaseRun> = runs.iter().filter(|r| r.mode == mode && r.kind == "single").collect();
-        if !singles.is_empty() {
-            out += &format!(
-                "## Single songs ({mode})\n\n| case | min | segments | split | correct | correct (ver.) | probes |\n|---|---:|---:|---|---|---|---:|\n"
-            );
-            for r in &singles {
-                let m = &r.metrics;
-                out += &format!(
-                    "| {} | {:.1} | {} | {} | {} | {} | {} |\n",
-                    r.id,
-                    r.duration_s / 60.0,
-                    r.segments.len(),
-                    if m.single_split { "**yes**" } else { "no" },
-                    m.correct,
-                    m.correct_version,
-                    r.probes
-                );
-            }
-            let n = singles.iter().filter(|r| r.error.is_none()).count().max(1) as f64;
-            out += &format!(
-                "\nSplits: {} · correct {:.0} % · correct version {:.0} %\n\n",
-                singles.iter().filter(|r| r.metrics.single_split).count(),
-                100.0 * singles.iter().filter(|r| r.metrics.correct).count() as f64 / n,
-                100.0 * singles.iter().filter(|r| r.metrics.correct_version).count() as f64 / n
-            );
-        }
-        let lists: Vec<&CaseRun> = runs.iter().filter(|r| r.mode == mode && r.kind == "playlist").collect();
-        if !lists.is_empty() {
-            out += &format!(
-                "## Playlists ({mode})\n\n| case | entries | right | right (ver.) | needed audio | probes |\n|---|---:|---:|---:|---:|---:|\n"
-            );
-            for r in &lists {
-                let m = &r.metrics;
-                out += &format!(
-                    "| {} | {} | {} ({:.0} %) | {} | {} | {} |\n",
-                    r.id,
-                    m.entries,
-                    m.entries_correct,
-                    100.0 * m.entries_correct as f64 / m.entries.max(1) as f64,
-                    m.entries_correct_version,
-                    m.entries_with_audio,
-                    r.probes
-                );
-            }
-            out += "\n";
+    for heldout in [false, true] {
+        let group: Vec<&CaseRun> = runs.iter().filter(|r| r.heldout == heldout).collect();
+        let tag = if heldout { ", held out" } else { "" };
+        for mode in ["hinted", "blind"] {
+            out += &mix_table(&group, mode, tag);
+            out += &single_table(&group, mode, tag);
+            out += &playlist_table(&group, mode, tag);
         }
     }
     out += "## Misses and false positives\n\n";

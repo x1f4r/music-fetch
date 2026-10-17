@@ -23,7 +23,10 @@ nonisolated protocol AnalysisSessionHandle: AnyObject, Sendable {
 /// Methods marked "blocking" must not run on the main thread; use `offMain`.
 nonisolated protocol MusicEngine: AnyObject, Sendable {
     func setCredentials(_ credentials: Credentials)
-    func startListening(source: CaptureSource, mode: ListenMode, observer: SessionObserver) throws -> LiveSessionHandle
+    /// Less CPU and memory for weaker Macs and Low Power Mode.
+    func setLowPower(_ enabled: Bool)
+    func startListening(source: CaptureSource, mode: ListenMode, options: ListenOptions, observer: SessionObserver) throws
+        -> LiveSessionHandle
     func analyze(input: String, mode: AnalyzeMode, observer: SessionObserver) throws -> AnalysisSessionHandle
     func searchLyrics(text: String, observer: SessionObserver) throws -> AnalysisSessionHandle
     /// Blocking.
@@ -34,6 +37,11 @@ nonisolated protocol MusicEngine: AnyObject, Sendable {
     func deleteSessions(ids: [String]) throws
     func setPinned(id: String, pinned: Bool) throws
     func correctSegment(sessionID: String, segmentID: String, track: Track) throws -> Segment
+    /// "Not this": the segment becomes unidentified and its track an alternate.
+    func rejectSegment(sessionID: String, segmentID: String) throws -> Segment
+    /// Starts identifying sessions saved while offline; returns how many started.
+    /// Blocking.
+    func retryWaiting(observer: SessionObserver) throws -> UInt32
     func confirmCandidate(sessionID: String, track: Track) throws
     /// Blocking.
     func exportSession(id: String, format: ExportFormat) throws -> String
@@ -77,8 +85,14 @@ nonisolated final class CoreEngine: MusicEngine {
         engine.setCredentials(credentials: credentials)
     }
 
-    func startListening(source: CaptureSource, mode: ListenMode, observer: SessionObserver) throws -> LiveSessionHandle {
-        CoreLiveSession(try engine.startListening(source: source, mode: mode, observer: observer))
+    func setLowPower(_ enabled: Bool) {
+        engine.setLowPower(enabled: enabled)
+    }
+
+    func startListening(source: CaptureSource, mode: ListenMode, options: ListenOptions, observer: SessionObserver) throws
+        -> LiveSessionHandle
+    {
+        CoreLiveSession(try engine.startListeningWith(source: source, mode: mode, options: options, observer: observer))
     }
 
     func analyze(input: String, mode: AnalyzeMode, observer: SessionObserver) throws -> AnalysisSessionHandle {
@@ -111,6 +125,14 @@ nonisolated final class CoreEngine: MusicEngine {
 
     func confirmCandidate(sessionID: String, track: Track) throws {
         try engine.confirmCandidate(sessionId: sessionID, track: track)
+    }
+
+    func rejectSegment(sessionID: String, segmentID: String) throws -> Segment {
+        try engine.rejectSegment(sessionId: sessionID, segmentId: segmentID)
+    }
+
+    func retryWaiting(observer: SessionObserver) throws -> UInt32 {
+        try engine.retryWaiting(observer: observer)
     }
 
     func exportSession(id: String, format: ExportFormat) throws -> String {

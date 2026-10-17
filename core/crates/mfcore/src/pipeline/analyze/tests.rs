@@ -76,6 +76,134 @@ async fn a_two_song_file_is_a_mix() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn collections_list_every_track_before_enriching() {
+    use crate::model::SessionEvent;
+    use crate::pipeline::testutil::{FakeServices, session, track};
+    let dir = temp_dir();
+    let (ctx, events) = session(&dir, SessionKind::Link);
+    let mut services = FakeServices::new(Vec::new(), Vec::new());
+    services.catalog = vec![track("A", "One", 200), track("B", "Two", 180), track("C", "Three", 210)];
+    let page = |artist: &str, title: &str| Track { title: title.into(), artist: artist.into(), ..Track::default() };
+    let tracks = vec![page("A", "One"), page("B", "Two"), page("C", "Three")];
+    let options = AnalyzeOptions::default();
+    let mut run = Run { ctx: &ctx, services: &services, options: &options, log: Vec::new(), probes: 0, paid: 0 };
+    let report = run.tracks(SourceInfo::default(), tracks).await.unwrap();
+    assert_eq!(report.outcome, Outcome::Completed { identified: 3, total: 3 });
+    assert!(report.segments.iter().all(|s| s.track.as_ref().is_some_and(|t| t.duration_ms.is_some())));
+    let segments: Vec<Segment> = events
+        .0
+        .lock()
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::Segment { segment } => Some(segment.clone()),
+            _ => None,
+        })
+        .collect();
+    // Every track at once from the page, with search links, before any enrichment...
+    let first: Vec<&str> = segments[..3].iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(first, ["track-0", "track-1", "track-2"]);
+    assert!(
+        segments[..3].iter().all(|s| s.track.as_ref().is_some_and(|t| t.duration_ms.is_none() && !t.links.is_empty()))
+    );
+    // ...then each again under the same id once enriched.
+    assert_eq!(segments.len(), 6);
+    assert!(segments[3..].iter().all(|s| s.track.as_ref().is_some_and(|t| t.duration_ms.is_some())));
+    ctx.cleanup();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A media backend whose downloads take forever (until canceled) or fail a
+/// few times before they work.
+struct SlowBackend {
+    failures_left: std::sync::atomic::AtomicU32,
+    canceled_after: parking_lot::Mutex<Option<std::time::Duration>>,
+    attempts: parking_lot::Mutex<Vec<String>>,
+}
+
+impl SlowBackend {
+    fn new(failures: u32) -> Arc<Self> {
+        Arc::new(Self {
+            failures_left: std::sync::atomic::AtomicU32::new(failures),
+            canceled_after: parking_lot::Mutex::new(None),
+            attempts: parking_lot::Mutex::new(Vec::new()),
+        })
+    }
+}
+
+impl crate::platform::MediaBackend for SlowBackend {
+    fn probe(
+        &self,
+        _url: String,
+        _with_comments: bool,
+        _task: Arc<crate::util::cancel::TaskHandle>,
+    ) -> std::result::Result<String, crate::error::PlatformError> {
+        Ok("{}".into())
+    }
+
+    fn download_audio(
+        &self,
+        _url: String,
+        dest_dir: String,
+        task: Arc<crate::util::cancel::TaskHandle>,
+    ) -> std::result::Result<String, crate::error::PlatformError> {
+        use std::sync::atomic::Ordering;
+        self.attempts.lock().push(dest_dir.clone());
+        if self.failures_left.load(Ordering::SeqCst) > 0 {
+            self.failures_left.fetch_sub(1, Ordering::SeqCst);
+            return Err(crate::error::PlatformError::Failed { message: "Could not reach the site.".into() });
+        }
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_secs(30) {
+            if task.is_canceled() {
+                *self.canceled_after.lock() = Some(started.elapsed());
+                return Err(crate::error::PlatformError::Canceled);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let path = std::path::Path::new(&dest_dir).join("audio.m4a");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+        std::fs::write(&path, b"x").unwrap();
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn canceling_stops_a_download_at_once() {
+    let dir = temp_dir();
+    let backend = SlowBackend::new(0);
+    let (ctx, _) = crate::pipeline::testutil::session_with_media(&dir, SessionKind::Link, Some(backend.clone()));
+    let cancel = ctx.cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        cancel.cancel();
+    });
+    let started = std::time::Instant::now();
+    let result = download(&ctx, "https://www.youtube.com/watch?v=x", &dir.join("work")).await;
+    assert!(matches!(result, Err(MfError::Canceled)), "{result:?}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
+    assert!(backend.canceled_after.lock().is_some());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_download_is_tried_again_in_a_fresh_folder() {
+    let dir = temp_dir();
+    let backend = SlowBackend::new(1);
+    let (ctx, _) = crate::pipeline::testutil::session_with_media(&dir, SessionKind::Link, Some(backend.clone()));
+    let cancel = ctx.cancel.clone();
+    tokio::spawn(async move {
+        // The second attempt starts after the first wait; stop it once it runs.
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        cancel.cancel();
+    });
+    let _ = download(&ctx, "https://www.youtube.com/watch?v=x", &dir.join("work")).await;
+    let attempts = backend.attempts.lock().clone();
+    assert_eq!(attempts.len(), 2, "{attempts:?}");
+    assert!(attempts[1].ends_with("retry-1"), "{attempts:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn durations_within_tolerance() {
     assert!(within(212_000, 213_000, 0.12));

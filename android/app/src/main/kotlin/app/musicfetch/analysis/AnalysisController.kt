@@ -1,6 +1,7 @@
 package app.musicfetch.analysis
 
 import android.app.Application
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import app.musicfetch.R
@@ -88,6 +89,9 @@ class AnalysisRun internal constructor(input: String, val showsProgress: Boolean
 
     internal fun update(transform: (AnalysisState) -> AnalysisState) = _state.update(transform)
 
+    /** `SystemClock.elapsedRealtime()` at start, for the timing log. */
+    internal val startedAtMs: Long = SystemClock.elapsedRealtime()
+
     val sessionId: String? get() = _state.value.sessionId
 }
 
@@ -169,7 +173,10 @@ class AnalysisController(
     private fun handle(run: AnalysisRun, event: SessionEvent) {
         when (event) {
             is SessionEvent.Started -> run.update { it.copy(sessionId = event.sessionId, kind = event.kind) }
-            is SessionEvent.Phase -> run.update { it.copy(phase = event.phase, fraction = event.fraction) }
+            is SessionEvent.Phase -> {
+                if (run.state.value.phase != event.phase) Log.i(TAG, "${event.phase} at +${SystemClock.elapsedRealtime() - run.startedAtMs} ms")
+                run.update { it.copy(phase = event.phase, fraction = event.fraction) }
+            }
             is SessionEvent.Progress -> run.update {
                 it.copy(
                     analyzedMs = maxOf(it.analyzedMs, event.analyzedMs.toLong()),
@@ -202,6 +209,7 @@ class AnalysisController(
     }
 
     private fun onTerminal(run: AnalysisRun) {
+        Log.i(TAG, "analysis ended after ${SystemClock.elapsedRealtime() - run.startedAtMs} ms")
         app.appGraph.notifyLibraryChanged()
         // Screens read finished sessions from the library; keep the run only briefly.
         scope.launch {
@@ -226,7 +234,7 @@ class AnalysisController(
                 else -> app.getString(R.string.state_no_match) to (state.source?.title ?: state.input)
             }
             val track = if (!state.isCollection) single else null
-            Notifications.postAnalysisResult(app, id, title, text, track, prefs.defaultService)
+            Notifications.postAnalysisResult(app, id, title, text, track, settings.preference())
         }
     }
 

@@ -601,6 +601,18 @@ fn invalid_calls_return_errors() {
     assert!(Engine::new(bad, None, None, None).is_err());
 }
 
+#[test]
+fn low_power_follows_the_app() {
+    let server = shazam_server(MATCH_JSON);
+    let fx = engine_with(&server, "/manifest.json");
+    let detected = mfcore::util::system::SystemInfo::current().is_low_end();
+    assert_eq!(fx.engine.is_low_power(), detected, "defaults to what the hardware suggests");
+    fx.engine.set_low_power(true);
+    assert!(fx.engine.is_low_power());
+    fx.engine.set_low_power(false);
+    assert!(!fx.engine.is_low_power());
+}
+
 // ---------------------------------------------------------------- library
 
 #[test]
@@ -673,7 +685,7 @@ fn credentials_are_snapshotted_per_session() {
 fn manifest(url: &str, data: &[u8], sha: Option<String>) -> String {
     let sha = sha.unwrap_or_else(|| Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect());
     format!(
-        r#"{{"version": "2026.10.1", "url": "{url}/melody-index.mfi", "sha256": "{sha}", "bytes": {}, "songs": 2, "min_core": "1.0.0"}}"#,
+        r#"{{"version": "2026.10.1", "url": "{url}/melody-index.mfi", "sha256": "{sha}", "bytes": {}, "songs": 2, "min_core": "1.1.0", "format": 2}}"#,
         data.len()
     )
 }

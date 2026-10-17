@@ -57,7 +57,7 @@ import app.musicfetch.ui.theme.ArtworkTheme
 internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel, onBack: () -> Unit) {
     val seed by viewModel.seed.collectAsStateWithLifecycle()
     val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
-    val preferred by viewModel.preferred.collectAsStateWithLifecycle()
+    val preference by viewModel.preference.collectAsStateWithLifecycle()
     val preview by PreviewPlayer.state.collectAsStateWithLifecycle()
     val track = view.track
     // A preview belongs to its screen.
@@ -178,7 +178,7 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
                         )
                     }
                     Spacer(Modifier.height(22.dp))
-                    OpenInSplitButton(track, preferred)
+                    preference?.let { OpenInSplitButton(track, it) } ?: Spacer(Modifier.height(56.dp))
                     lyrics?.let { text ->
                         Spacer(Modifier.height(40.dp))
                         Column(Modifier.fillMaxWidth()) {

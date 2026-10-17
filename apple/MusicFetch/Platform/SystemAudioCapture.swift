@@ -66,7 +66,9 @@ nonisolated final class SystemAudioCapture: AudioCapture, @unchecked Sendable {
             // Not registered with Core Audio yet (nothing played so far): exclude by bundle id.
             description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
         }
-        if let bundleID = Bundle.main.bundleIdentifier {
+        // Before macOS 26 a process that has not played audio yet cannot be excluded;
+        // the stage stops previews before listening, so nothing of ours is captured.
+        if #available(macOS 26, *), let bundleID = Bundle.main.bundleIdentifier {
             description.bundleIDs = [bundleID]
         }
         description.uuid = UUID()

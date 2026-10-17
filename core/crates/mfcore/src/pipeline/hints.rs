@@ -87,12 +87,18 @@ pub struct Hints {
     pub extractor_track: Option<Track>,
     /// "Artist - Title" parsed from the media title, noise like "(Official Video)" removed.
     pub title_track: Option<Track>,
+    /// "Artist-Title" (a bare hyphen) when the title has no other separator.
+    /// Hyphenated names make this a guess the catalog has to confirm.
+    pub loose_title_track: Option<Track>,
     /// How much the title reads like a mix, set, show or compilation.
     pub mix_words: MixWords,
     /// The description announces a tracklist (with or without times).
     pub mentions_tracklist: bool,
     /// The title marks a music video ("Official Video"), so intros and outros may be long.
     pub music_video: bool,
+    /// The uploading channel is the artist's own (named like the artist of
+    /// `title_track`, or a Topic or VEVO channel), so the title is reliable.
+    pub official: bool,
 }
 
 /// Collect hints from a probe and the link resolver's page hints.
@@ -156,15 +162,47 @@ pub fn collect(info: &MediaInfo, page_hints: &[Track], duration_ms: Option<u64>)
         identity::refresh_identity(&mut track);
         track
     });
+    let official = title_track
+        .as_ref()
+        .zip(info.uploader.as_deref())
+        .is_some_and(|(track, uploader)| is_artist_channel(uploader, &track.artist));
+    let loose_title_track = if title_track.is_none() {
+        parse_loose_title(title).map(|(artist, title)| {
+            let mut track =
+                Track { title, artists: split_artists(&artist), artist, duration_ms: duration, ..Track::default() };
+            identity::refresh_identity(&mut track);
+            track
+        })
+    } else {
+        None
+    };
     Hints {
         tracklist,
         untimed: page_hints.to_vec(),
         extractor_track,
         title_track,
+        loose_title_track,
         mix_words: mix_words(title),
         mentions_tracklist: info.description.as_deref().is_some_and(description_mix_words),
         music_video: is_music_video_title(title),
+        official,
     }
+}
+
+/// The channel belongs to the artist: "Coldplay" for Coldplay, "Dua Lipa -
+/// Topic", "AdeleVEVO", "Daft Punk Official".
+pub fn is_artist_channel(uploader: &str, artist: &str) -> bool {
+    let channel = uploader.trim();
+    let channel = topic_artist(channel)
+        .or_else(|| channel.strip_suffix("VEVO").map(str::to_string))
+        .or_else(|| channel.strip_suffix(" Official").map(str::to_string))
+        .unwrap_or_else(|| channel.to_string());
+    let channel = identity::normalize_artists(&channel);
+    !channel.is_empty()
+        && split_artists(artist).iter().any(|a| {
+            let a = identity::normalize_artists(a);
+            !a.is_empty() && (a == channel || channel.replace(' ', "") == a.replace(' ', ""))
+        })
 }
 
 fn comment_source(comment: &Comment) -> HintSource {
@@ -600,9 +638,37 @@ pub fn versions_compatible(a: &str, b: &str) -> bool {
         return false;
     }
     const GLUE: &[&str] = &["up", "a", "at", "from", "in", "on", "with", "by", "for", "of", "to", "and"];
+    // Styles name no one: "Thrizzo Trap Remix" and "Eff3cts Trap Remix" differ.
+    const STYLES: &[&str] = &[
+        "trap",
+        "dubstep",
+        "electro",
+        "house",
+        "techno",
+        "trance",
+        "hardstyle",
+        "hardstyles",
+        "dnb",
+        "drum",
+        "bass",
+        "edm",
+        "festival",
+        "future",
+        "deep",
+        "tech",
+        "progressive",
+        "big",
+        "room",
+        "bigroom",
+        "garage",
+        "dance",
+        "hard",
+        "tribute",
+        "ver",
+    ];
     let split = |key: &str| -> (Vec<String>, Vec<String>) {
         key.split([' ', '|'])
-            .filter(|w| !w.is_empty() && !GLUE.contains(w))
+            .filter(|w| !w.is_empty() && !GLUE.contains(w) && !STYLES.contains(w))
             .map(str::to_string)
             .partition(|w| DISTINCT.contains(&w.as_str()))
     };
@@ -686,7 +752,30 @@ pub fn same_song(a: &Track, b: &Track) -> bool {
         || similarity >= 0.85
         || (same_artists && similarity >= 0.75)
         || (ta.len() >= 6 && tb.len() >= 6 && (ta.contains(&tb) || tb.contains(&ta)));
-    title_ok && artists_overlap(&a.artist, &b.artist)
+    title_ok
+        && (artists_overlap(&a.artist, &b.artist)
+            || remixers(&a.title).iter().any(|r| artists_overlap(r, &b.artist))
+            || remixers(&b.title).iter().any(|r| artists_overlap(r, &a.artist)))
+}
+
+/// People named in a title's remix or edit credit: "Aria (Argy & Omnya
+/// Remix)" → ["Argy", "Omnya"]. Catalogs and tracklists credit such versions
+/// to the original artist or to the remixers.
+fn remixers(title: &str) -> Vec<String> {
+    const CREDITS: &[&str] = &["remix", "rmx", "edit", "rework", "bootleg", "flip", "vip", "mix"];
+    let mut out = Vec::new();
+    for caps in BRACKET_GROUP.captures_iter(title) {
+        let Some(inner) = caps.get(1).map(|m| m.as_str()) else { continue };
+        let lower = inner.to_lowercase();
+        let words: Vec<&str> = lower.split_whitespace().collect();
+        let Some(at) = words.iter().position(|w| CREDITS.contains(&w.trim_matches(|c: char| !c.is_alphanumeric())))
+        else {
+            continue;
+        };
+        let names = inner.split_whitespace().take(at).collect::<Vec<_>>().join(" ");
+        out.extend(split_artists(&names).into_iter().filter(|n| n.chars().filter(|c| c.is_alphabetic()).count() >= 3));
+    }
+    out
 }
 
 /// Any credited artist in common (fuzzy), or one side has no artist.
@@ -740,6 +829,41 @@ pub fn parse_media_title(title: &str, uploader: Option<&str>) -> Option<(String,
         .or_else(|| channel.strip_suffix("VEVO").map(|a| a.trim().to_string()))
         .or_else(|| channel.strip_suffix(" Official").map(|a| a.trim().to_string()))?;
     (!artist.is_empty()).then_some((artist, song))
+}
+
+/// "Avicii-Levels(Some Remix)": artist and title around the first bare hyphen
+/// of a title without any other separator. Only a guess ("Jay-Z", "A-ha"):
+/// callers confirm it with the catalog.
+pub fn parse_loose_title(title: &str) -> Option<(String, String)> {
+    let text = collapse_spaces(&BRACKET_GROUP.replace_all(title, |caps: &regex::Captures<'_>| {
+        let inner = caps.get(1).map_or("", |m| m.as_str());
+        if is_noise_group(inner) { " ".to_string() } else { format!(" {} ", caps.get(0).map_or("", |m| m.as_str())) }
+    }));
+    if SEPARATOR.is_match(&text) {
+        return None;
+    }
+    let (left, right) = text.split_once('-')?;
+    let (left, right) = (left.trim(), right.trim());
+    let plausible_artist = left.chars().filter(|c| c.is_alphabetic()).count() >= 2
+        && left.split_whitespace().count() <= 4
+        && !left.contains(['(', '[']);
+    let plausible_title = right.chars().next().is_some_and(char::is_alphanumeric)
+        && right.chars().filter(|c| c.is_alphabetic()).count() >= 2;
+    (plausible_artist && plausible_title).then(|| (left.to_string(), clean_edges(right)))
+}
+
+/// The song title without bracketed groups (version, feature credits), for
+/// catalog lookups that must ignore the version.
+pub fn bare_title(title: &str) -> String {
+    let mut text = title.to_string();
+    for _ in 0..3 {
+        let next = BRACKET_GROUP.replace_all(&text, " ").to_string();
+        if next == text {
+            break;
+        }
+        text = next;
+    }
+    collapse_spaces(&text)
 }
 
 /// A bracket group about the upload rather than the recording: "Official

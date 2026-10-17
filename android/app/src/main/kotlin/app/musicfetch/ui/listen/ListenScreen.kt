@@ -59,6 +59,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.ToggleButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -69,9 +70,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -108,6 +111,7 @@ import app.musicfetch.core.Phase
 import app.musicfetch.engine.MelodyDownload
 import app.musicfetch.notify.Notifications
 import app.musicfetch.platform.ListenSource
+import app.musicfetch.platform.LocalLowPower
 import app.musicfetch.ui.common.Formatters
 import app.musicfetch.ui.components.Artwork
 import app.musicfetch.ui.components.ButtonGlyph
@@ -118,6 +122,7 @@ import app.musicfetch.ui.components.PitchTrace
 import app.musicfetch.ui.navigation.LocalNavigator
 import app.musicfetch.ui.navigation.LyricsRoute
 import app.musicfetch.ui.navigation.SessionRoute
+import app.musicfetch.ui.theme.TabularNumbers
 import kotlinx.coroutines.delay
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -259,6 +264,7 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
                 viewModel.analyzeFile(uri)
             },
             onEmptyChange = { fieldEmpty = it },
+            onFocus = viewModel::prepareForLink,
             modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp),
         )
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -337,9 +343,8 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
             recent?.let { entry ->
                 RecentCard(
                     title = entry.track?.title ?: entry.title,
-                    subtitle = listOfNotNull(entry.track?.artist ?: entry.subtitle, Formatters.timeOfDay(entry.createdAtMs))
-                        .filter { it.isNotBlank() }
-                        .joinToString(" · "),
+                    artist = entry.track?.artist ?: entry.subtitle,
+                    time = Formatters.timeOfDay(entry.createdAtMs),
                     artworkUrl = entry.track?.artworkUrl ?: entry.artworkUrl,
                     onClick = { navigator.push(SessionRoute(entry.id)) },
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
@@ -389,8 +394,11 @@ private fun Stage(
     }
     val linkActive = (link is LinkStage.Running || link is LinkStage.Preparing) && linkVisible
     val humming = state.isActive && (state.impression || state.mode == ListenMode.HUM) && phase != ListenPhase.Matching
-    val voiced by produceVoicedSeconds(viewModel, active = humming)
-    LaunchedEffect(voiced >= HUM_RING_SECONDS) { if (voiced >= HUM_RING_SECONDS) onHumRingFull() }
+    // Read in drawing code and derived states only, so the stage doesn't recompose 10 times a second.
+    val voicedState = produceVoicedSeconds(viewModel, active = humming)
+    val ringFull by remember { derivedStateOf { voicedState.value >= HUM_RING_SECONDS } }
+    val voicedWhole by remember { derivedStateOf { voicedState.value.toInt() } }
+    LaunchedEffect(ringFull) { if (ringFull) onHumRingFull() }
 
     val glyph = when {
         linkActive -> ButtonGlyph.Link
@@ -404,7 +412,7 @@ private fun Stage(
             ButtonRing.Determinate { fraction }
         }
         linkActive -> ButtonRing.Indeterminate
-        humming -> ButtonRing.Determinate { (voiced / HUM_RING_SECONDS).coerceIn(0f, 1f) }
+        humming -> ButtonRing.Determinate { (voicedState.value / HUM_RING_SECONDS).coerceIn(0f, 1f) }
         else -> ButtonRing.None
     }
     val stateLine = stateLine(state, link, linkState, linkActive, micOff, phonePrePrompt)
@@ -412,7 +420,7 @@ private fun Stage(
 
     Box(modifier) {
         val pitchLabel = stringResource(R.string.your_pitch)
-        val pitchValue = pluralStringResource(R.plurals.seconds_hummed, voiced.toInt(), voiced.toInt())
+        val pitchValue = pluralStringResource(R.plurals.seconds_hummed, voicedWhole, voicedWhole)
         // Trace band: (width − 48) × 96, bottom edge 144 dp above the stage centre.
         AnimatedVisibility(
             visible = humming,
@@ -497,6 +505,9 @@ private fun Stage(
                 done is ListenResult.Failed -> ActionRow {
                     FilledTonalButton(onClick = onTryAgain) { Text(stringResource(R.string.action_try_again)) }
                 }
+                done is ListenResult.Waiting -> ActionRow {
+                    FilledTonalButton(onClick = { viewModel.dismissResult() }) { Text(stringResource(R.string.action_ok)) }
+                }
                 else -> SourceToggles(
                     selected = when {
                         state.isActive && state.source == CaptureSource.SYSTEM_AUDIO -> ListenSource.Phone
@@ -515,14 +526,15 @@ private fun Stage(
 @Composable
 private fun produceVoicedSeconds(viewModel: ListenViewModel, active: Boolean): androidx.compose.runtime.State<Float> {
     val value = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(active) {
+    val interval = if (LocalLowPower.current) 250L else 100L
+    LaunchedEffect(active, interval) {
         if (!active) {
             value.floatValue = 0f
             return@LaunchedEffect
         }
         while (true) {
             value.floatValue = viewModel.signal.pitch.voicedSeconds()
-            delay(100)
+            delay(interval)
         }
     }
     return value
@@ -565,6 +577,7 @@ private fun stateLine(
         }
         done is ListenResult.NoMatch -> stringResource(Notifications.noMatchText(done.reason))
         done is ListenResult.Failed -> done.message.ifBlank { stringResource(Notifications.errorText(done.code)) }
+        done is ListenResult.Waiting -> stringResource(R.string.state_offline)
         else -> stringResource(R.string.state_idle)
     }
 }
@@ -618,35 +631,42 @@ private fun SourceToggles(selected: ListenSource, enabled: Boolean, onSelect: (L
         Triple(ListenSource.Phone, R.string.source_phone, R.drawable.ic_smartphone),
         Triple(ListenSource.Hum, R.string.source_hum, 0),
     )
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
-        modifier = Modifier.padding(horizontal = 24.dp).alpha(if (enabled) 1f else 0.45f),
-    ) {
-        options.forEachIndexed { index, (option, label, icon) ->
-            val shapes = when (index) {
-                0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
-                options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
-                else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
-            }
-            // While a session runs the group is dimmed to 45 % but keeps showing the current
-            // source (a disabled ToggleButton would drop its checked colours).
-            ToggleButton(
-                checked = selected == option,
-                onCheckedChange = { if (enabled) onSelect(option) },
-                shapes = shapes,
-                modifier = Modifier
-                    .heightIn(min = 40.dp)
-                    .semantics { if (!enabled) disabled() },
-            ) {
-                if (icon != 0) {
-                    Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(20.dp))
-                } else {
-                    Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-                        ContourMark(androidx.compose.material3.LocalContentColor.current, width = 20.dp, strokeWidth = 2.dp)
-                    }
+    // Phones narrower than 400 dp (most budget phones are 360 dp) can't fit three icons and
+    // labels; the labels stay.
+    BoxWithConstraints(contentAlignment = Alignment.Center) {
+        val showIcons = maxWidth >= 400.dp && LocalDensity.current.fontScale <= 1.15f
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+            modifier = Modifier.padding(horizontal = 24.dp).alpha(if (enabled) 1f else 0.45f),
+        ) {
+            options.forEachIndexed { index, (option, label, icon) ->
+                val shapes = when (index) {
+                    0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                    options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
                 }
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(label), maxLines = 1)
+                // While a session runs the group is dimmed to 45 % but keeps showing the current
+                // source (a disabled ToggleButton would drop its checked colours).
+                ToggleButton(
+                    checked = selected == option,
+                    onCheckedChange = { if (enabled) onSelect(option) },
+                    shapes = shapes,
+                    modifier = Modifier
+                        .heightIn(min = 40.dp)
+                        .semantics { if (!enabled) disabled() },
+                ) {
+                    if (showIcons) {
+                        if (icon != 0) {
+                            Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(20.dp))
+                        } else {
+                            Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                                ContourMark(androidx.compose.material3.LocalContentColor.current, width = 20.dp, strokeWidth = 2.dp)
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(stringResource(label), maxLines = 1)
+                }
             }
         }
     }
@@ -659,6 +679,7 @@ private fun LinkField(
     onSubmit: (String) -> Unit,
     onPickFile: (android.net.Uri) -> Unit,
     onEmptyChange: (Boolean) -> Unit,
+    onFocus: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -700,7 +721,10 @@ private fun LinkField(
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                         keyboardActions = KeyboardActions(onGo = { submit(text) }),
-                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = fieldLabel },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { if (it.isFocused) onFocus() }
+                            .semantics { contentDescription = fieldLabel },
                     )
                 }
                 if (text.isNotBlank()) {
@@ -784,7 +808,14 @@ private fun readClipboardText(context: Context): String? {
 
 /** The last result (docs/design/DESIGN.md §6.2, "Recent card"). */
 @Composable
-private fun RecentCard(title: String, subtitle: String, artworkUrl: String?, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun RecentCard(
+    title: String,
+    artist: String?,
+    time: String,
+    artworkUrl: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
@@ -795,13 +826,16 @@ private fun RecentCard(title: String, subtitle: String, artworkUrl: String?, onC
             Artwork(artworkUrl, 56.dp, corner = 8.dp)
             Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                // A long artist name gives way; the time is never cut.
+                Row {
+                    val style = MaterialTheme.typography.bodyMedium
+                    val color = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (!artist.isNullOrBlank()) {
+                        Text(artist, style = style, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        Text(" · ", style = style, color = color, maxLines = 1)
+                    }
+                    Text(time, style = style.merge(TabularNumbers), color = color, maxLines = 1)
+                }
             }
             Icon(
                 painterResource(R.drawable.ic_chevron_right),

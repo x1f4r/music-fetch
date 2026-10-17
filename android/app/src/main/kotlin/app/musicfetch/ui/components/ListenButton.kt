@@ -8,13 +8,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -29,13 +29,16 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.center
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -44,6 +47,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.musicfetch.R
+import app.musicfetch.platform.LocalLowPower
+import kotlinx.coroutines.delay
 
 /** What the listen button's centre shows. */
 enum class ButtonGlyph { Mark, Live, Matching, Link }
@@ -89,6 +94,9 @@ fun ListenButton(
     backProgress: Float = 0f,
 ) {
     val reduceMotion = rememberReduceMotion()
+    // Low power: about 30 frames per second and no shape morph or rotation; the halo and the
+    // live line still follow the level.
+    val lowPower = LocalLowPower.current
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -101,11 +109,12 @@ fun ListenButton(
 
     // Frame clock for the live line, the halo and the rotation; only runs while listening.
     val clock = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(live) {
+    LaunchedEffect(live, lowPower) {
         if (!live) return@LaunchedEffect
         val start = withFrameNanos { it }
         while (true) {
             withFrameNanos { clock.floatValue = (it - start) / 1_000_000_000f }
+            if (lowPower) delay(LOW_POWER_FRAME_MS)
         }
     }
 
@@ -120,36 +129,57 @@ fun ListenButton(
             },
         contentAlignment = Alignment.Center,
     ) {
-        // Halo: primary → clear, breathing with the level.
-        Canvas(Modifier.size(haloSize)) {
-            val visibility = haloAlpha * (1f - backProgress)
-            if (visibility <= 0f) return@Canvas
-            val l = level()
-            val scale = if (reduceMotion) 1f else 1f + 0.12f * l
-            val radius = this.size.minDimension / 2 * scale
-            drawCircle(
-                brush = Brush.radialGradient(
-                    0f to colors.primary.copy(alpha = 0.55f),
-                    0.62f to colors.primary.copy(alpha = 0.18f),
-                    1f to Color.Transparent,
-                    center = center,
-                    radius = radius,
-                ),
-                radius = radius,
-                alpha = visibility * (0.15f + 0.45f * l).coerceIn(0f, 1f) / 0.6f,
-            )
-        }
-        when (ring) {
-            ButtonRing.None -> Unit
-            is ButtonRing.Determinate -> CircularWavyProgressIndicator(
+        // Halo: primary → clear, breathing with the level. The gradient is drawn once; the
+        // level only changes the layer's scale and alpha, so it never redraws.
+        Box(
+            Modifier
+                .size(haloSize)
+                .graphicsLayer {
+                    val l = level()
+                    val haloScale = if (reduceMotion) 1f else 1f + 0.12f * l
+                    scaleX = haloScale
+                    scaleY = haloScale
+                    alpha = (haloAlpha * (1f - backProgress) * (0.15f + 0.45f * l) / 0.6f).coerceIn(0f, 1f)
+                }
+                .drawWithCache {
+                    val radius = this.size.minDimension / 2
+                    val brush = Brush.radialGradient(
+                        0f to colors.primary.copy(alpha = 0.55f),
+                        0.62f to colors.primary.copy(alpha = 0.18f),
+                        1f to Color.Transparent,
+                        center = this.size.center,
+                        radius = radius,
+                    )
+                    onDrawBehind { drawCircle(brush, radius) }
+                },
+        )
+        val ringStroke = with(LocalDensity.current) { 4.dp.toPx() }
+        when {
+            ring == ButtonRing.None -> Unit
+            // Low power: the plain ring; the wavy one animates its wave on every frame.
+            lowPower && ring is ButtonRing.Determinate -> CircularProgressIndicator(
                 progress = ring.progress,
                 modifier = Modifier.size(ringSize),
                 color = colors.primary,
                 trackColor = colors.surfaceContainerHighest,
-                stroke = Stroke(width = with(androidx.compose.ui.platform.LocalDensity.current) { 4.dp.toPx() }),
+                strokeWidth = 4.dp,
+                gapSize = 0.dp,
+            )
+            lowPower -> CircularProgressIndicator(
+                modifier = Modifier.size(ringSize),
+                color = colors.primary,
+                trackColor = colors.surfaceContainerHighest,
+                strokeWidth = 4.dp,
+            )
+            ring is ButtonRing.Determinate -> CircularWavyProgressIndicator(
+                progress = ring.progress,
+                modifier = Modifier.size(ringSize),
+                color = colors.primary,
+                trackColor = colors.surfaceContainerHighest,
+                stroke = Stroke(width = ringStroke),
                 wavelength = 24.dp,
             )
-            ButtonRing.Indeterminate -> CircularWavyProgressIndicator(
+            else -> CircularWavyProgressIndicator(
                 modifier = Modifier.size(ringSize),
                 color = colors.primary,
                 trackColor = colors.surfaceContainerHighest,
@@ -162,7 +192,7 @@ fun ListenButton(
                 .graphicsLayer {
                     scaleX = buttonScale
                     scaleY = buttonScale
-                    shape = if (reduceMotion) {
+                    shape = if (reduceMotion || lowPower) {
                         ListenButtonShapes.resting
                     } else {
                         ListenButtonShapes.shape(
@@ -190,7 +220,10 @@ fun ListenButton(
                 label = "glyph",
             ) { special ->
                 if (special) {
-                    if (glyph == ButtonGlyph.Matching) {
+                    if (glyph == ButtonGlyph.Matching && lowPower) {
+                        // The morphing indicator redraws a new shape on every frame.
+                        CircularProgressIndicator(color = colors.onPrimary, strokeWidth = 4.dp, modifier = Modifier.size(size * 0.3f))
+                    } else if (glyph == ButtonGlyph.Matching) {
                         MatchingIndicator(color = colors.onPrimary, modifier = Modifier.size(size * 0.36f))
                     } else {
                         Icon(
@@ -224,3 +257,6 @@ fun ListenButton(
         }
     }
 }
+
+/** Frame interval of the low-power path (about 30 fps, the rate of the level events). */
+internal const val LOW_POWER_FRAME_MS = 28L

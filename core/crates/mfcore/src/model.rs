@@ -29,6 +29,16 @@ pub enum Service {
     Twitch,
     Shazam,
     Genius,
+    Qobuz,
+    Pandora,
+    Audiomack,
+    Anghami,
+    JioSaavn,
+    Boomplay,
+    Kkbox,
+    YandexMusic,
+    NetEaseMusic,
+    LastFm,
     Web,
 }
 
@@ -94,6 +104,9 @@ pub enum SessionStatus {
     NoMatch,
     Failed,
     Canceled,
+    /// Captured while offline; identified automatically once a connection is back
+    /// (see `Engine::retry_waiting`).
+    Waiting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
@@ -292,6 +305,10 @@ pub enum Outcome {
     NoMatch {
         reason: NoMatchReason,
     },
+    /// A live session could not reach the recognizer (no network). The capture is
+    /// kept and the session is stored as `Waiting` until `Engine::retry_waiting`
+    /// identifies it.
+    Waiting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
@@ -385,6 +402,20 @@ pub enum ListenMode {
     Recording,
     /// Humming, whistling or singing only.
     Hum,
+}
+
+/// Options for `Engine::start_listening_with`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Record)]
+pub struct ListenOptions {
+    /// Stop automatically after a hummed/sung phrase ends (default true). When false
+    /// the session runs until `finish()` or the time limit.
+    pub auto_stop: bool,
+}
+
+impl Default for ListenOptions {
+    fn default() -> Self {
+        Self { auto_stop: true }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]

@@ -35,7 +35,11 @@ nonisolated final class FakeEngine: MusicEngine {
 
     func setCredentials(_ credentials: Credentials) {}
 
-    func startListening(source: CaptureSource, mode: ListenMode, observer: SessionObserver) throws -> LiveSessionHandle {
+    func setLowPower(_ enabled: Bool) {}
+
+    func startListening(source: CaptureSource, mode: ListenMode, options: ListenOptions, observer: SessionObserver) throws
+        -> LiveSessionHandle
+    {
         let session = FakeSession(observer: observer)
         let kind: SessionKind = mode == .hum ? .hum : (source == .systemAudio ? .systemAudio : .listen)
         session.run { session in
@@ -201,6 +205,20 @@ nonisolated final class FakeEngine: MusicEngine {
     }
 
     func confirmCandidate(sessionID: String, track: Track) throws {}
+
+    func rejectSegment(sessionID: String, segmentID: String) throws -> Segment {
+        guard var segment = DemoFixtures.detail(sessionID)?.segments.first(where: { $0.id == segmentID }) else {
+            throw MfError.InvalidInput(message: "The segment no longer exists.")
+        }
+        if let track = segment.track { segment.alternates.insert(track, at: 0) }
+        segment.track = nil
+        segment.kind = .unidentified
+        segment.tier = .unknown
+        segment.confidence = 0
+        return segment
+    }
+
+    func retryWaiting(observer: SessionObserver) throws -> UInt32 { 0 }
 
     func exportSession(id: String, format: ExportFormat) throws -> String {
         let segments = DemoFixtures.detail(id)?.segments ?? []

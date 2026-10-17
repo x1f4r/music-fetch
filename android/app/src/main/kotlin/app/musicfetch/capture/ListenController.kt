@@ -14,16 +14,15 @@ import android.os.Looper
 import android.service.quicksettings.TileService
 import android.util.Log
 import androidx.core.content.ContextCompat
-import app.musicfetch.BuildConfig
 import app.musicfetch.appGraph
 import app.musicfetch.core.Candidate
 import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ErrorCode
 import app.musicfetch.core.ListenMode
+import app.musicfetch.core.ListenOptions
 import app.musicfetch.core.LiveSession
 import app.musicfetch.core.MfException
 import app.musicfetch.core.Notice
-import app.musicfetch.core.Outcome
 import app.musicfetch.core.Phase
 import app.musicfetch.core.SessionEvent
 import app.musicfetch.core.SessionKind
@@ -31,6 +30,7 @@ import app.musicfetch.core.SessionObserver
 import app.musicfetch.engine.EngineHost
 import app.musicfetch.engine.EngineUnavailableException
 import app.musicfetch.notify.Notifications
+import app.musicfetch.platform.DevFiles
 import app.musicfetch.platform.SettingsStore
 import app.musicfetch.widget.ListenWidget
 import kotlinx.coroutines.CoroutineScope
@@ -40,7 +40,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
 import java.nio.ByteBuffer
 
 /** The MediaProjection consent for one phone-audio session (Android asks every time). */
@@ -218,10 +217,11 @@ class ListenController(
             fail(gen, ErrorCode.PLATFORM, message)
             return
         }
+        val options = ListenOptions(autoStop = settings.current().autoStop)
         val live = try {
-            engine.startListening(source, mode, Observer(gen))
+            engine.startListeningWith(source, mode, options, Observer(gen))
         } catch (e: MfException) {
-            Log.w(TAG, "startListening failed", e)
+            Log.w(TAG, "startListeningWith failed", e)
             audio.stop()
             fail(gen, ErrorCode.INTERNAL, e.message ?: "Couldn't start listening.")
             return
@@ -252,9 +252,8 @@ class ListenController(
     }
 
     private fun openAudio(svc: CaptureService, source: CaptureSource, grant: ProjectionGrant?): PcmSource? {
-        if (BuildConfig.DEBUG && source == CaptureSource.MICROPHONE) {
-            val replay = File(app.filesDir, WavReplay.FILE_NAME)
-            if (replay.isFile) WavReplay.open(replay)?.let { return it }
+        if (source == CaptureSource.MICROPHONE) {
+            DevFiles.find(app, DevFiles.CAPTURE_WAV)?.let { replay -> WavReplay.open(replay)?.let { return it } }
         }
         if (ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             return null
@@ -313,14 +312,10 @@ class ListenController(
             is SessionEvent.Pitch -> signal.pitch.add(event.frames)
             is SessionEvent.Notice -> onNotice(event.notice)
             is SessionEvent.Finished -> {
-                val id = _state.value.sessionId
-                val result = when (val outcome = event.outcome) {
-                    is Outcome.Matched -> if (id != null) ListenResult.Matched(id, outcome.track) else null
-                    is Outcome.Candidates -> if (id != null) ListenResult.Candidates(id, lastCandidates) else null
-                    is Outcome.NoMatch -> ListenResult.NoMatch(id, outcome.reason)
-                    is Outcome.Completed -> null
-                } ?: ListenResult.Failed(id, ErrorCode.INTERNAL, "Something went wrong.")
+                val result = listenResult(event.outcome, _state.value.sessionId, lastCandidates)
                 end(gen, result)
+                // Saved without a connection: identified once the phone is online again.
+                if (result is ListenResult.Waiting) app.appGraph.waitingRetry.onWaitingSaved()
             }
             is SessionEvent.Candidates -> lastCandidates = event.candidates
             is SessionEvent.Failed -> end(gen, ListenResult.Failed(_state.value.sessionId, event.code, event.message))
@@ -370,6 +365,8 @@ class ListenController(
             if (!canceledByUser) Log.i(TAG, "session canceled by the engine")
         } else {
             _state.value = previous.copy(phase = ListenPhase.Done(result), notice = null)
+            val elapsed = System.currentTimeMillis() - previous.startedAtWallMs
+            Log.i(TAG, "${previous.mode} session ended (${result.javaClass.simpleName}) after $elapsed ms")
             onResult(previous, result)
         }
         app.appGraph.notifyLibraryChanged()
@@ -384,7 +381,7 @@ class ListenController(
             val prefs = settings.current()
             val visible = app.appGraph.isAppVisible
             val wanted = state.origin != ListenOrigin.App || (!visible && prefs.notifyInBackground)
-            if (wanted) Notifications.postListenResult(app, state, result, prefs.defaultService)
+            if (wanted) Notifications.postListenResult(app, state, result, settings.preference())
             if (result is ListenResult.Matched || result is ListenResult.Candidates) ListenWidget.refresh(app)
         }
     }

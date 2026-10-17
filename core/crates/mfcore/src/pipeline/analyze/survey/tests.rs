@@ -113,3 +113,92 @@ async fn nothing_heard_falls_back_to_the_page() {
     assert_eq!(hint.as_ref().map(|t| t.title.as_str()), Some("Title"));
     assert_eq!(services.calls(), 5);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn alternating_answers_are_one_recording() {
+    // A remix the recognizer also knows inside a DJ set: the answers alternate
+    // between the two names, which consecutive songs never do.
+    let remix = track("Avicii", "Levels (Some Remix)", 190);
+    let set = track("Some DJ", "Live Set 2019", 3600);
+    let audio = noise(190, 18);
+    let media = TempPcm::new(&audio);
+    let mut services = FakeServices::new(audio, vec![play(0, 190, &remix, 0)]);
+    // The windows at 20 %, 50 % and 65 % land in the set; 35 % and 80 % in the remix.
+    services.overrides.push((30_000, 46_000, Some(set.clone())));
+    services.overrides.push((85_000, 100_000, Some(set.clone())));
+    services.overrides.push((110_000, 125_000, Some(set)));
+    let prior = Prior { track: Some(remix.clone()), strong: false };
+    let s = survey(&services, &media.pcm, &prior).await;
+    assert_eq!(title(&s.verdict), Some("Levels (Some Remix)"), "{:?}", s.log);
+}
+
+#[test]
+fn interleaving_is_detected() {
+    let probe = |at_s: u64| Probe { at_ms: at_s * 1000, len_ms: PROBE_MS, hit: None };
+    let (a1, a2, b1, b2) = (probe(10), probe(30), probe(20), probe(40));
+    assert!(interleaved(&[vec![&a1, &a2], vec![&b1, &b2]]));
+    let (c1, c2) = (probe(50), probe(60));
+    assert!(!interleaved(&[vec![&a1, &a2], vec![&c1, &c2]]));
+    assert!(!interleaved(&[vec![&c1, &c2], vec![&a1, &a2]]));
+}
+
+fn single_with(t: &Track, votes: usize) -> Verdict {
+    let evidence = (0..votes)
+        .map(|k| Evidence { source: EvidenceSource::Shazam, at_ms: k as u64 * 1000, score: 0.72, detail: None })
+        .collect();
+    Verdict::Single { track: t.clone(), evidence, alternates: Vec::new() }
+}
+
+#[test]
+fn the_page_outweighs_one_unconfirmed_answer() {
+    let page = track("Coldplay", "Charlie Brown (Live in Madrid 2011)", 274);
+    let prior = Prior { track: Some(page.clone()), strong: false };
+    let other = track("Somebody", "Unrelated Song", 200);
+    // One answer: the page wins and the answer becomes an alternate.
+    let Verdict::Single { track: t, alternates, evidence } = weigh_page(single_with(&other, 1), &prior, true) else {
+        unreachable!()
+    };
+    assert_eq!(t.title, page.title);
+    assert_eq!(alternates[0].title, "Unrelated Song");
+    assert_eq!(crate::pipeline::stitch::grade(&evidence).0, crate::model::Tier::Likely);
+    // Two agreeing answers: the audio wins.
+    let Verdict::Single { track: t, .. } = weigh_page(single_with(&other, 2), &prior, true) else { unreachable!() };
+    assert_eq!(t.title, "Unrelated Song");
+    // A cover of the page's song by someone else does not beat the artist's own upload...
+    let cover = track("Arksey", "Charlie Brown (Live)", 270);
+    let Verdict::Single { track: t, .. } = weigh_page(single_with(&cover, 3), &prior, true) else { unreachable!() };
+    assert_eq!(t.artist, "Coldplay");
+    // ...but does beat someone else's upload when heard more than once.
+    let Verdict::Single { track: t, .. } = weigh_page(single_with(&cover, 3), &prior, false) else { unreachable!() };
+    assert_eq!(t.artist, "Arksey");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn disagreeing_versions_give_way_to_the_page() {
+    // The upload is a remix the recognizer does not know; it names two other remixes once each.
+    let page = track("Avicii", "Levels (Thrizzo Trap Remix)", 263);
+    let audio = noise(263, 19);
+    let media = TempPcm::new(&audio);
+    let mut services = FakeServices::new(audio, vec![play(0, 263, &track("Avicii", "Levels", 200), 0)]);
+    services.overrides.push((40_000, 60_000, Some(track("Avicii", "Levels (Eff3cts Trap Remix)", 210))));
+    services.overrides.push((195_000, 215_000, Some(track("Avicii", "Levels (Clockwork Remix)", 380))));
+    let prior = Prior { track: Some(page.clone()), strong: false };
+    let s = survey(&services, &media.pcm, &prior).await;
+    assert_eq!(title(&s.verdict), Some("Levels (Thrizzo Trap Remix)"), "{:?}", s.log);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn another_version_heard_at_unrelated_offsets_is_not_the_recording() {
+    // Twice the same other remix, but placed at offsets that do not line up:
+    // parts of it inside a different remix, not that remix itself.
+    let page = track("Avicii", "Levels (Drankenstein Trap Remix)", 310);
+    let audio = noise(310, 20);
+    let media = TempPcm::new(&audio);
+    let mut services = FakeServices::new(audio, vec![play(0, 310, &track("Avicii", "Levels", 200), 0)]);
+    let other = track("Avicii", "Levels (Eff3cts Trap Remix)", 210);
+    services.overrides.push((140_000, 160_000, Some(other.clone())));
+    services.overrides.push((230_000, 250_000, Some(other)));
+    let prior = Prior { track: Some(page.clone()), strong: false };
+    let s = survey(&services, &media.pcm, &prior).await;
+    assert_eq!(title(&s.verdict), Some("Levels (Drankenstein Trap Remix)"), "{:?}", s.log);
+}

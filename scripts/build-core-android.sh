@@ -140,7 +140,9 @@ for abi in "${abi_list[@]}"; do
     fi
   done
   size="$(wc -c < "$lib" | tr -d ' ')"
-  printf '    %-10s libmfcore.so %6.1f MB, LOAD align %s\n' "$abi" "$(awk -v b="$size" 'BEGIN { print b / 1048576 }')" \
+  # Format the number in awk under the C locale: the shell's printf parses it with
+  # LC_NUMERIC and fails in comma-decimal locales.
+  printf '    %-10s libmfcore.so %6s MB, LOAD align %s\n' "$abi" "$(LC_ALL=C awk -v b="$size" 'BEGIN { printf "%.1f", b / 1048576 }')" \
     "$(echo "$aligns" | sort -u | tr '\n' ' ')"
 done
 exit "$status"

@@ -39,10 +39,13 @@ const COMMENTS_MIN_MS: u64 = 8 * 60_000;
 const INTERACTIVE_MAX_MS: u64 = 10 * 60_000;
 /// Largest direct download.
 const MAX_DIRECT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Waits before trying a failed download again.
+const DOWNLOAD_RETRIES: [Duration; 2] = [Duration::from_millis(1500), Duration::from_secs(4)];
 /// Impression analysis looks at the start of the media.
 const IMPRESSION_MS: u64 = 30_000;
-/// Enrichment of streaming-service tracks runs this many at a time.
-const ENRICH_PARALLEL: usize = 4;
+/// Enrichment of streaming-service tracks runs this many at a time (the
+/// catalogs' own rate limiters pace the requests).
+const ENRICH_PARALLEL: usize = 8;
 
 /// A validated analysis input.
 #[derive(Debug, Clone, PartialEq)]
@@ -98,11 +101,14 @@ pub struct AnalyzeOptions {
     pub use_hints: bool,
     /// Keep probes and decoded audio here between runs, keyed by URL.
     pub media_cache: Option<PathBuf>,
+    /// Replay from `media_cache` only: pages and probes are never fetched again
+    /// when a kept probe exists (evaluation replays stay off the sites).
+    pub offline: bool,
 }
 
 impl Default for AnalyzeOptions {
     fn default() -> Self {
-        Self { use_hints: true, media_cache: None }
+        Self { use_hints: true, media_cache: None, offline: false }
     }
 }
 
@@ -175,7 +181,15 @@ impl<S: Services> Run<'_, S> {
     async fn link(&mut self, url: &str, mode: AnalyzeMode) -> Result<Report> {
         let ctx = self.ctx;
         ctx.emitter.phase(Phase::Resolving, None);
-        let resolution = match links::resolve(&ctx.engine.http, url, ctx.engine.country(), &ctx.cancel).await {
+        let cached = cached_resolution(self.options, url);
+        let resolved = match cached {
+            Some(r) => Ok(r),
+            None => links::resolve(&ctx.engine.http, url, ctx.engine.country(), &ctx.cancel).await,
+        };
+        if let Ok(r) = &resolved {
+            store_resolution(self.options, url, r);
+        }
+        let resolution = match resolved {
             Ok(r) => r,
             // The page itself could not be read: the media backend may still fetch it.
             Err(MfError::Network { message }) if ctx.engine.media.is_some() => {
@@ -241,39 +255,47 @@ impl<S: Services> Run<'_, S> {
         self.analyze_audio(&pcm, &hints, &source, None, mode).await
     }
 
-    /// Streaming-service tracks: enrich and list them, no audio.
+    /// Streaming-service tracks, no audio: every segment at once from the
+    /// page's metadata, then each one again under the same id as its
+    /// enrichment (artwork, ISRC, links) arrives. A single track gets every
+    /// catalog; collections get the fast ones.
     async fn tracks(&mut self, source: SourceInfo, tracks: Vec<Track>) -> Result<Report> {
+        use futures_util::StreamExt;
         let ctx = self.ctx;
         let mut source = source;
         source.item_count = tracks.len().max(1) as u32;
         ctx.emitter.source(source.clone());
         let total = tracks.len() as u32;
-        let mut segments = Vec::with_capacity(tracks.len());
-        let mut done: Vec<(usize, Track)> = Vec::with_capacity(tracks.len());
-        for (chunk_index, chunk) in tracks.chunks(ENRICH_PARALLEL).enumerate() {
+        let mut segments: Vec<Segment> = tracks
+            .into_iter()
+            .enumerate()
+            .map(|(index, track)| metadata_segment(index, crate::catalog::with_search_links(track)))
+            .collect();
+        for segment in &segments {
+            ctx.emitter.segment(segment.clone());
+        }
+        let single = segments.len() == 1;
+        // Futures are built up front (no closure): the session future must stay `Send`.
+        let mut pending = Vec::with_capacity(segments.len());
+        for (index, segment) in segments.iter().enumerate() {
+            let Some(track) = segment.track.clone() else { continue };
+            let services = self.services;
+            pending.push(async move {
+                let enriched = if single { services.enrich(track).await } else { services.enrich_quick(track).await };
+                (index, enriched)
+            });
+        }
+        let mut enriched = futures_util::stream::iter(pending).buffer_unordered(ENRICH_PARALLEL);
+        while let Some((index, track)) = enriched.next().await {
             ctx.cancel.check()?;
-            let enriched = futures_util::future::join_all(chunk.iter().cloned().map(|t| self.services.enrich(t))).await;
-            for (k, track) in enriched.into_iter().enumerate() {
-                done.push((chunk_index * ENRICH_PARALLEL + k, track));
+            let segment = &mut segments[index];
+            if segment.track.as_ref() != Some(&track) {
+                segment.track = Some(track);
+                ctx.emitter.segment(segment.clone());
             }
         }
-        for (index, track) in done {
-            let segment = Segment {
-                id: format!("track-{index}"),
-                item_index: index as u32,
-                start_ms: 0,
-                end_ms: 0,
-                kind: SegmentKind::Track,
-                track: Some(track),
-                confidence: 0.99,
-                tier: crate::model::Tier::Confirmed,
-                evidence: vec![Evidence { source: EvidenceSource::Metadata, at_ms: 0, score: 0.99, detail: None }],
-                alternates: Vec::new(),
-                source_url: None,
-            };
-            ctx.emitter.segment(segment.clone());
-            segments.push(segment);
-        }
+        drop(enriched);
+        ctx.cancel.check()?;
         let update = SessionUpdate {
             title: source.title.clone(),
             track: (total == 1).then(|| segments.first().and_then(|s| s.track.clone())).flatten(),
@@ -330,6 +352,23 @@ impl<S: Services> Run<'_, S> {
     }
 }
 
+/// A streaming-service track as a segment of its collection.
+fn metadata_segment(index: usize, track: Track) -> Segment {
+    Segment {
+        id: format!("track-{index}"),
+        item_index: index as u32,
+        start_ms: 0,
+        end_ms: 0,
+        kind: SegmentKind::Track,
+        track: Some(track),
+        confidence: 0.99,
+        tier: crate::model::Tier::Confirmed,
+        evidence: vec![Evidence { source: EvidenceSource::Metadata, at_ms: 0, score: 0.99, detail: None }],
+        alternates: Vec::new(),
+        source_url: None,
+    }
+}
+
 /// Probe media with the backend (cached in `options.media_cache` when set).
 pub(crate) async fn probe_media(
     ctx: &SessionCtx,
@@ -339,6 +378,13 @@ pub(crate) async fn probe_media(
 ) -> Result<MediaInfo> {
     let cache = cache_path(options, url, if with_comments { "probe-comments.json" } else { "probe.json" });
     if let Some(path) = &cache
+        && let Ok(json) = std::fs::read_to_string(path)
+    {
+        return media::parse_probe(&json);
+    }
+    // A kept probe with comments answers a request without them too.
+    if !with_comments
+        && let Some(path) = cache_path(options, url, "probe-comments.json")
         && let Ok(json) = std::fs::read_to_string(path)
     {
         return media::parse_probe(&json);
@@ -355,6 +401,54 @@ pub(crate) async fn probe_media(
         let _ = std::fs::write(path, &json);
     }
     media::parse_probe(&json)
+}
+
+/// A media resolution kept in `options.media_cache` (evaluation replays never
+/// touch the page again).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedMedia {
+    source: SourceInfo,
+    url: String,
+    direct: bool,
+}
+
+fn cached_resolution(options: &AnalyzeOptions, url: &str) -> Option<Resolution> {
+    if let Some(json) = cache_path(options, url, "resolution.json").and_then(|p| std::fs::read_to_string(p).ok())
+        && let Ok(cached) = serde_json::from_str::<CachedMedia>(&json)
+    {
+        return Some(Resolution::Media { source: cached.source, url: cached.url, direct: cached.direct });
+    }
+    if !options.offline {
+        return None;
+    }
+    // Offline replays: the kept probe describes the page well enough.
+    let canonical = links::canonicalize(url).unwrap_or_else(|_| url.to_string());
+    let (media_url, json) = [url, canonical.as_str()].iter().find_map(|u| {
+        ["probe-comments.json", "probe.json"]
+            .iter()
+            .find_map(|what| std::fs::read_to_string(cache_path(options, u, what)?).ok())
+            .map(|json| (u.to_string(), json))
+    })?;
+    let info = media::parse_probe(&json).ok()?;
+    let mut source = SourceInfo { url: Some(media_url.clone()), ..SourceInfo::default() };
+    refresh_source(&mut source, &info);
+    Some(Resolution::Media { source, url: media_url, direct: false })
+}
+
+fn store_resolution(options: &AnalyzeOptions, url: &str, resolution: &Resolution) {
+    let (Some(path), Resolution::Media { source, url: media_url, direct }) =
+        (cache_path(options, url, "resolution.json"), resolution)
+    else {
+        return;
+    };
+    // A page that did not tell the duration was probably a consent or bot wall.
+    if path.exists() || source.duration_ms.is_none() {
+        return;
+    }
+    let cached = CachedMedia { source: source.clone(), url: media_url.clone(), direct: *direct };
+    if let Ok(json) = serde_json::to_string(&cached) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 fn cache_path(options: &AnalyzeOptions, url: &str, what: &str) -> Option<PathBuf> {
@@ -396,17 +490,33 @@ pub(crate) async fn fetch_audio(
     Ok(pcm)
 }
 
+/// Download through the media backend. Sites drop connections and refuse a
+/// stream now and then, so a failed download is tried again twice, each time
+/// into a fresh directory (a broken partial file is never taken for the result).
 async fn download(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<PathBuf> {
     let backend = ctx.engine.media.clone().ok_or_else(|| MfError::Platform {
         message: "Links with media need the media download tools, which are not available.".into(),
     })?;
-    let emitter = ctx.emitter.clone();
-    let task = TaskHandle::with_progress(ctx.cancel.clone(), move |f| emitter.phase(Phase::Downloading, Some(f)));
-    let (url, dest) = (url.to_string(), dir.to_string_lossy().into_owned());
-    let path = tokio::task::spawn_blocking(move || backend.download_audio(url, dest, task))
-        .await
-        .map_err(|e| MfError::internal(format!("download: {e}")))??;
-    Ok(PathBuf::from(path))
+    let mut attempt = 0;
+    loop {
+        let dest = if attempt == 0 { dir.to_path_buf() } else { dir.join(format!("retry-{attempt}")) };
+        let emitter = ctx.emitter.clone();
+        let task = TaskHandle::with_progress(ctx.cancel.clone(), move |f| emitter.phase(Phase::Downloading, Some(f)));
+        let (url_owned, dest) = (url.to_string(), dest.to_string_lossy().into_owned());
+        let backend = backend.clone();
+        let result = tokio::task::spawn_blocking(move || backend.download_audio(url_owned, dest, task))
+            .await
+            .map_err(|e| MfError::internal(format!("download: {e}")))?;
+        match result.map_err(MfError::from) {
+            Ok(path) => return Ok(PathBuf::from(path)),
+            Err(MfError::Platform { message }) if attempt < DOWNLOAD_RETRIES.len() => {
+                tracing::info!(session = %ctx.id, "download failed ({message}); trying again");
+                ctx.cancel.sleep(DOWNLOAD_RETRIES[attempt]).await?;
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Plain HTTP download of a media file: every hop checked by the SSRF
@@ -534,6 +644,19 @@ pub(crate) async fn analyze_pcm<S: Services>(
             log.push(format!("the page's song {} – {} plays here (preview found)", page.artist, page.title));
             verdict = survey::prefer_page_song(verdict, page);
         }
+        let heard = match &verdict {
+            Verdict::Single { track, .. } => Some(track.clone()),
+            _ => None,
+        };
+        verdict = survey::weigh_page(verdict, &prior, hints.official);
+        if let (Some(heard), Verdict::Single { track, .. }) = (heard, &verdict)
+            && !hints::same_song(&heard, track)
+        {
+            log.push(format!(
+                "the page's {} – {} outweighs one answer ({} – {})",
+                track.artist, track.title, heard.artist, heard.title
+            ));
+        }
         match verdict {
             Verdict::Single { track, evidence, alternates } => {
                 let track = services.enrich(track).await;
@@ -642,7 +765,17 @@ async fn single_prior<S: Services>(services: &S, hints: &Hints, duration_ms: u64
         let fits = found.as_ref().and_then(|f| f.duration_ms).is_none_or(|d| within(d, duration_ms, 0.12));
         return Prior { track: Some(found.filter(|_| fits).unwrap_or_else(|| track.clone())), strong: true };
     }
-    let Some(parsed) = &hints.title_track else { return Prior::default() };
+    let Some(parsed) = &hints.title_track else {
+        // "Artist-Title" with a bare hyphen counts once the catalog knows the
+        // song by that artist (in any version).
+        let Some(loose) = &hints.loose_title_track else { return Prior::default() };
+        let known = services.find(&hints::bare_title(&loose.title), &loose.artist, None).await;
+        return match known {
+            Some(found) if hints::same_version(&found, loose) => Prior { track: Some(found), strong: false },
+            Some(_) => Prior { track: Some(loose.clone()), strong: false },
+            None => Prior::default(),
+        };
+    };
     match services.find(&parsed.title, &parsed.artist, None).await {
         Some(found) => {
             let strong = found.duration_ms.is_some_and(|d| within(d, duration_ms, 0.12));

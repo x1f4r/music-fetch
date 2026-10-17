@@ -5,7 +5,7 @@ views. Visual design and copy: [design/DESIGN.md](design/DESIGN.md).
 
 ## Shared structure
 
-| Concern | macOS (Swift 6, SwiftUI, macOS 26) | Android (Kotlin, Compose, API 29+) |
+| Concern | macOS (Swift 6, SwiftUI, macOS 15+, universal; Liquid Glass on macOS 26) | Android (Kotlin, Compose, API 29+) |
 |---|---|---|
 | Engine host | `EngineHost` actor: builds `EngineConfig`, creates `Engine` off the main thread, owns platform services | `EngineHost` singleton in `MusicFetchApp` (Application) |
 | Event bridge | `ObserverBridge: SessionObserver` → `AsyncStream<SessionEvent>` consumed on the MainActor | `ObserverBridge` → `callbackFlow`/`Channel` collected in `viewModelScope` |
@@ -13,7 +13,7 @@ views. Visual design and copy: [design/DESIGN.md](design/DESIGN.md).
 | System audio | Core Audio process tap (`CATapDescription` global tap excluding own process) + private aggregate device | `AudioPlaybackCapture` via `MediaProjection` in a `mediaProjection` foreground service |
 | Media backend | none: `EngineConfig.media_tools` points at the bundled Python + yt-dlp + qjs (`MediaRuntime`) | `ChaquopyMediaBackend` (Python 3.13 + yt-dlp + bundled `libqjs.so`) |
 | Decoder fallback | `AVFoundationDecoder` (AVAssetReader → 16-bit mono WAV) | `MediaCodecDecoder` (MediaExtractor + MediaCodec) |
-| Speech | `SpeechTranscriberService` (SpeechAnalyzer/SpeechTranscriber, on-device; DictationTranscriber for other locales) | `AndroidSpeechToText` (`createOnDeviceSpeechRecognizer`, `EXTRA_AUDIO_SOURCE` on API 33+) |
+| Speech | `SpeechTranscriberService` (macOS 26: SpeechAnalyzer/SpeechTranscriber, DictationTranscriber for other locales; macOS 15: `SFSpeechRecognizer`; on-device only) | `AndroidSpeechToText` (`createOnDeviceSpeechRecognizer`, `EXTRA_AUDIO_SOURCE` on API 33+) |
 | Credentials | Keychain (generic passwords, service `local.musicfetch.app.credentials`) | DataStore with values encrypted by an Android Keystore AES-GCM key |
 | Settings | `@AppStorage` / `UserDefaults` | DataStore preferences |
 | Background work | not needed (app keeps running) | link/file analysis in a foreground service (`dataSync`, `mediaProcessing` on API 35+) with a progress notification |
@@ -26,7 +26,8 @@ platforms.
 
 - `ListenModel` — `phase: idle | listening(source, mode) | analyzing | result`;
   live `level`, `pitchTrace` (ring of the last 8 s of `PitchFrame`s), `impression: Bool`,
-  `notice`, `elapsed`; result: `matched(Track) | candidates([Candidate]) | noMatch(reason)`;
+  `notice`, `elapsed`; result: `matched(Track) | candidates([Candidate]) |
+  noMatch(reason) | offline` (`Outcome::Waiting`: saved to identify once online);
   actions `start(source, mode)`, `stop()`, `cancel()`, `retryAsHum()`.
 - `SessionModel` — for link/file/lyrics sessions and library detail: `source`,
   `phase`/`fraction`, `progress` (analyzed/total/ETA), ordered `segments` (upsert by id,

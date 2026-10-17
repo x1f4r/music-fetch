@@ -53,7 +53,6 @@ extension Copy {
     static let zoomIn = String(localized: "Zoom In")
     static let zoomOut = String(localized: "Zoom Out")
     static let actualSize = String(localized: "Actual Size")
-    static let openInDefault = String(localized: "Open in Default Service")
     static let openInMenu = String(localized: "Open in")
     static let openMusicFetch = String(localized: "Open Music Fetch")
     static let settingsTitle = String(localized: "Settings")
@@ -70,6 +69,7 @@ extension Copy {
         case .continueSystemAudio: continueAction
         case .openMicrophoneSettings: openSystemSettings
         case .stop: stop
+        case .dismiss: ok
         }
     }
 
@@ -191,6 +191,7 @@ extension Copy {
 
     static let confirm = String(localized: "Confirm")
     static let notThis = String(localized: "Not this")
+    static let notThisMenu = String(localized: "Not This")
     static let humPart = String(localized: "Hum This Part")
     static let match = String(localized: "Match")
     static let evidenceLabel = String(localized: "Evidence")
@@ -200,6 +201,7 @@ extension Copy {
     static let analyzing = String(localized: "Analyzing")
     static let stoppedPlain = String(localized: "Stopped")
     static let didNotFinish = String(localized: "Didn't finish")
+    static let waitingForConnection = String(localized: "Waiting for connection")
 
     static func useAlternate(_ track: Track) -> String {
         String(localized: "Use “\(track.title)” by \(track.artist)")
@@ -292,6 +294,21 @@ extension Copy {
         track.artist.isEmpty ? track.title : "\(track.title) — \(track.artist)"
     }
 
+    // MARK: Providers
+
+    static let providerPanelTitle = String(localized: "Where do you listen?")
+    static let providerPanelMessage = String(localized: "Songs you identify open there. You can change this in Settings.")
+    static let moreProviders = String(localized: "More…")
+    static let skip = String(localized: "Skip")
+    static let providerService = String(localized: "Service")
+    static let customProviderEllipsis = String(localized: "Custom…")
+    static let providerName = String(localized: "Name")
+    static let providerNamePrompt = String(localized: "Name of the app or site")
+    static let providerAddress = String(localized: "Web address")
+    static let providerAddressPrompt = "https://example.com/search?q={query}"
+    static let providerAddressHelp = String(localized: "{query} becomes the artist and title. {artist}, {title} and {isrc} work too.")
+    static let providerAddressInvalid = String(localized: "Enter a web address with {query}, {artist}, {title} or {isrc} in it.")
+
     // MARK: Settings
 
     static let settingsGeneral = String(localized: "General")
@@ -322,6 +339,7 @@ extension Copy {
     static let melodyFooter = String(localized: "Needed to recognize humming, whistling and singing. Stays on this Mac.")
     static let whileHumming = String(localized: "While humming")
     static let alsoSearchLyrics = String(localized: "Also search lyrics you sing")
+    static let autoStopAfterPause = String(localized: "Stop automatically after a pause")
     static let onDisk = String(localized: "On disk")
     static let cachedAudio = String(localized: "Cached audio")
     static let clearCache = String(localized: "Clear Cache")

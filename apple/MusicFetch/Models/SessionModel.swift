@@ -187,6 +187,8 @@ final class SessionModel: Identifiable {
             case .noMatch(let reason):
                 noMatchReason = reason
                 status = .noMatch
+            case .waiting:
+                status = .waiting
             }
         case .failed(let code, let message):
             isRunning = false

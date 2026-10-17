@@ -5,7 +5,7 @@ members = ["crates/mfcore", "crates/mf-cli", "crates/uniffi-bindgen"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.99"
@@ -26,6 +26,14 @@ lto = "thin"
 codegen-units = 1
 panic = "unwind"
 strip = "debuginfo"
+
+# Development and evaluation builds (`--profile release-fast`): release optimizations
+# with parallel codegen and no LTO, several times faster to build. Shipping builds use
+# `release`.
+[profile.release-fast]
+inherits = "release"
+codegen-units = 16
+lto = false
 
 [profile.dev.package."*"]
 opt-level = 2

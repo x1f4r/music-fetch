@@ -27,11 +27,11 @@ import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ErrorCode
 import app.musicfetch.core.NoMatchReason
 import app.musicfetch.core.Notice
-import app.musicfetch.core.Service
 import app.musicfetch.core.Track
+import app.musicfetch.platform.ProviderPreference
 import app.musicfetch.platform.ServiceLinkOpener
-import app.musicfetch.platform.displayName
 import app.musicfetch.ui.common.ArtworkLoader
+import app.musicfetch.ui.components.providerName
 
 /** Notification channels and builders (docs/design/DESIGN.md §6.11). */
 object Notifications {
@@ -135,7 +135,7 @@ object Notifications {
      * The result of a live session, replacing the capture notification: the track with "Open in
      * ‹service›" and "Open", the best hum guess, or why nothing was found with "Try again".
      */
-    suspend fun postListenResult(context: Context, state: ListenState, result: ListenResult, preferred: Service) {
+    suspend fun postListenResult(context: Context, state: ListenState, result: ListenResult, preference: ProviderPreference) {
         if (!canPost(context)) return
         val builder = NotificationCompat.Builder(context, CHANNEL_RESULTS)
             .setSmallIcon(R.drawable.ic_notification)
@@ -148,7 +148,7 @@ object Notifications {
                     .setContentText(meta(track))
                     .setContentIntent(openApp(context, result.sessionId))
                 artwork(context, track)?.let { builder.setLargeIcon(it) }
-                addOpenIn(context, builder, track, preferred)
+                addOpenIn(context, builder, track, preference)
                 builder.addAction(0, context.getString(R.string.notif_open), openApp(context, result.sessionId))
             }
             is ListenResult.Candidates -> {
@@ -173,6 +173,10 @@ object Notifications {
                     .setContentIntent(openApp(context, null))
                 addTryAgain(context, builder, state)
             }
+            is ListenResult.Waiting -> {
+                builder.setContentTitle(context.getString(R.string.state_offline))
+                    .setContentIntent(openApp(context, result.sessionId))
+            }
         }
         notify(context, LISTEN_RESULT_ID, builder.build())
     }
@@ -184,7 +188,7 @@ object Notifications {
         title: String,
         text: String?,
         track: Track?,
-        preferred: Service,
+        preference: ProviderPreference,
     ) {
         if (!canPost(context)) return
         val builder = NotificationCompat.Builder(context, CHANNEL_RESULTS)
@@ -195,7 +199,7 @@ object Notifications {
             .setContentIntent(openApp(context, sessionId))
         if (track != null) {
             artwork(context, track)?.let { builder.setLargeIcon(it) }
-            addOpenIn(context, builder, track, preferred)
+            addOpenIn(context, builder, track, preference)
             builder.addAction(0, context.getString(R.string.notif_open), openApp(context, sessionId))
         }
         notify(context, analysisResultId(sessionId), builder.build())
@@ -245,16 +249,16 @@ object Notifications {
         )
     }
 
-    private fun addOpenIn(context: Context, builder: NotificationCompat.Builder, track: Track, preferred: Service) {
-        val link = ServiceLinkOpener.pick(track.links, preferred) ?: return
-        val intent = ServiceLinkOpener.intentFor(context, link)
+    private fun addOpenIn(context: Context, builder: NotificationCompat.Builder, track: Track, preference: ProviderPreference) {
+        val target = ServiceLinkOpener.choices(track, preference).primary ?: return
+        val intent = ServiceLinkOpener.intentFor(context, target)
         val pending = PendingIntent.getActivity(
             context,
-            (track.identityKey + link.url).hashCode(),
+            (track.identityKey + intent.dataString).hashCode(),
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        builder.addAction(0, context.getString(R.string.result_open_in, link.service.displayName), pending)
+        builder.addAction(0, context.getString(R.string.result_open_in, target.providerName), pending)
     }
 
     private fun addTryAgain(context: Context, builder: NotificationCompat.Builder, state: ListenState) {

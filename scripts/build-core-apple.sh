@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Build mfcore as a static library for Apple silicon Macs and refresh the local Swift
-# package that wraps it.
+# Build mfcore as a universal (arm64 + x86_64) static library for macOS 15 and later
+# and refresh the local Swift package that wraps it.
 #
 #   scripts/build-core-apple.sh [--debug]
 #
 # Outputs (gitignored):
-#   apple/MusicFetchCore/MfCoreFFI.xcframework                         libmfcore.a + MfCoreFFI.h + module.modulemap
+#   apple/MusicFetchCore/MfCoreFFI.xcframework                         libmfcore.a (arm64, x86_64) + MfCoreFFI.h + module.modulemap
 #   apple/MusicFetchCore/Sources/MusicFetchCore/MusicFetchCore.swift   UniFFI Swift bindings
+#
+# Each architecture is built with cargo, then `lipo` joins them into one static library
+# (an xcframework keeps a single library per platform).
 #
 # The module map carries `link` directives for the native libraries rustc reports
 # (--print native-static-libs), so anything importing MfCoreFFI autolinks them. The
@@ -24,7 +27,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_DIR="$ROOT_DIR/core"
 PACKAGE_DIR="$ROOT_DIR/apple/MusicFetchCore"
 STAGE_DIR="$ROOT_DIR/apple/build/core"
-TARGET="aarch64-apple-darwin"
+TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 FFI_MODULE="MfCoreFFI"
 SWIFT_FILE="$PACKAGE_DIR/Sources/MusicFetchCore/MusicFetchCore.swift"
 XCFRAMEWORK="$PACKAGE_DIR/$FFI_MODULE.xcframework"
@@ -45,8 +48,9 @@ esac
 
 # rustup's proxies must win over a Homebrew rust, which lacks the pinned toolchain.
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
-# Must match the app's deployment target, or ld warns about every object file.
-export MACOSX_DEPLOYMENT_TARGET="26.0"
+# Must match the app's deployment target (apple/project.yml), or ld warns about every
+# object file.
+export MACOSX_DEPLOYMENT_TARGET="15.0"
 
 log() { printf '==> %s\n' "$*"; }
 die() {
@@ -55,24 +59,46 @@ die() {
 }
 
 mkdir -p "$STAGE_DIR"
-CARGO_LOG="$STAGE_DIR/cargo-$PROFILE.log"
 
-# 1. Static library. cargo must run inside core/ so rust-toolchain.toml applies.
+# 1. Static library per architecture, then one universal archive. cargo must run
+# inside core/ so rust-toolchain.toml applies.
 cargo_profile_args=()
 [[ "$PROFILE" == "release" ]] && cargo_profile_args=(--release)
-log "Building mfcore ($PROFILE, $TARGET)"
-(
-  cd "$CORE_DIR"
-  cargo rustc -p mfcore --lib --target "$TARGET" --crate-type staticlib \
-    ${cargo_profile_args[@]+"${cargo_profile_args[@]}"} -- --print native-static-libs
-) 2>&1 | tee "$CARGO_LOG"
+thin_libs=()
+for target in "${TARGETS[@]}"; do
+  log "Building mfcore ($PROFILE, $target)"
+  (
+    cd "$CORE_DIR"
+    cargo rustc -p mfcore --lib --target "$target" --crate-type staticlib \
+      ${cargo_profile_args[@]+"${cargo_profile_args[@]}"} -- --print native-static-libs
+  ) 2>&1 | tee "$STAGE_DIR/cargo-$PROFILE-$target.log"
+  thin="$CORE_DIR/target/$target/$PROFILE/libmfcore.a"
+  [[ -f "$thin" ]] || die "cargo did not produce $thin"
+  thin_libs+=("$thin")
+done
+# The first target's log carries the native libraries (they are the same on both).
+CARGO_LOG="$STAGE_DIR/cargo-$PROFILE-${TARGETS[0]}.log"
+# Bindgen reads the UniFFI metadata from a single-architecture library.
+METADATA_LIB="${thin_libs[0]}"
 
-LIB="$CORE_DIR/target/$TARGET/$PROFILE/libmfcore.a"
-[[ -f "$LIB" ]] || die "cargo did not produce $LIB"
+LIB="$STAGE_DIR/universal-$PROFILE/libmfcore.a"
+mkdir -p "$(dirname "$LIB")"
+lipo -create "${thin_libs[@]}" -output "$LIB.tmp"
+# Keep the old file (and its mtime) when nothing changed, so the xcframework stamp holds.
+if cmp -s "$LIB.tmp" "$LIB"; then rm -f "$LIB.tmp"; else mv "$LIB.tmp" "$LIB"; fi
+archs="$(lipo -archs "$LIB")"
+for arch in arm64 x86_64; do
+  [[ " $archs " == *" $arch "* ]] || die "universal library lacks $arch (has: $archs)"
+done
+log "Universal library: $archs ($(du -h "$LIB" | cut -f 1))"
 
 # 2. Native libraries the static library needs at link time.
 native_libs="$(sed -n 's/^note: native-static-libs: //p' "$CARGO_LOG" | tail -n 1)"
 [[ -n "$native_libs" ]] || die "rustc did not report native-static-libs (see $CARGO_LOG)"
+for target in "${TARGETS[@]:1}"; do
+  other="$(sed -n 's/^note: native-static-libs: //p' "$STAGE_DIR/cargo-$PROFILE-$target.log" | tail -n 1)"
+  [[ "$other" == "$native_libs" ]] || die "native-static-libs differ for $target: $other"
+done
 
 frameworks=()
 libraries=()
@@ -133,7 +159,7 @@ done
 # wraps a static library, not a .framework bundle.
 (
   cd "$CORE_DIR"
-  "$BINDGEN" "$LIB" "$GEN_DIR" --swift-sources --headers --modulemap \
+  "$BINDGEN" "$METADATA_LIB" "$GEN_DIR" --swift-sources --headers --modulemap \
     --module-name "$FFI_MODULE" --modulemap-filename module.modulemap \
     ${link_framework_args[@]+"${link_framework_args[@]}"} --metadata-no-deps
 )

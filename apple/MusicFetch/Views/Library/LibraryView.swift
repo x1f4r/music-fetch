@@ -150,6 +150,7 @@ struct LibraryRow: View {
         let artist = entry.track?.artist ?? entry.subtitle
         let host = Format.host(entry.sourceUrl)
         switch entry.status {
+        case .waiting: return Copy.waitingForConnection
         case .failed: return Copy.didNotFinish
         case .canceled where entry.trackCount == 0: return Copy.stoppedPlain
         case .noMatch: return Copy.noMatch(.notFound)

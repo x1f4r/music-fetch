@@ -49,8 +49,10 @@ const MIN_STEP_MS: u64 = 30_000;
 const UNKNOWN_STEP_MS: u64 = 90_000;
 /// A probe this far past a recording's latest end finds what follows it.
 const END_MARGIN_MS: i64 = 10_000;
-/// Jump after a probe without a match.
+/// Jump after a probe without a match...
 const MISS_STEP_MS: u64 = 25_000;
+/// ...doubling after this many unanswered probes in a row.
+const MISS_BACKOFF_AFTER: u32 = 2;
 /// An unexplained stretch at least this long between two tracks gets a probe.
 const GAP_PROBE_MS: u64 = 30_000;
 /// Two matches further apart than this get a probe in between.
@@ -89,6 +91,22 @@ const EDGE_ABSORB_QUIET_MS: u64 = 120_000;
 /// A local match shows a recording is audible; its first recognizer answer this
 /// soon after shows it dominates.
 const DOMINANCE_LOOKAHEAD_MS: u64 = 180_000;
+/// A recording whose length is unknown is taken to play this long past its
+/// last hearing when nothing else was heard after it.
+const UNKNOWN_TAIL_MS: u64 = 90_000;
+/// In a blended change the next record takes over about this long after its
+/// first bar (measured against published tracklists of the evaluation mixes).
+const TAKEOVER_MS: i64 = 45_000;
+/// Answers of one song this far apart (or closer) may belong to one play.
+const ONE_PLAY_GAP_MS: u64 = 240_000;
+/// A recording heard this long past its estimated end has no known end.
+const OVERRUN_SLACK_MS: i64 = 15_000;
+/// Two answers are independent hearings only when their windows are this far apart.
+const INDEPENDENT_MS: u64 = PROBE_MS;
+/// A probe this close to an earlier one hears practically the same audio.
+const SAME_WINDOW_MS: u64 = 6_000;
+/// Entries looked up both ways to tell "Artist - Title" lists from "Title - Artist" ones.
+const ORIENTATION_SAMPLE: usize = 4;
 /// Paid provider calls per analysis.
 const MAX_PAID: u32 = 30;
 /// Largest DJ speed change searched by local matching (pitch faders go to ±8 %).
@@ -171,6 +189,9 @@ struct Anchor {
     /// The recognizer reported a speed/pitch change no turntable or key-locked
     /// player produces: typical of a sample inside another record.
     odd: bool,
+    /// How much faster (0.03 = 3 %) and higher the media plays the recording.
+    speed: f32,
+    pitch: f32,
 }
 
 impl Anchor {
@@ -239,6 +260,7 @@ pub async fn run<S: Services>(
         limited: false,
         analyzed: 0,
         refuted: Default::default(),
+        checked: Default::default(),
     };
     for probe in prior {
         match probe.hit {
@@ -260,8 +282,15 @@ pub async fn run<S: Services>(
     }
     mix.adaptive_pass().await?;
     mix.fill_gaps().await?;
-    mix.refine_boundaries().await?;
-    mix.confirm_lone().await?;
+    if experiment("refine-first") {
+        mix.refine_boundaries().await?;
+        mix.confirm_lone().await?;
+    } else {
+        mix.confirm_lone().await?;
+        mix.refine_boundaries().await?;
+        // Third recordings heard while refining get their confirmation too.
+        mix.confirm_lone().await?;
+    }
     mix.resolve_leftovers().await?;
     emitter.phase(Phase::Finishing, None);
     mix.log_boundaries();
@@ -299,12 +328,15 @@ struct Mix<'a, S: Services> {
     analyzed: u64,
     /// Lone recognizer answers that a second look did not support.
     refuted: std::collections::HashSet<String>,
+    /// Lone answers already given their confirmation probe.
+    checked: std::collections::HashSet<String>,
 }
 
 /// Previews of recordings identified so far, for free local checks.
 #[derive(Default)]
 struct PreviewBank {
-    index: Index,
+    /// Shared with the blocking threads that search it.
+    index: std::sync::Arc<parking_lot::RwLock<Index>>,
     tracks: Vec<Track>,
     tried: HashMap<String, bool>,
 }
@@ -360,6 +392,10 @@ impl<S: Services> Mix<'_, S> {
         if len < 3_000 || !self.can_probe() {
             return Ok(None);
         }
+        // (Nearly) the same window again would only repeat its answer.
+        if self.earlier_probe(at).is_some() {
+            return Ok(None);
+        }
         let samples = self.pcm.read_ms(at, len)?;
         self.report.probes += 1;
         let started = Instant::now();
@@ -387,6 +423,72 @@ impl<S: Services> Mix<'_, S> {
             Ok(None) => {
                 self.log(format!("probe {} → no match", clock(at)));
                 self.misses.push((at, len));
+                Ok(None)
+            }
+            Err(MfError::RateLimited { retry_in_ms }) => {
+                self.log(format!("recognizer throttled for {} s; finishing with what we have", retry_in_ms / 1000));
+                self.limited = true;
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// How fast the DJ plays records around `at_ms`, when they are pitched like
+    /// a turntable (speed and pitch together) by at least 1 %: the median of
+    /// the recognizer's answers within six minutes.
+    fn local_speed(&self, at_ms: u64) -> Option<f32> {
+        let mut speeds: Vec<f32> = self
+            .anchors
+            .iter()
+            .filter(|a| {
+                a.kind == AnchorKind::Recognizer
+                    && !a.odd
+                    && !self.refuted.contains(&a.id)
+                    && a.at_ms.abs_diff(at_ms) <= 6 * 60_000
+                    && (a.speed - a.pitch).abs() <= 0.003
+            })
+            .map(|a| a.speed)
+            .collect();
+        if speeds.len() < 2 {
+            return None;
+        }
+        speeds.sort_by(f32::total_cmp);
+        let median = speeds[speeds.len() / 2];
+        (median.abs() >= 0.01).then_some(median)
+    }
+
+    /// A probe of the window at `at_ms` played back `1 + speed` times slower,
+    /// which undoes a DJ's pitch fader: the recognizer hears the record as
+    /// released. Its answer is turned back into media terms.
+    async fn probe_corrected(&mut self, at_ms: u64, speed: f32) -> Result<Option<Anchor>> {
+        let at = self.snap(at_ms);
+        let len = PROBE_MS.min(self.duration.saturating_sub(at));
+        if len < 6_000 || !self.can_probe() {
+            return Ok(None);
+        }
+        let samples = stretch(&self.pcm.read_ms(at, len)?, 1.0 + speed as f64, len);
+        self.report.probes += 1;
+        let started = Instant::now();
+        let result = self.services.shazam(&samples, self.options.priority).await;
+        self.probe_time += started.elapsed();
+        match result {
+            Ok(Some(mut hit)) => {
+                hit.timeskew = (1.0 + speed) * (1.0 + hit.timeskew) - 1.0;
+                hit.frequency_skew = (1.0 + speed) * (1.0 + hit.frequency_skew) - 1.0;
+                let anchor = self.anchor_from_hit(at, len, hit).await;
+                self.log(format!(
+                    "probe {} at {:+.1} % → {} – {} (starts {})",
+                    clock(at),
+                    -speed * 100.0,
+                    anchor.track.artist,
+                    anchor.track.title,
+                    anchor.start_est.map_or("?".into(), |s| clock(s.max(0) as u64)),
+                ));
+                Ok(Some(anchor))
+            }
+            Ok(None) => {
+                self.log(format!("probe {} at {:+.1} % → no match", clock(at), -speed * 100.0));
                 Ok(None)
             }
             Err(MfError::RateLimited { retry_in_ms }) => {
@@ -433,6 +535,8 @@ impl<S: Services> Mix<'_, S> {
             end_est,
             kind: AnchorKind::Recognizer,
             odd: !plausible_skew(hit.timeskew, hit.frequency_skew),
+            speed: hit.timeskew,
+            pitch: hit.frequency_skew,
         }
     }
 
@@ -503,6 +607,17 @@ impl<S: Services> Mix<'_, S> {
         }
     }
 
+    /// Every banked preview's best alignment inside `region` (speed search
+    /// included), on a blocking thread.
+    async fn search_bank(&self, region: Vec<Peak>) -> Result<Vec<fingerprint::Match>> {
+        let index = self.bank.index.clone();
+        tokio::task::spawn_blocking(move || {
+            index.read().search(&region, &fingerprint::warps(MAX_SPEED_CHANGE, SPEED_STEP))
+        })
+        .await
+        .map_err(|e| MfError::internal(format!("local match: {e}")))
+    }
+
     /// Add the preview of `track` to the bank (once per identity).
     async fn bank_track(&mut self, track: &Track) {
         let key = crate::identity::identity_key(track);
@@ -513,7 +628,7 @@ impl<S: Services> Mix<'_, S> {
         self.bank.tried.insert(key, preview.is_some());
         if let Some(samples) = preview {
             let peaks = fingerprint::peaks(&samples);
-            self.bank.index.add(&peaks);
+            self.bank.index.write().add(&peaks);
             self.bank.tracks.push(track.clone());
         }
     }
@@ -533,7 +648,7 @@ impl<S: Services> Mix<'_, S> {
             return Ok(None);
         }
         let region = self.region_peaks(from, to).await?;
-        let found = self.bank.index.search(&region, &fingerprint::warps(MAX_SPEED_CHANGE, SPEED_STEP));
+        let found = self.search_bank(region).await?;
         let Some(m) = found.into_iter().find(|m| m.reference == reference && m.is_confident(&MatchOptions::default()))
         else {
             return Ok(None);
@@ -563,6 +678,8 @@ impl<S: Services> Mix<'_, S> {
             end_est: a.end_est,
             kind: AnchorKind::Local,
             odd: false,
+            speed: m.warp.speed_change(),
+            pitch: m.warp.freq - 1.0,
         }))
     }
 
@@ -577,18 +694,18 @@ impl<S: Services> Mix<'_, S> {
         }
         self.bank_track(&a.track).await;
         if let Some(local) = self.confirm_locally(a).await? {
-            self.anchors.push(local);
+            self.add_anchor(local);
         }
         Ok(())
     }
 
     /// A banked recording playing in `[from, to)`, found without a probe.
     async fn bank_check(&mut self, from_ms: u64, to_ms: u64) -> Result<Option<Anchor>> {
-        if self.bank.index.is_empty() {
+        if self.bank.index.read().is_empty() {
             return Ok(None);
         }
         let region = self.region_peaks(from_ms, to_ms).await?;
-        let found = self.bank.index.search(&region, &fingerprint::warps(MAX_SPEED_CHANGE, SPEED_STEP));
+        let found = self.search_bank(region).await?;
         let Some(best) = found.into_iter().next().filter(|m| m.is_confident(&MatchOptions::default())) else {
             return Ok(None);
         };
@@ -628,6 +745,8 @@ impl<S: Services> Mix<'_, S> {
             end_est,
             kind: AnchorKind::Local,
             odd: false,
+            speed: best.warp.speed_change(),
+            pitch: best.warp.freq - 1.0,
         }))
     }
 
@@ -635,7 +754,8 @@ impl<S: Services> Mix<'_, S> {
     // Hinted pass
 
     async fn hinted_pass(&mut self, list: &Tracklist) -> Result<()> {
-        let entries = &list.entries;
+        let oriented = self.orient(list).await;
+        let entries = &oriented.entries;
         self.log(format!("tracklist from {:?}: {} entries", list.source, entries.len()));
         // Per settled entry: its piece, whether the audio overruled it, what was heard.
         let mut outcomes: Vec<(String, bool, Vec<Anchor>)> = Vec::new();
@@ -810,6 +930,41 @@ impl<S: Services> Mix<'_, S> {
         Ok(())
     }
 
+    /// A list written "Title - Artist" throughout (and not marked by versions,
+    /// which the parser already handles) is turned around when the catalog
+    /// knows its first entries that way and not the other.
+    async fn orient(&mut self, list: &Tracklist) -> Tracklist {
+        let sample: Vec<&hints::TrackHint> = list
+            .entries
+            .iter()
+            .filter(|e| !e.is_id && !e.is_talk() && !e.artist.is_empty() && !e.title.is_empty())
+            .take(ORIENTATION_SAMPLE)
+            .collect();
+        let (mut as_written, mut turned) = (0, 0);
+        for entry in sample {
+            if self.services.cancel().is_canceled() {
+                break;
+            }
+            if self.services.find(&entry.title, &entry.artist, None).await.is_some() {
+                as_written += 1;
+            } else if self.services.find(&entry.artist, &entry.title, None).await.is_some() {
+                turned += 1;
+            }
+            if as_written >= 2 {
+                break;
+            }
+        }
+        if turned < 2 || turned <= as_written {
+            return list.clone();
+        }
+        self.log(format!("tracklist is written \"Title - Artist\" ({turned} of the first entries); turned around"));
+        let mut out = list.clone();
+        for entry in out.entries.iter_mut().filter(|e| !e.is_id && !e.artist.is_empty()) {
+            std::mem::swap(&mut entry.artist, &mut entry.title);
+        }
+        out
+    }
+
     fn settle_with_audio(&mut self, piece: &mut Piece, anchor: Anchor, hint: Option<Track>) {
         piece.kind = SegmentKind::Track;
         piece.track_start_ms = anchor.start_est;
@@ -823,7 +978,7 @@ impl<S: Services> Mix<'_, S> {
     fn bank_track_samples(&mut self, track: &Track, samples: &[i16]) {
         let key = crate::identity::identity_key(track);
         if self.bank.tried.insert(key, true).is_none() {
-            self.bank.index.add(&fingerprint::peaks(samples));
+            self.bank.index.write().add(&fingerprint::peaks(samples));
             self.bank.tracks.push(track.clone());
         }
     }
@@ -837,7 +992,7 @@ impl<S: Services> Mix<'_, S> {
             let track = self.enrich(hint.clone()).await;
             self.bank_track(&track).await;
         }
-        if self.bank.index.is_empty() {
+        if self.bank.index.read().is_empty() {
             return Ok(());
         }
         // Scan the unexplained media in overlapping 90 s regions.
@@ -869,6 +1024,9 @@ impl<S: Services> Mix<'_, S> {
 
     async fn adaptive_pass(&mut self) -> Result<()> {
         let mut t = self.first_music().unwrap_or(0);
+        // Unanswered probes in a row: talk, unreleased tracks or a long
+        // breakdown. The step grows so they do not eat the budget.
+        let mut missed = 0u32;
         while t + 3_000 < self.duration {
             self.services.cancel().check()?;
             if let Some(end) = self.fixed_end(t) {
@@ -887,22 +1045,56 @@ impl<S: Services> Mix<'_, S> {
             if !self.can_probe() {
                 break;
             }
-            let anchor = match self.bank_check(t.saturating_sub(5_000), (t + 25_000).min(self.duration)).await? {
+            let mut anchor = match self.bank_check(t.saturating_sub(5_000), (t + 25_000).min(self.duration)).await? {
                 Some(a) => Some(a),
                 None => self.probe(t).await?,
             };
+            if anchor.is_none()
+                && experiment("corrected")
+                && let Some(speed) = self.local_speed(t)
+            {
+                anchor = self.probe_corrected(t, speed).await?;
+            }
             match anchor {
                 Some(a) => {
+                    missed = 0;
                     let next = next_probe(&a);
-                    self.anchors.push(a.clone());
+                    self.add_anchor(a.clone());
                     self.learn(&a).await?;
                     t = next.max(t + MIN_STEP_MS);
                 }
-                None => t += MISS_STEP_MS,
+                None => {
+                    missed += 1;
+                    t += miss_step(missed);
+                }
             }
             self.publish(t.min(self.duration));
         }
         Ok(())
+    }
+
+    /// Record an observation. One that agrees with an answer dropped as a lone
+    /// misidentification (same recording, same start) restores it: heard twice,
+    /// it is no longer alone.
+    fn add_anchor(&mut self, a: Anchor) {
+        // Two answers at a speed and pitch no player produces stay implausible.
+        let revived: Vec<String> = self
+            .anchors
+            .iter()
+            .filter(|b| self.refuted.contains(&b.id) && hints::same_recording(&b.track, &a.track))
+            .filter(|b| match a.kind {
+                AnchorKind::Local => within_play(b, &a),
+                AnchorKind::Recognizer => {
+                    !(a.odd && b.odd) && consistent_start(&a, b) && a.at_ms.abs_diff(b.at_ms) >= INDEPENDENT_MS
+                }
+            })
+            .map(|b| b.id.clone())
+            .collect();
+        for id in revived {
+            self.refuted.remove(&id);
+            self.log(format!("{} – {} heard again; kept", a.track.artist, a.track.title));
+        }
+        self.anchors.push(a);
     }
 
     /// When an existing anchor covers `t`, the time the next probe should go.
@@ -951,7 +1143,7 @@ impl<S: Services> Mix<'_, S> {
                     None => self.probe(at).await?,
                 };
                 if let Some(a) = anchor {
-                    self.anchors.push(a.clone());
+                    self.add_anchor(a.clone());
                     self.learn(&a).await?;
                     found_any = true;
                 }
@@ -1040,16 +1232,10 @@ impl<S: Services> Mix<'_, S> {
     async fn refine_boundaries(&mut self) -> Result<()> {
         let cap = ((self.duration as f64 / 3_600_000.0) * REFINE_RATE_PER_HOUR).ceil() as u32;
         for _round in 0..2 {
-            let mut anchors: Vec<&Anchor> = self
-                .anchors
-                .iter()
-                .filter(|a| !self.is_fixed(a.at_ms + a.len_ms / 2) && !self.refuted.contains(&a.id))
-                .collect();
-            anchors.sort_by_key(|a| a.at_ms);
-            let anchors = drop_contradicted(anchors);
+            let anchors = self.accepted();
             let mut targets = Vec::new();
             for pair in anchors.windows(2) {
-                let (a, b) = (pair[0], pair[1]);
+                let (a, b) = (&pair[0], &pair[1]);
                 if hints::same_recording(&a.track, &b.track) || hard_cut(a, b).is_some() {
                     continue;
                 }
@@ -1061,24 +1247,43 @@ impl<S: Services> Mix<'_, S> {
                 if self.probed_within(at, 8_000) || self.music_share(at, at + PROBE_MS) < 0.4 {
                     continue;
                 }
-                targets.push(at);
+                targets.push((at, a.track.clone(), b.track.clone()));
             }
             if targets.is_empty() {
                 break;
             }
-            for at in targets {
+            for (at, left, right) in targets {
                 if self.report.probes >= cap || !self.can_probe() {
                     return Ok(());
                 }
                 self.services.cancel().check()?;
-                if let Some(a) = self.probe(at).await? {
-                    self.anchors.push(a.clone());
-                    self.learn(&a).await?;
+                match self.probe(at).await? {
+                    // Only who of the two dominates matters here: a third
+                    // record in the middle of a blend is the blend confusing
+                    // the recognizer far more often than a hidden track.
+                    Some(a) if hints::same_song(&a.track, &left) || hints::same_song(&a.track, &right) => {
+                        self.add_anchor(a.clone());
+                        self.learn(&a).await?;
+                    }
+                    Some(a) => self.log(format!("ignored {} – {} inside a blend", a.track.artist, a.track.title)),
+                    None => {}
                 }
                 self.publish(at);
             }
         }
         Ok(())
+    }
+
+    /// What an earlier probe of the window at `at_ms` (snapped) heard, if
+    /// that window was probed: `Some(None)` for no match.
+    fn earlier_probe(&self, at_ms: u64) -> Option<Option<Anchor>> {
+        let at = self.snap(at_ms);
+        if let Some(a) =
+            self.anchors.iter().find(|a| a.kind == AnchorKind::Recognizer && a.at_ms.abs_diff(at) < SAME_WINDOW_MS)
+        {
+            return Some(Some(a.clone()));
+        }
+        self.misses.iter().any(|(m, _)| m.abs_diff(at) < SAME_WINDOW_MS).then_some(None)
     }
 
     /// A probe (answered or not) already started within `distance` of `at`.
@@ -1092,71 +1297,81 @@ impl<S: Services> Mix<'_, S> {
     /// near miss rarely repeat with a consistent position; those that do not
     /// are dropped (the stretch is then left unidentified or to the neighbours).
     async fn confirm_lone(&mut self) -> Result<()> {
-        let mut sorted: Vec<Anchor> = self.anchors.clone();
-        sorted.sort_by_key(|a| a.at_ms);
-        for (k, a) in sorted.iter().enumerate() {
-            if a.kind != AnchorKind::Recognizer
-                || self.is_fixed(a.at_ms + a.len_ms / 2)
-                || self.refuted.contains(&a.id)
-                || self.is_supported(a)
-            {
-                continue;
+        // Answers a confirmation brings in get their own check in a second round.
+        for _round in 0..2 {
+            let mut sorted: Vec<Anchor> = self.anchors.clone();
+            sorted.sort_by_key(|a| a.at_ms);
+            let mut any = false;
+            for (k, a) in sorted.iter().enumerate() {
+                if a.kind != AnchorKind::Recognizer
+                    || self.checked.contains(&a.id)
+                    || self.is_fixed(a.at_ms + a.len_ms / 2)
+                    || self.refuted.contains(&a.id)
+                    || self.is_supported(a)
+                {
+                    continue;
+                }
+                self.checked.insert(a.id.clone());
+                any = true;
+                if let Some(other) = self.overlapped_by(a) {
+                    self.drop_answer(a, &format!("would overlap {other} for minutes"));
+                    continue;
+                }
+                if !self.can_probe() {
+                    break;
+                }
+                self.services.cancel().check()?;
+                let Some(at) = self.confirmation_point(&sorted, k) else {
+                    if a.odd {
+                        self.drop_answer(a, "implausible speed and pitch");
+                    }
+                    continue;
+                };
+                // A window probed before already answered.
+                let (heard, fresh) = match self.earlier_probe(at) {
+                    Some(earlier) => (earlier, false),
+                    None => (self.probe(at).await?, true),
+                };
+                match heard {
+                    Some(b) if hints::same_recording(&b.track, &a.track) && consistent_start(a, &b) => {
+                        if fresh {
+                            self.add_anchor(b);
+                        }
+                    }
+                    Some(b) => {
+                        if hints::same_song(&b.track, &a.track) {
+                            // Another version of the same song: the second answer names it better.
+                            self.log(format!("replaced {} – {} by {}", a.track.artist, a.track.title, b.track.title));
+                            self.refuted.insert(a.id.clone());
+                        } else if a.odd || experiment("drop-other") {
+                            self.drop_answer(a, "another recording plays where it must still play");
+                        }
+                        if fresh {
+                            self.add_anchor(b.clone());
+                            self.learn(&b).await?;
+                        }
+                    }
+                    // Nothing recognized there (a breakdown, a transition): keep a
+                    // plausible answer, drop one that sounds like a sample.
+                    None if a.odd => self.drop_answer(a, "implausible speed and pitch, not heard again"),
+                    None if experiment("drop-none") || (experiment("drop-none-loose") && !is_tight_anchor(a)) => {
+                        self.drop_answer(a, "not heard again")
+                    }
+                    None => {}
+                }
             }
-            if let Some(other) = self.overlapped_by(a) {
-                self.log(format!(
-                    "dropped {} – {} (would overlap {} for minutes)",
-                    a.track.artist, a.track.title, other
-                ));
-                self.refuted.insert(a.id.clone());
-                continue;
-            }
-            if !self.can_probe() {
+            if !any {
                 break;
             }
-            self.services.cancel().check()?;
-            let other = |b: &&Anchor| !hints::same_recording(&b.track, &a.track);
-            let prev = sorted[..k].iter().rev().find(other).map_or(0, |b| b.seen_until());
-            let next = sorted[k + 1..].iter().find(other).map_or(self.duration, |b| b.seen_from());
-            let lo = prev.max(a.start_est.unwrap_or(0).max(0) as u64);
-            let hi = next.min(a.end_est.map_or(self.duration, |e| e.max(0) as u64));
-            let before = a.at_ms.saturating_sub(lo).min(CONFIRM_REACH_MS);
-            let after = hi.saturating_sub(a.at_ms + a.len_ms).min(CONFIRM_REACH_MS);
-            let at = if after >= before && after >= CONFIRM_ROOM_MS {
-                Some(a.at_ms + a.len_ms + after / 2 - PROBE_MS / 2)
-            } else if before >= CONFIRM_ROOM_MS {
-                Some((a.at_ms - before / 2).saturating_sub(PROBE_MS / 2))
-            } else {
-                None
-            };
-            let Some(at) = at.filter(|at| self.music_share(*at, *at + PROBE_MS) >= 0.4) else {
-                if a.odd {
-                    self.drop_answer(a, "implausible speed and pitch");
-                }
-                continue;
-            };
-            match self.probe(at).await? {
-                Some(b) if hints::same_recording(&b.track, &a.track) && consistent_start(a, &b) => {
-                    self.anchors.push(b);
-                }
-                Some(b) => {
-                    // Another version of the same song: the second answer names it better.
-                    if hints::same_song(&b.track, &a.track) {
-                        self.log(format!("replaced {} – {} by {}", a.track.artist, a.track.title, b.track.title));
-                        self.refuted.insert(a.id.clone());
-                    } else if a.odd {
-                        self.drop_answer(a, "implausible speed and pitch, not heard again");
-                    }
-                    self.anchors.push(b.clone());
-                    self.learn(&b).await?;
-                }
-                // Nothing recognized there (a breakdown, a transition): keep a
-                // plausible answer, drop one that sounds like a sample.
-                None if a.odd => self.drop_answer(a, "implausible speed and pitch, not heard again"),
-                None => {}
-            }
         }
-        // Answers placed where another recording surely plays for minutes are
-        // misidentifications (also those the confirmations added).
+        self.drop_overlapping_lone();
+        Ok(())
+    }
+
+    /// Lone answers placed where another recording surely plays for minutes
+    /// are misidentifications, as are lone ones at a speed and pitch no player
+    /// produces (also those that confirmations and refinements added).
+    fn drop_overlapping_lone(&mut self) {
         let lone: Vec<Anchor> = self
             .anchors
             .iter()
@@ -1170,7 +1385,28 @@ impl<S: Services> Mix<'_, S> {
                 self.drop_answer(&a, "implausible speed and pitch");
             }
         }
-        Ok(())
+    }
+
+    /// Where to listen again for the lone answer `sorted[k]`: 10–40 s away,
+    /// inside the stretch it must occupy (after its start, before its latest
+    /// end, between the neighbouring recordings), on the roomier side.
+    fn confirmation_point(&self, sorted: &[Anchor], k: usize) -> Option<u64> {
+        let a = &sorted[k];
+        let other = |b: &&Anchor| !hints::same_recording(&b.track, &a.track) && !self.refuted.contains(&b.id);
+        let prev = sorted[..k].iter().rev().find(other).map_or(0, |b| b.seen_until());
+        let next = sorted[k + 1..].iter().find(other).map_or(self.duration, |b| b.seen_from());
+        let lo = prev.max(a.start_est.unwrap_or(0).max(0) as u64);
+        let hi = next.min(a.end_est.map_or(self.duration, |e| e.max(0) as u64));
+        let before = a.at_ms.saturating_sub(lo).min(CONFIRM_REACH_MS);
+        let after = hi.saturating_sub(a.at_ms + a.len_ms).min(CONFIRM_REACH_MS);
+        let at = if after >= before && after >= CONFIRM_ROOM_MS {
+            a.at_ms + a.len_ms + after / 2 - PROBE_MS / 2
+        } else if before >= CONFIRM_ROOM_MS {
+            (a.at_ms - before / 2).saturating_sub(PROBE_MS / 2)
+        } else {
+            return None;
+        };
+        (self.music_share(at, at + PROBE_MS) >= 0.4).then_some(at)
     }
 
     /// Nothing but unanswered probes in `[lo, hi)`.
@@ -1186,10 +1422,28 @@ impl<S: Services> Mix<'_, S> {
     /// Another answer or a local match backs this recording up.
     fn is_supported(&self, a: &Anchor) -> bool {
         self.anchors.iter().any(|b| {
-            b.id != a.id
-                && !self.refuted.contains(&b.id)
-                && hints::same_recording(&b.track, &a.track)
-                && (b.kind == AnchorKind::Local || consistent_start(a, b))
+            if b.id == a.id || self.refuted.contains(&b.id) {
+                return false;
+            }
+            if a.kind == AnchorKind::Recognizer
+                && b.kind == AnchorKind::Recognizer
+                && a.at_ms.abs_diff(b.at_ms) < INDEPENDENT_MS
+            {
+                // Overlapping windows hear the same audio: one hearing, not two.
+                return false;
+            }
+            if hints::same_recording(&b.track, &a.track) {
+                if b.kind == AnchorKind::Local {
+                    // The preview found where this play must be.
+                    return within_play(a, b);
+                }
+                // A sample heard twice is still a sample: two answers at a speed
+                // and pitch no player produces do not back each other up.
+                return !(a.odd && b.odd) && consistent_start(a, b);
+            }
+            // Another version of the song heard in the same play.
+            let (first, second) = if b.at_ms <= a.at_ms { (b, a) } else { (a, b) };
+            !experiment("no-unify") && same_play_of_song(first, second)
         })
     }
 
@@ -1246,7 +1500,7 @@ impl<S: Services> Mix<'_, S> {
                 }
             }
             if let Some(a) = found {
-                self.anchors.push(a);
+                self.add_anchor(a);
             }
         }
         Ok(())
@@ -1257,23 +1511,48 @@ impl<S: Services> Mix<'_, S> {
 
     /// The current timeline: settled hint pieces, anchor pieces with their
     /// boundaries, and gaps labelled from the audio; stitched.
-    fn timeline(&self) -> Vec<Piece> {
-        let mut pieces: Vec<Piece> = self.fixed.clone();
+    /// Observations the timeline is built from, in time order: outside settled
+    /// hint pieces, not dropped, lone answers inside another play removed, and
+    /// the versions of one play unified.
+    fn accepted(&self) -> Vec<Anchor> {
         let mut anchors: Vec<&Anchor> = self
             .anchors
             .iter()
             .filter(|a| !self.is_fixed(a.at_ms + a.len_ms / 2) && !self.refuted.contains(&a.id))
             .collect();
         anchors.sort_by_key(|a| a.at_ms);
-        let anchors = drop_contradicted(anchors);
+        let kept: Vec<Anchor> = drop_contradicted(anchors).into_iter().cloned().collect();
+        let unified = if experiment("no-unify") { kept } else { unify_versions(kept) };
+        forget_overrun_ends(unified)
+    }
+
+    /// Recognizer answers nothing backs up are left out: no second answer of
+    /// the same play, no local preview match, no neighbour that ends exactly
+    /// where it begins (or begins where it ends).
+    fn corroborated(&self, anchors: Vec<Anchor>) -> Vec<Anchor> {
+        let keep: Vec<bool> = (0..anchors.len())
+            .map(|k| {
+                let a = &anchors[k];
+                let aligned = |x: &Anchor, y: &Anchor| hard_cut(x, y).is_some();
+                a.kind == AnchorKind::Local
+                    || self.is_supported(a)
+                    || (k > 0 && aligned(&anchors[k - 1], a))
+                    || anchors.get(k + 1).is_some_and(|n| aligned(a, n))
+                    || (experiment("strict-keep-tight") && is_tight_anchor(a))
+            })
+            .collect();
+        anchors.into_iter().zip(keep).filter_map(|(a, k)| k.then_some(a)).collect()
+    }
+
+    fn timeline(&self) -> Vec<Piece> {
+        let mut pieces: Vec<Piece> = self.fixed.clone();
+        let anchors = self.accepted();
+        let anchors = if experiment("strict") { self.corroborated(anchors) } else { anchors };
 
         // Free stretches (outside settled pieces) are handled one by one.
         for (lo, hi) in self.free_stretches() {
-            let inside: Vec<&Anchor> = anchors
-                .iter()
-                .copied()
-                .filter(|a| a.at_ms + a.len_ms / 2 >= lo && a.at_ms + a.len_ms / 2 < hi)
-                .collect();
+            let inside: Vec<&Anchor> =
+                anchors.iter().filter(|a| a.at_ms + a.len_ms / 2 >= lo && a.at_ms + a.len_ms / 2 < hi).collect();
             pieces.extend(self.anchor_pieces(&inside, lo, hi));
         }
         let mut stitched = stitch::stitch(pieces).pieces;
@@ -1334,7 +1613,7 @@ impl<S: Services> Mix<'_, S> {
                     let seen = a.seen_until().min(hi);
                     let end = match a.end_est {
                         Some(e) => (e.max(seen as i64) as u64).min(hi),
-                        None => hi,
+                        None => (seen + UNKNOWN_TAIL_MS).min(hi),
                     };
                     let absorb = if self.only_misses(end, hi) { EDGE_ABSORB_QUIET_MS } else { EDGE_ABSORB_MS };
                     let end = if end + absorb < hi { end } else { hi };
@@ -1397,8 +1676,22 @@ impl<S: Services> Mix<'_, S> {
         {
             return (e, s);
         }
-        let (lo, hi) = self.transition(a, b);
-        let t = lo + (hi - lo) / 2;
+        // `a`'s length is unknown: it is not stretched over minutes nobody heard it in.
+        if a.end_est.is_none() {
+            let tail = lo + UNKNOWN_TAIL_MS;
+            let s = b_start.unwrap_or(hi);
+            if s >= tail + GAP_PROBE_MS {
+                return (tail, s);
+            }
+        }
+        let (start, end) = self.transition(a, b);
+        let t = match b.start_est {
+            // A blend: the next record takes over a while after its first bar.
+            Some(s) if experiment("takeover") && a.end_est.is_none_or(|e| e > s + HARD_CUT_MS) => {
+                (s + TAKEOVER_MS).clamp(lo as i64, self.dominant_from(b).max(lo) as i64) as u64
+            }
+            _ => start + (end - start) / 2,
+        };
         (t, t)
     }
 
@@ -1439,17 +1732,11 @@ impl<S: Services> Mix<'_, S> {
 
     /// Note how each change between two recordings was placed (evaluation aid).
     fn log_boundaries(&mut self) {
-        let mut anchors: Vec<&Anchor> = self
-            .anchors
-            .iter()
-            .filter(|a| !self.is_fixed(a.at_ms + a.len_ms / 2) && !self.refuted.contains(&a.id))
-            .collect();
-        anchors.sort_by_key(|a| a.at_ms);
-        let anchors = drop_contradicted(anchors);
+        let anchors = self.accepted();
         let fmt = |t: Option<i64>| t.map_or("?".to_string(), |t| clock(t.max(0) as u64));
         let mut lines = Vec::new();
         for pair in anchors.windows(2) {
-            let (a, b) = (pair[0], pair[1]);
+            let (a, b) = (&pair[0], &pair[1]);
             if hints::same_recording(&a.track, &b.track) && !is_replay(a, b) {
                 continue;
             }
@@ -1612,6 +1899,48 @@ fn next_probe(a: &Anchor) -> u64 {
     }
 }
 
+/// `samples` played `factor` times slower (linear interpolation), cut to `len_ms`.
+fn stretch(samples: &[i16], factor: f64, len_ms: u64) -> Vec<i16> {
+    let out_len =
+        ((samples.len() as f64 * factor) as usize).min(len_ms as usize * crate::audio::SAMPLE_RATE as usize / 1000);
+    (0..out_len)
+        .map(|i| {
+            let x = i as f64 / factor;
+            let k = x.floor() as usize;
+            let frac = x - k as f64;
+            let a = samples.get(k).copied().unwrap_or(0) as f64;
+            let b = samples.get(k + 1).copied().unwrap_or(a as i16) as f64;
+            (a + (b - a) * frac).round() as i16
+        })
+        .collect()
+}
+
+/// Evaluation switch (temporary): `MF_MIX_EXPERIMENT` holds comma-separated names.
+fn experiment(name: &str) -> bool {
+    static NAMES: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+        std::env::var("MF_MIX_EXPERIMENT")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
+    NAMES.iter().any(|n| n == name)
+}
+
+/// A recognizer answer with a tight skew (the exact recording, unpitched).
+fn is_tight_anchor(a: &Anchor) -> bool {
+    a.evidence.score >= 0.85
+}
+
+/// Step after the `missed`-th unanswered probe in a row: 25 s twice, then
+/// doubling up to the longest step (talk and unreleased tracks are skipped
+/// quickly; gap filling looks at what lies between later).
+fn miss_step(missed: u32) -> u64 {
+    let doublings = missed.saturating_sub(MISS_BACKOFF_AFTER).min(4);
+    (MISS_STEP_MS << doublings).min(MAX_STEP_MS)
+}
+
 /// Speed and pitch changes playback can produce: none, both together (a
 /// turntable or pitch fader), or tempo alone (key lock), within ±8.5 %. A
 /// recognizer answer outside these usually heard a sample inside another record.
@@ -1663,6 +1992,96 @@ fn drop_contradicted(anchors: Vec<&Anchor>) -> Vec<&Anchor> {
         out.push(*a);
     }
     out
+}
+
+/// Consecutive answers that name different versions of one song while it
+/// plays (a radio edit and the extended mix, a remix and the original sharing
+/// most of their audio) are one play: all of them take the version most
+/// answers name (local matches count twice), with that version's timeline.
+/// A song that ends before the next answer begins (an album's "Reprise", a
+/// replay) stays separate.
+fn unify_versions(mut anchors: Vec<Anchor>) -> Vec<Anchor> {
+    let n = anchors.len();
+    let mut i = 0;
+    while i < n {
+        let mut j = i + 1;
+        while j < n && same_play_of_song(&anchors[j - 1], &anchors[j]) {
+            j += 1;
+        }
+        let run = &anchors[i..j];
+        let mixed = run.iter().any(|a| !hints::same_recording(&a.track, &run[0].track));
+        if mixed {
+            let weight = |a: &Anchor| if a.kind == AnchorKind::Local { 2 } else { 1 };
+            let votes = |x: &Anchor| -> (u32, bool) {
+                let v = run.iter().filter(|a| hints::same_recording(&a.track, &x.track)).map(weight).sum();
+                (v, is_tight_anchor(x))
+            };
+            let best = run.iter().max_by_key(|a| votes(a)).cloned();
+            if let Some(best) = best {
+                let models: Vec<Anchor> =
+                    run.iter().filter(|a| hints::same_recording(&a.track, &best.track)).cloned().collect();
+                for a in &mut anchors[i..j] {
+                    if hints::same_recording(&a.track, &best.track) {
+                        continue;
+                    }
+                    let model = models.iter().min_by_key(|m| m.at_ms.abs_diff(a.at_ms)).unwrap_or(&best);
+                    a.track = best.track.clone();
+                    a.start_est = model.start_est;
+                    a.end_est = model.end_est;
+                }
+            }
+        }
+        i = j;
+    }
+    anchors
+}
+
+/// The local match `local` lies inside the play `a` belongs to: between its
+/// start and latest end (a few minutes around `a` when those are unknown).
+fn within_play(a: &Anchor, local: &Anchor) -> bool {
+    let from = a.start_est.map_or(a.at_ms as i64 - 240_000, |s| s - 30_000);
+    let to = a.end_est.map_or(a.at_ms as i64 + 240_000, |e| e + 30_000);
+    (local.at_ms as i64) >= from && (local.seen_until() as i64) <= to
+}
+
+/// A play heard well past the end its catalog duration gives (the catalog
+/// knows a shorter edit, or the DJ looped) has no known end: every answer of
+/// it forgets the estimate.
+fn forget_overrun_ends(mut anchors: Vec<Anchor>) -> Vec<Anchor> {
+    let mut i = 0;
+    while i < anchors.len() {
+        let mut j = i + 1;
+        while j < anchors.len()
+            && hints::same_recording(&anchors[j].track, &anchors[i].track)
+            && !is_replay(&anchors[j - 1], &anchors[j])
+        {
+            j += 1;
+        }
+        let overrun =
+            anchors[i..j].iter().any(|a| a.end_est.is_some_and(|e| a.seen_until() as i64 > e + OVERRUN_SLACK_MS));
+        if overrun {
+            for a in &mut anchors[i..j] {
+                a.end_est = None;
+            }
+        }
+        i = j;
+    }
+    anchors
+}
+
+/// `b` follows `a` (in time order) in the same play of one song: same song,
+/// close together, and `b` heard before `a`'s recording could have ended
+/// (or `a` heard after `b`'s began).
+fn same_play_of_song(a: &Anchor, b: &Anchor) -> bool {
+    if !hints::same_song(&a.track, &b.track) || b.seen_from() > a.seen_until() + ONE_PLAY_GAP_MS {
+        return false;
+    }
+    if hints::same_recording(&a.track, &b.track) {
+        return !is_replay(a, b);
+    }
+    let a_still_playing = a.end_est.is_none_or(|e| (b.seen_from() as i64) < e);
+    let b_already_playing = b.start_est.is_none_or(|s| s < a.seen_until() as i64);
+    a_still_playing || b_already_playing
 }
 
 /// Copy fields `target` lacks from `source` (same recording).

@@ -3,8 +3,10 @@
 name: MusicFetch
 
 options:
+  # macOS 15 runs on every Mac from 2020 on, Intel and Apple silicon; macOS 26 APIs
+  # are gated with #available and have native fallbacks.
   deploymentTarget:
-    macOS: "26.0"
+    macOS: "15.0"
   developmentLanguage: en
   createIntermediateGroups: true
   groupSortPosition: top
@@ -12,8 +14,15 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: 1.0.1
-    CURRENT_PROJECT_VERSION: 2
+    MARKETING_VERSION: 1.1.0
+    CURRENT_PROJECT_VERSION: 3
+    # Universal: the engine's static library and the bundled runtime carry both.
+    ARCHS: "arm64 x86_64"
+  configs:
+    Debug:
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      ONLY_ACTIVE_ARCH: NO
 
 packages:
   MusicFetchCore:
@@ -71,15 +80,22 @@ targets:
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         SWIFT_APPROACHABLE_CONCURRENCY: YES
         SWIFT_EMIT_LOC_STRINGS: YES
-        # The engine is a static arm64 library.
-        ARCHS: arm64
         DEAD_CODE_STRIPPING: YES
+        # tract-linalg's x86_64 kernels request 64 KB section alignment (`.align 16` reads
+        # as 2^16 on Mach-O); align the segments to match instead of having ld reduce it.
+        OTHER_LDFLAGS[arch=x86_64]: $(inherited) -Wl,-segalign,0x10000
         ENABLE_USER_SCRIPT_SANDBOXING: YES
-        # Ad-hoc signed, not sandboxed, no hardened runtime. build-macos-app.sh re-signs
-        # the bundle with a stable designated requirement after adding the runtime.
+        # Ad-hoc signed, not sandboxed, no hardened runtime. Every configuration pins the
+        # designated requirement to the bundle identifier (Signing.rqs), so macOS privacy
+        # permissions (microphone, system audio) survive rebuilds; build-macos-app.sh
+        # re-signs the bundle the same way after adding the runtime.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
+        OTHER_CODE_SIGN_FLAGS: --requirements "$(SRCROOT)/Signing.rqs"
+        # One executable in Debug too: the preview/debug dylibs Xcode splits off would be
+        # signed with the app's requirement, which they cannot satisfy.
+        ENABLE_DEBUG_DYLIB: NO
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: NO
 
@@ -98,7 +114,6 @@ targets:
         SWIFT_VERSION: "6.0"
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         SWIFT_APPROACHABLE_CONCURRENCY: YES
-        ARCHS: arm64
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Music Fetch.app/Contents/MacOS/Music Fetch
         BUNDLE_LOADER: $(TEST_HOST)
         CODE_SIGN_STYLE: Manual

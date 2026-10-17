@@ -57,10 +57,10 @@ import app.musicfetch.appGraph
 import app.musicfetch.core.MfException
 import app.musicfetch.core.Phase
 import app.musicfetch.core.SegmentKind
-import app.musicfetch.core.Service
 import app.musicfetch.core.Track
 import app.musicfetch.notify.Notifications
 import app.musicfetch.platform.FileImports
+import app.musicfetch.platform.ProviderPreference
 import app.musicfetch.ui.common.Formatters
 import app.musicfetch.ui.common.userMessage
 import app.musicfetch.ui.components.Artwork
@@ -73,7 +73,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
@@ -104,8 +103,8 @@ class ShareViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<AnalysisState?> = run.flatMapLatest { it?.state ?: flowOf(null) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    val preferred: StateFlow<Service> = graph.settings.settings.map { it.defaultService }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, Service.SPOTIFY)
+    /** Where results open; null until the settings are read. */
+    val preference: StateFlow<ProviderPreference?> = graph.preference
 
     fun handle(intent: Intent) {
         if (_item.value != null) return
@@ -212,7 +211,7 @@ private fun ShareSheet(viewModel: ShareViewModel, onClose: () -> Unit, onOpenApp
     val state by viewModel.state.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val nothing by viewModel.nothing.collectAsStateWithLifecycle()
-    val preferred by viewModel.preferred.collectAsStateWithLifecycle()
+    val preference by viewModel.preference.collectAsStateWithLifecycle()
     val sheet = rememberBottomSheetState(initialValue = SheetValue.Hidden, enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded))
     ModalBottomSheet(
         onDismissRequest = onClose,
@@ -238,14 +237,14 @@ private fun ShareSheet(viewModel: ShareViewModel, onClose: () -> Unit, onOpenApp
                 current.canceled -> Text(stringResource(R.string.library_canceled), style = MaterialTheme.typography.titleMedium)
                 single != null && sessionId != null && current.isTerminal -> Result(
                     track = single,
-                    preferred = preferred,
+                    preference = preference,
                     onOpenApp = { onOpenApp("musicfetch://session/$sessionId") },
                 )
                 current.isCollection && sessionId != null && current.identified > 0 ->
                     Collection(current, onOpen = { onOpenApp("musicfetch://session/$sessionId") }, onStop = viewModel::stop)
                 single != null && sessionId != null && !current.isCollection -> Result(
                     track = single,
-                    preferred = preferred,
+                    preference = preference,
                     onOpenApp = { onOpenApp("musicfetch://session/$sessionId") },
                 )
                 current.isTerminal -> NoMatch(
@@ -329,7 +328,7 @@ private fun workingText(state: AnalysisState?): String = when (state?.phase) {
 }
 
 @Composable
-private fun Result(track: Track, preferred: Service, onOpenApp: () -> Unit) {
+private fun Result(track: Track, preference: ProviderPreference?, onOpenApp: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Artwork(track.artworkUrl, 64.dp, corner = 12.dp)
@@ -343,7 +342,7 @@ private fun Result(track: Track, preferred: Service, onOpenApp: () -> Unit) {
             }
         }
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            OpenInSplitButton(track, preferred)
+            preference?.let { OpenInSplitButton(track, it) }
             Spacer(Modifier.height(4.dp))
             TextButton(onClick = onOpenApp) { Text(stringResource(R.string.share_open_in_app)) }
         }

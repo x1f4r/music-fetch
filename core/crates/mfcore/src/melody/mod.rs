@@ -2,11 +2,14 @@
 //! the melody index and the matcher.
 
 pub mod builder;
+pub mod contour;
 pub mod detect;
 pub mod index;
 pub mod matcher;
+pub mod ngrams;
 pub mod notes;
 pub mod pitch;
+pub mod steps;
 pub mod swiftf0;
 
 pub use detect::ImpressionDetector;

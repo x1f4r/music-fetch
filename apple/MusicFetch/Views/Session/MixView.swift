@@ -29,7 +29,7 @@ struct MixView: View {
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
             .animation(AppModel.spring(.chrome), value: model.listedSegments.map(\.id))
-            .safeAreaBar(edge: .top, spacing: 0) {
+            .pinnedTopBar {
                 VStack(spacing: 0) {
                     MixHeader(model: model)
                     if showsTimeline {
@@ -39,7 +39,6 @@ struct MixView: View {
                     }
                 }
             }
-            .scrollEdgeEffectStyle(.hard, for: .top)
             .onChange(of: model.selectedSegmentID) { _, id in
                 guard let id else { return }
                 withAnimation(AppModel.spring(.chrome)) { proxy.scrollTo(id) }
@@ -48,7 +47,7 @@ struct MixView: View {
             .onChange(of: model.isRunning) { _, _ in selectFirstWhenFinished() }
             .onKeyPress(.return) {
                 guard let track = model.selectedSegment?.track else { return .ignored }
-                LinkOpener.openPreferred(track, defaultService: app.defaultService)
+                LinkOpener.openPreferred(track, preference: app.providerPreference)
                 return .handled
             }
         }
@@ -193,6 +192,7 @@ struct SegmentRow: View {
             if segment.tier == .possible {
                 Button(Copy.confirm) { app.correct(segmentID: segment.id, in: model.id, with: track) }
             }
+            Button(Copy.notThisMenu) { app.reject(segmentID: segment.id, in: model.id) }
             ForEach(segment.alternates, id: \.identityKey) { alternate in
                 Button(Copy.useAlternate(alternate)) { app.correct(segmentID: segment.id, in: model.id, with: alternate) }
             }

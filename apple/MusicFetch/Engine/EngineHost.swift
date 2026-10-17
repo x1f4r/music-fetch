@@ -4,9 +4,10 @@ import MusicFetchCore
 /// Builds the engine configuration, owns the platform services and creates the engine
 /// off the main thread.
 actor EngineHost {
-    /// Melody-index manifest published with the app's releases.
+    /// Melody-index manifest for the index format this core reads (format 2 since 1.1).
+    /// Each format has its own release tag; 1.0.x keeps reading `melody-index-1`.
     nonisolated static let melodyIndexManifestURL =
-        "https://github.com/x1f4r/music-fetch/releases/download/melody-index-1/manifest.json"
+        "https://github.com/x1f4r/music-fetch/releases/download/melody-index-2/manifest.json"
 
     private var engine: (any MusicEngine)?
 

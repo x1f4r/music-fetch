@@ -1,6 +1,7 @@
 //! Shared engine state and per-session context handed to every pipeline.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -41,16 +42,31 @@ pub struct EngineCtx {
     pub runtime: tokio::runtime::Handle,
     /// Catalog enrichment (Deezer/iTunes) of results; off only in offline tests.
     pub enrichment: bool,
+    /// Low-power mode: on by default on weak hardware (at most 4 logical CPUs or
+    /// less than 4 GiB of memory), switched by the app with `Engine::set_low_power`.
+    /// Read it with [`is_low_power`](Self::is_low_power) when work starts (it may
+    /// change between sessions): while set, CPU-heavy analysis uses one thread,
+    /// network lookups run one after another instead of in parallel, and
+    /// optional work (pitch frames nobody displays) is skipped.
+    pub low_power: AtomicBool,
+    /// Single-threaded pitch tracker for low-power mode, created on first use.
+    pub pitch_low_power: OnceLock<Arc<PitchTracker>>,
+    /// Origin of the recording recognizer. Checked when every query failed, to
+    /// tell "no network" (the session waits) from "no match".
+    pub recognizer_url: String,
 }
 
 impl EngineCtx {
-    /// The shared pitch tracker, created on first use.
+    /// The shared pitch tracker, created on first use (single-threaded in
+    /// low-power mode).
     pub fn pitch_tracker(&self) -> Result<Arc<PitchTracker>> {
-        if let Some(tracker) = self.pitch.get() {
+        let low_power = self.is_low_power();
+        let cell = if low_power { &self.pitch_low_power } else { &self.pitch };
+        if let Some(tracker) = cell.get() {
             return Ok(tracker.clone());
         }
-        let tracker = Arc::new(PitchTracker::new()?);
-        Ok(self.pitch.get_or_init(|| tracker).clone())
+        let tracker = Arc::new(if low_power { PitchTracker::with_threads(1)? } else { PitchTracker::new()? });
+        Ok(cell.get_or_init(|| tracker).clone())
     }
 
     pub fn melody_index(&self) -> Option<Arc<MelodyIndex>> {
@@ -83,6 +99,16 @@ impl EngineCtx {
     /// Best-effort catalog enrichment (artwork, preview, links, ISRC) through the
     /// persistent `enrich` cache. Never fails; returns the input on errors.
     pub async fn enrich(&self, track: Track, cancel: &CancelToken) -> Track {
+        self.enrich_with(track, false, cancel).await
+    }
+
+    /// [`enrich`](Self::enrich) for many tracks at once: Deezer only (iTunes
+    /// just for tracks Deezer misses, while it is idle). See `catalog::enrich_quick`.
+    pub async fn enrich_quick(&self, track: Track, cancel: &CancelToken) -> Track {
+        self.enrich_with(track, true, cancel).await
+    }
+
+    async fn enrich_with(&self, track: Track, quick: bool, cancel: &CancelToken) -> Track {
         if !self.enrichment || track.title.trim().is_empty() {
             return track;
         }
@@ -97,7 +123,11 @@ impl EngineCtx {
         if track.preview_url.as_deref().is_some_and(|url| preview_expired(url, crate::util::now_ms() / 1000)) {
             track.preview_url = None;
         }
-        let enriched = crate::catalog::enrich(&self.http, track, self.country(), cancel).await;
+        let enriched = if quick {
+            crate::catalog::enrich_quick(&self.http, track, self.country(), cancel).await
+        } else {
+            crate::catalog::enrich(&self.http, track, self.country(), cancel).await
+        };
         let found = enriched.ids.contains_key("deezer") || enriched.ids.contains_key("apple");
         if found
             && !cancel.is_canceled()
@@ -114,6 +144,19 @@ impl EngineCtx {
     pub async fn enrich_within(&self, track: Track, limit: Duration, cancel: &CancelToken) -> Track {
         let fallback = track.clone();
         tokio::time::timeout(limit, self.enrich(track, cancel)).await.unwrap_or(fallback)
+    }
+}
+
+impl EngineCtx {
+    /// See [`low_power`](Self::low_power).
+    pub fn is_low_power(&self) -> bool {
+        self.low_power.load(Ordering::Relaxed)
+    }
+
+    /// False when the recognizer cannot be reached at all (no network, DNS or
+    /// TLS failure, timeout); any HTTP answer counts as reachable.
+    pub async fn recognizer_reachable(&self) -> bool {
+        crate::util::http::reachable(&self.http, &self.recognizer_url, crate::util::http::PROBE_TIMEOUT).await
     }
 }
 

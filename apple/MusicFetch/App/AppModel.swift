@@ -44,6 +44,14 @@ final class AppModel {
     /// The single selected (not opened) Library row, for the inspector.
     var inspectedLibrarySession: SessionModel?
     var exportError: String?
+    /// "Where do you listen?" at launch, until the user chooses or skips.
+    var showProviderPanel = false
+    /// The service the panel pre-selects (an installed app).
+    private(set) var suggestedProvider: Service = .appleMusic
+    /// The panel opens on "More…" with the custom provider (demo screenshots only).
+    private(set) var providerPanelStartsWithCustom = false
+    /// Where songs open (Settings › General › "Open songs in").
+    private(set) var providerPreference = ProviderPreference.load()
 
     private(set) var engine: (any MusicEngine)?
     private(set) var engineError: String?
@@ -60,6 +68,8 @@ final class AppModel {
     /// A mix segment waiting for a hum ("Hum it" on an ID row).
     @ObservationIgnored private var segmentHum: (sessionID: String, segmentID: String)?
     @ObservationIgnored private let host = EngineHost()
+    @ObservationIgnored private let lowPower = LowPowerMonitor()
+    @ObservationIgnored private var waiting: WaitingSessions?
     @ObservationIgnored private var melodyPromptDeclined = false
     @ObservationIgnored let demo: DemoState?
     /// Scene actions captured from the SwiftUI environment (`openSettings`, `openWindow`).
@@ -81,6 +91,7 @@ final class AppModel {
 
     /// Creates the engine and loads the first data. Called once at launch.
     func start() async {
+        askForProviderIfNeeded()
         if let starting {
             await starting.value
             return
@@ -104,6 +115,12 @@ final class AppModel {
                 engineError = Copy.engineUnavailable
                 return
             }
+        }
+        if !isDemo, let engine {
+            lowPower.start(engine: engine)
+            let waiting = WaitingSessions(app: self)
+            waiting.start(engine: engine)
+            self.waiting = waiting
         }
         await library.refresh()
         settings.refreshMelody()
@@ -354,7 +371,9 @@ final class AppModel {
             guard let track = model.track else { return }
             title = Copy.notificationTitle(track)
             body = Format.meta(track) ?? model.source?.title ?? ""
-            action = LinkOpener.preferredLink(in: track.links, defaultService: defaultService).map { Copy.openIn($0.service) }
+            action = TrackLinks(track: track, preference: providerPreference).primary.map {
+                Copy.openIn(Copy.name(of: $0.provider, custom: providerPreference.custom))
+            }
         case .candidates:
             guard let best = model.candidates.first else { return }
             title = Copy.notificationTitle(best.track)
@@ -376,7 +395,7 @@ final class AppModel {
         Task {
             guard let model = await session(id) else { return }
             if openInService, let track = model.track {
-                LinkOpener.openPreferred(track, defaultService: defaultService)
+                LinkOpener.openPreferred(track, preference: providerPreference)
             } else if model.presentation == .timeline || model.presentation == .collection {
                 openInLibrary(id)
             } else {
@@ -419,6 +438,18 @@ final class AppModel {
             sessions[sessionID]?.replace(segment)
         } catch {
             Log.app.error("Correction failed: \(String(describing: error), privacy: .public)")
+        }
+        library.scheduleRefresh()
+    }
+
+    /// "Not this" on a mix segment: it becomes unidentified and its track an alternate.
+    func reject(segmentID: String, in sessionID: String) {
+        guard let engine else { return }
+        do {
+            let segment = try engine.rejectSegment(sessionID: sessionID, segmentID: segmentID)
+            withAnimation(motion(.chrome)) { sessions[sessionID]?.replace(segment) }
+        } catch {
+            Log.app.error("Rejecting a segment failed: \(String(describing: error), privacy: .public)")
         }
         library.scheduleRefresh()
     }
@@ -592,12 +623,53 @@ final class AppModel {
         }
     }
 
-    // MARK: - Preferences
+    // MARK: - Providers
 
-    var defaultService: Service {
-        let raw = UserDefaults.standard.string(forKey: PreferenceKey.defaultService) ?? ServiceKey.spotify.rawValue
-        return (ServiceKey(rawValue: raw) ?? .spotify).service
+    /// Shows the first-launch provider panel while no decision is stored. Demo states
+    /// and tests never ask (the `providers` demo state shows it explicitly).
+    private func askForProviderIfNeeded() {
+        guard !isDemo, !providerPreference.isDecided, !showProviderPanel else { return }
+        presentProviderPanel()
     }
+
+    func presentProviderPanel(startingWithCustom: Bool = false) {
+        suggestedProvider = InstalledProviders.suggestion()
+        providerPanelStartsWithCustom = startingWithCustom
+        showProviderPanel = true
+    }
+
+    /// The panel's Continue.
+    func chooseProvider(_ provider: Provider, custom: CustomProvider? = nil) {
+        showProviderPanel = false
+        setPreferredProvider(provider, custom: custom)
+    }
+
+    /// The panel's Skip: Spotify, and the panel never shows again.
+    func skipProviderChoice() {
+        chooseProvider(Providers.fallback)
+    }
+
+    /// Stores where songs open (the panel, Settings › General › "Open songs in"). Demo
+    /// states keep it in memory only.
+    func setPreferredProvider(_ provider: Provider, custom: CustomProvider? = nil) {
+        let custom = custom ?? providerPreference.custom
+        if isDemo {
+            providerPreference = ProviderPreference(key: provider.storageKey, customName: custom.name, customTemplate: custom.template)
+        } else {
+            ProviderPreference.store(provider, custom: custom)
+            providerPreference = ProviderPreference.load()
+        }
+    }
+
+    /// Settings: the custom provider's name and web address as they are typed.
+    func setCustomProvider(_ custom: CustomProvider) {
+        providerPreference.custom = custom
+        guard !isDemo else { return }
+        UserDefaults.standard.set(custom.name, forKey: PreferenceKey.customProviderName)
+        UserDefaults.standard.set(custom.template, forKey: PreferenceKey.customProviderTemplate)
+    }
+
+    // MARK: - Preferences
 
     func setInspector(_ shown: Bool) {
         showInspector = shown

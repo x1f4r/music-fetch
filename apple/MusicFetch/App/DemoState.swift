@@ -7,8 +7,9 @@ import MusicFetchCore
 ///
 /// States: idle, listening, hum, matching, result, candidates, mix, collection, library,
 /// session, noMatch, captureSilent, downloading, prePrompt, micDenied, melodyPrompt,
-/// lyrics, failed, settings-general, settings-services, settings-melody,
-/// settings-melody-downloading, settings-storage, settings-about.
+/// lyrics, failed, providers, providers-custom, settings-general, settings-general-custom,
+/// settings-services, settings-melody, settings-melody-downloading, settings-storage,
+/// settings-about.
 nonisolated struct DemoState: Sendable {
     let name: String
 
@@ -40,6 +41,11 @@ nonisolated struct DemoState: Sendable {
 
     @MainActor
     func apply(to app: AppModel) async {
+        // Screenshots show the window in front, active when the system allows it.
+        if name != "tests" {
+            NSApp.activate()
+            NSApp.windows.filter(\.isVisible).forEach { $0.orderFrontRegardless() }
+        }
         switch name {
         case "listening", "matching", "noMatch":
             app.listenNow(.microphone)
@@ -67,6 +73,12 @@ nonisolated struct DemoState: Sendable {
             app.listen.showForDemo(.failed(.mediaUnavailable, nil))
         case "melodyPrompt":
             app.showMelodyPrompt = true
+        case "providers":
+            app.presentProviderPanel()
+        case "providers-custom":
+            app.presentProviderPanel(startingWithCustom: true)
+        case "settings-general-custom":
+            app.setPreferredProvider(.custom, custom: CustomProvider(name: "Radio Archive", template: "https://radio.example.org/find?q="))
         case "lyrics":
             app.presentLyricSearch()
             app.lyricSearch?.text = "a few words I half remember"

@@ -99,11 +99,11 @@ struct ActionRow: View {
     var body: some View {
         Group {
             if let actions = listen.actions {
-                GlassEffectContainer(spacing: 12) {
+                GlassContainer(spacing: 12) {
                     HStack(spacing: 12) {
                         ForEach(actions, id: \.self) { action in
                             Button(Copy.title(for: action)) { listen.perform(action) }
-                                .buttonStyle(.glass)
+                                .glassButtonStyle()
                                 .controlSize(compact ? .small : .large)
                         }
                     }
@@ -124,7 +124,7 @@ struct SourceToggles: View {
     var compact = false
 
     var body: some View {
-        GlassEffectContainer(spacing: 12) {
+        GlassContainer(spacing: 12) {
             HStack(spacing: compact ? 8 : 12) {
                 ForEach(ListenSource.allCases) { source in
                     let selected = listen.source == source
@@ -140,7 +140,7 @@ struct SourceToggles: View {
                         }
                     }
                     .toggleStyle(.button)
-                    .buttonStyle(.glass)
+                    .glassButtonStyle()
                     .tint(selected ? .accentColor : nil)
                     .controlSize(compact ? .small : .large)
                     .accessibilityAddTraits(selected ? .isSelected : [])

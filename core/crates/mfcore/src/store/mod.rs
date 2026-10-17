@@ -511,6 +511,70 @@ impl Store {
         })
     }
 
+    /// Sessions captured while offline (status `Waiting`), oldest first.
+    pub fn waiting_sessions(&self) -> Result<Vec<(String, SessionKind)>> {
+        self.read("waiting_sessions", |tx| {
+            let mut stmt =
+                tx.prepare_cached("SELECT id, kind FROM sessions WHERE status = ?1 ORDER BY created_at, rowid")?;
+            let rows = stmt.query_map([SessionStatus::Waiting.as_text()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            let mut sessions = Vec::new();
+            for row in rows {
+                let (id, kind) = row?;
+                match SessionKind::from_text(&kind) {
+                    Some(kind) => sessions.push((id, kind)),
+                    None => tracing::warn!(session_id = %id, kind, "store: skipping session with unknown kind"),
+                }
+            }
+            Ok(sessions)
+        })
+    }
+
+    /// Drops the session's single answer when it is `rejected` (the user said
+    /// "Not this"): the stored track goes, a title, subtitle or artwork taken from
+    /// it is cleared and a `Matched` session becomes `NoMatch`. Returns whether
+    /// anything changed.
+    pub fn clear_answer(&self, id: &str, rejected: &Track) -> Result<bool> {
+        let now = now_ms();
+        self.write("clear_answer", |tx| {
+            type Stored = (String, Option<String>, Option<String>, Option<String>, String, Option<String>);
+            let (title, subtitle, artwork_url, track_json, status, source_json): Stored = tx
+                .prepare_cached(
+                    "SELECT title, subtitle, artwork_url, track_json, status, source_json FROM sessions WHERE id = ?1",
+                )?
+                .query_row([id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+                })
+                .optional()?
+                .ok_or(StoreError::NotFound)?;
+            let Some(track) = track_json.and_then(|json| decode_or_skip("track", id, &json, codec::decode_track))
+            else {
+                return Ok(false);
+            };
+            if !crate::identity::same_track(&track, rejected) {
+                return Ok(false);
+            }
+            let title = if title == track.title { String::new() } else { title };
+            let subtitle = subtitle.filter(|s| *s != track.artist);
+            let artwork_url = artwork_url.filter(|a| track.artwork_url.as_ref() != Some(a));
+            let status = if status == SessionStatus::Matched.as_text() {
+                SessionStatus::NoMatch.as_text().to_string()
+            } else {
+                status
+            };
+            let source = source_json.and_then(|json| decode_or_skip("source", id, &json, codec::decode_source));
+            let search_text = search::session_text(&title, subtitle.as_deref(), None, source.as_ref());
+            tx.execute(
+                "UPDATE sessions SET title = ?2, subtitle = ?3, artwork_url = ?4, track_json = NULL, status = ?5,
+                    search_text = ?6, updated_at = ?7
+                 WHERE id = ?1",
+                params![id, title, subtitle, artwork_url, status, search_text, now],
+            )?;
+            Ok(true)
+        })
+    }
+
     /// The cached value, or `None` when missing or expired.
     pub fn cache_get(&self, namespace: &str, key: &str) -> Result<Option<String>> {
         self.cache_get_at(namespace, key, now_ms())

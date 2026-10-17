@@ -6,6 +6,7 @@ import app.musicfetch.core.ErrorCode
 import app.musicfetch.core.ListenMode
 import app.musicfetch.core.NoMatchReason
 import app.musicfetch.core.Notice
+import app.musicfetch.core.Outcome
 import app.musicfetch.core.PitchFrame
 import app.musicfetch.core.Track
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,7 +43,20 @@ sealed interface ListenResult {
     data class NoMatch(override val sessionId: String?, val reason: NoMatchReason) : ListenResult
 
     data class Failed(override val sessionId: String?, val code: ErrorCode, val message: String) : ListenResult
+
+    /** Captured while offline: stored with status `Waiting` and identified once a connection is back. */
+    data class Waiting(override val sessionId: String) : ListenResult
 }
+
+/** How a live session with [outcome] ended; [candidates] are the last ones it sent. */
+fun listenResult(outcome: Outcome, sessionId: String?, candidates: List<Candidate>): ListenResult = when (outcome) {
+    is Outcome.Matched -> sessionId?.let { ListenResult.Matched(it, outcome.track) }
+    is Outcome.Candidates -> sessionId?.let { ListenResult.Candidates(it, candidates) }
+    is Outcome.NoMatch -> ListenResult.NoMatch(sessionId, outcome.reason)
+    is Outcome.Waiting -> sessionId?.let { ListenResult.Waiting(it) }
+    // Live sessions never complete like an analysis.
+    is Outcome.Completed -> null
+} ?: ListenResult.Failed(sessionId, ErrorCode.INTERNAL, "Something went wrong.")
 
 /** Everything the Listen stage, the capture notification and the tiles show. */
 data class ListenState(
@@ -150,6 +164,9 @@ class PitchRing {
             version++
         }
     }
+
+    /** Changes whenever frames are added or cleared; lets readers skip unchanged windows. */
+    fun version(): Long = synchronized(lock) { version }
 
     /** Seconds of voiced input so far in this session. */
     fun voicedSeconds(): Float = synchronized(lock) { voicedMs / 1000f }

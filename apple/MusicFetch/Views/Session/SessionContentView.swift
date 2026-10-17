@@ -36,25 +36,33 @@ struct EmptySessionView: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            HStack(spacing: 12) {
-                Button(Copy.tryAgain) { retry() }
-                    .buttonStyle(.glass)
-                    .controlSize(.large)
-                if model.kind == .listen || model.kind == .systemAudio || model.kind == .hum {
-                    Button(Copy.humIt) { app.listenNow(.hum) }
-                        .buttonStyle(.glass)
-                        .controlSize(.large)
-                }
-                Button(Copy.typeLyric) { app.presentLyricSearch() }
-                    .buttonStyle(.glass)
-                    .controlSize(.large)
+            // A session saved while offline is identified by itself once online.
+            if model.status != .waiting {
+                actions
             }
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var actions: some View {
+        HStack(spacing: 12) {
+            Button(Copy.tryAgain) { retry() }
+                .glassButtonStyle()
+                .controlSize(.large)
+            if model.kind == .listen || model.kind == .systemAudio || model.kind == .hum {
+                Button(Copy.humIt) { app.listenNow(.hum) }
+                    .glassButtonStyle()
+                    .controlSize(.large)
+            }
+            Button(Copy.typeLyric) { app.presentLyricSearch() }
+                .glassButtonStyle()
+                .controlSize(.large)
+        }
+    }
+
     private var reason: String {
+        if model.status == .waiting { return Copy.waitingForConnection }
         if let failure = model.failure { return Copy.failure(failure.code, message: failure.message) }
         if model.status == .canceled { return Copy.stoppedPlain }
         return Copy.noMatch(model.noMatchReason ?? .notFound)

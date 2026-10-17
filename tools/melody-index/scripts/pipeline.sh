@@ -40,6 +40,12 @@ run resolve --retry-not-found >> "$LOGS/resolve.out" 2>&1
 run extract >> "$LOGS/extract.out" 2>&1
 run years > "$LOGS/years.out" 2>&1
 
+# Full tracks of the most popular songs (YouTube; hours at a sustainable pace). Opt in with
+# MFIDX_FULLTRACK_TOP=3000; resumable, so later runs continue where this one stopped.
+if [ -n "${MFIDX_FULLTRACK_TOP:-}" ]; then
+  run fulltrack --top "$MFIDX_FULLTRACK_TOP" --interval "${MFIDX_FULLTRACK_INTERVAL:-25}" >> "$LOGS/fulltrack.out" 2>&1
+fi
+
 run validate > "$LOGS/validate.out" 2>&1
 run famous > "$MFIDX_ROOT/out/famous.json" 2> "$LOGS/famous.out"
 run export > "$LOGS/export.out" 2>&1 || exit 1

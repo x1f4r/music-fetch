@@ -44,6 +44,17 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("renote", help="recompute preview phrases from stored f0")
 
+    p = sub.add_parser("fulltrack", help="stage 3b: full-track f0 of the most popular songs (YouTube, GPU)")
+    p.add_argument("--top", type=int, default=3000, help="songs by popularity")
+    p.add_argument("--interval", type=float, default=12.5, help="seconds between downloads")
+    p.add_argument("--limit", type=int)
+
+    p = sub.add_parser(
+        "eval-references", help="f0 of evaluation videos (CHAD originals) for coverage analysis; never exported"
+    )
+    p.add_argument("--groups", type=Path, help="JSON {id: {youtube_id}} (default: eval/chad/groups.json)")
+    p.add_argument("--interval", type=float, default=12.5)
+
     p = sub.add_parser("midi", help="stage 4: Lakh MIDI melodies")
     p.add_argument("--step", choices=["all", "catalog", "link", "extract"], default="all")
     p.add_argument("--workers", type=int)
@@ -109,6 +120,16 @@ def main(argv: list[str] | None = None) -> int:
         from .extract import renote
 
         out = renote(P)
+    elif args.cmd == "fulltrack":
+        from . import fulltrack
+
+        out = fulltrack.run(P, top=args.top, interval=args.interval, limit=args.limit)
+    elif args.cmd == "eval-references":
+        from . import fulltrack
+
+        out = fulltrack.run_eval_references(
+            P, args.groups or P.eval / "chad" / "groups.json", interval=args.interval
+        )
     elif args.cmd == "midi":
         from . import midi
 

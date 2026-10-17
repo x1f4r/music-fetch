@@ -222,6 +222,15 @@ fn media_titles() {
     assert_eq!(p("Blinding Lights", Some("TheWeekndVEVO")), Some(("TheWeeknd".into(), "Blinding Lights".into())));
     assert_eq!(p("Blinding Lights", Some("The Weeknd - Topic")), Some(("The Weeknd".into(), "Blinding Lights".into())));
     assert_eq!(p("Blinding Lights", Some("Random Uploads")), None);
+    // A bare hyphen is only a guess, offered separately.
+    assert_eq!(p("Avicii-Levels(NICKYP Remix/Hardstyles)", Some("Someone")), None);
+    assert_eq!(
+        parse_loose_title("Avicii-Levels(NICKYP Remix/Hardstyles)"),
+        Some(("Avicii".into(), "Levels (NICKYP Remix/Hardstyles)".into()))
+    );
+    assert_eq!(parse_loose_title("Daft Punk - One More Time"), None);
+    assert_eq!(parse_loose_title("Blinding Lights"), None);
+    assert_eq!(bare_title("Levels (NICKYP Remix/Hardstyles)"), "Levels");
 }
 
 #[test]
@@ -261,6 +270,29 @@ fn version_keys() {
     assert!(!versions_compatible("live at wembley", "live in madrid 2011"));
     assert!(!versions_compatible("", "tiesto remix"));
     assert!(versions_compatible("tiesto remix", "tiesto remix"));
+    // Styles name nobody: two producers' trap remixes differ.
+    assert!(!versions_compatible(
+        &version_key("Levels (Thrizzo Trap Remix)"),
+        &version_key("Levels (Eff3cts Trap Remix)")
+    ));
+    assert!(versions_compatible(&version_key("Levels (Tiesto Big Room Remix)"), &version_key("Levels (Tiësto Remix)")));
+}
+
+#[test]
+fn artist_channels() {
+    assert!(is_artist_channel("Coldplay", "Coldplay"));
+    assert!(is_artist_channel("Dua Lipa - Topic", "Dua Lipa"));
+    assert!(is_artist_channel("AdeleVEVO", "Adele"));
+    assert!(is_artist_channel("Daft Punk Official", "Daft Punk"));
+    assert!(is_artist_channel("DuaLipa", "Dua Lipa & Angèle"));
+    assert!(!is_artist_channel("Tomorrowland 2017 Hits", "Avicii"));
+    assert!(!is_artist_channel("", "Avicii"));
+    let info = MediaInfo {
+        title: Some("Coldplay - Yellow (Live in Madrid 2011)".into()),
+        uploader: Some("Coldplay".into()),
+        ..MediaInfo::default()
+    };
+    assert!(collect(&info, &[], None).official);
 }
 
 #[test]
@@ -280,4 +312,9 @@ fn recordings_and_songs() {
     assert_eq!(split_artists("A vs. B x C"), vec!["A", "B", "C"]);
     assert!(artists_overlap("Armin van Buuren vs. Vini Vici", "Armin van Buuren"));
     assert!(!artists_overlap("Tiësto", "Armin van Buuren"));
+    // A version credited to its remixers in one place and to someone else in another.
+    assert!(same_song(&t("Aria", "Argy, Omnya"), &t("Aria [Argy & Omnya RMX]", "Habib Alberto")));
+    assert!(!same_song(&t("Aria", "Argy, Omnya"), &t("Aria (Extended Mix)", "Habib Alberto")));
+    assert_eq!(remixers("Levels (Skrillex Remix)"), vec!["Skrillex"]);
+    assert!(remixers("Levels (Remix)").is_empty());
 }

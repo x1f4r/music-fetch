@@ -39,3 +39,18 @@ pub fn core_version() -> String {
 pub fn is_link(text: String) -> bool {
     links::looks_like_url(&text)
 }
+
+/// Links for a track on every supported provider: the exact track page when known,
+/// otherwise a search for "artist title" (version qualifiers kept).
+#[uniffi::export]
+pub fn provider_links(track: Track) -> Vec<ServiceLink> {
+    catalog::search_links(&track)
+}
+
+/// Fill a custom provider template: `{artist}`, `{title}`, `{query}` (artist and title)
+/// and `{isrc}` are replaced with URL-encoded values. None when the template is not an
+/// http(s) URL after substitution.
+#[uniffi::export]
+pub fn custom_provider_link(track: Track, template: String) -> Option<String> {
+    catalog::custom_link(&track, &template)
+}

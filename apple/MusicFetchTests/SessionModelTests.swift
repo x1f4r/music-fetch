@@ -48,6 +48,15 @@ struct SessionModelTests {
         #expect(model.candidates[1].tier == .strong)
     }
 
+    @Test func aCaptureSavedOfflineWaits() {
+        let live = SessionModel(id: "w", kind: .listen, isRunning: true)
+        live.apply(.started(sessionId: "w", kind: .listen))
+        live.apply(.finished(outcome: .waiting))
+        #expect(live.status == .waiting)
+        #expect(!live.isRunning)
+        #expect(live.presentation == .empty)
+    }
+
     @Test func presentationFollowsTheSession() {
         let live = SessionModel(id: "l", kind: .listen, isRunning: true)
         #expect(live.presentation == .running)

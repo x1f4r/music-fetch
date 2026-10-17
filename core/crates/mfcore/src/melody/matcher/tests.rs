@@ -38,6 +38,7 @@ fn song(title: &str, notes: Vec<[f64; 3]>) -> SongInput {
         year: None,
         popularity: Some(0.5),
         phrases: vec![PhraseInput { source: Some("preview".into()), start_ms: 0, notes }],
+        contours: Vec::new(),
     }
 }
 
@@ -78,7 +79,7 @@ fn finds_a_transposed_slower_rendition() {
     let best = &matches[0];
     assert!(best.score > 0.5, "score {}", best.score);
     assert!((best.key_shift - 5.0).abs() < 0.6, "key {}", best.key_shift);
-    assert!((best.tempo - 0.8).abs() < 0.15, "tempo {}", best.tempo);
+    assert!((best.tempo - 0.8).abs() < 0.1, "tempo {}", best.tempo);
     let a = &best.alignment;
     assert_eq!(a.frame_ms, 50);
     assert_eq!(a.query.len(), a.reference.len());
@@ -92,6 +93,32 @@ fn finds_a_transposed_slower_rendition() {
     // Scores are calibrated probabilities, best first.
     assert!(matches.windows(2).all(|w| w[0].score >= w[1].score));
     assert!(matches.iter().all(|m| (0.0..=1.0).contains(&m.score)));
+}
+
+#[test]
+fn finds_an_excerpt_across_phrase_boundaries() {
+    let mut rng = Rng(4);
+    let target = random_melody(&mut rng, 80);
+    // The reference arrives as three phrases with rests between them.
+    let mut songs: Vec<SongInput> = (0..200).map(|i| song(&format!("Song {i}"), random_melody(&mut rng, 60))).collect();
+    let mut t = song("Target", Vec::new());
+    t.phrases = target
+        .chunks(20)
+        .enumerate()
+        .map(|(i, part)| PhraseInput {
+            source: Some("preview".into()),
+            start_ms: (part[0][1] + 400.0 * i as f64) as u32,
+            notes: part.iter().map(|n| [n[0], n[1] - part[0][1], n[2]]).collect(),
+        })
+        .collect();
+    songs.push(t);
+    let (bytes, _) = build_bytes(&songs, "test").expect("build");
+    let idx = MelodyIndex::from_bytes(bytes).expect("open");
+    // Notes 12..34 span the first phrase boundary.
+    let excerpt: Vec<[f64; 3]> = target[12..34].iter().map(|n| [n[0], n[1] - target[12][1], n[2]]).collect();
+    let query = query_from_frames(&sing(&excerpt, -2.0, 0.9, &mut rng)).expect("query");
+    let matches = search(&idx, &query, 3);
+    assert_eq!(matches.first().map(|m| m.song.title.as_str()), Some("Target"));
 }
 
 #[test]
@@ -118,42 +145,25 @@ fn empty_index_and_thin_queries() {
     let query = query_from_frames(&sing(&target, 0.0, 1.0, &mut rng)).expect("query");
     assert!(search(&empty, &query, 5).is_empty());
     assert!(score_song(&empty, &query, 0).is_none());
-    // A long drone has no pitch changes to search with.
+    // A long drone has no melody to search with; it must not panic.
     let drone: Vec<PitchFrame> = (0..400).map(|f| PitchFrame { t_ms: f * 16, midi: 60.0, confidence: 0.9 }).collect();
     let q = query_from_frames(&drone).expect("query");
     let idx = index(&mut rng, &target);
     let _ = search(&idx, &q, 5);
+    let _ = score_song(&idx, &q, 0);
 }
 
 #[test]
-fn query_keys_cover_sung_errors() {
-    // A compressed leap (+8.4 sung for +9) still produces the exact key.
-    let steps: Vec<Step> = [60.0, 68.4, 66.1, 64.0, 66.0]
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| Step { pitch: p, onset_ms: i as u32 * 300, end_ms: i as u32 * 300 + 250 })
-        .collect();
-    let keys = query_keys(&steps);
-    assert!(keys.iter().any(|&(j, k, _)| j == 0 && k == index::interval_key(&[9, -2, -2, 2])));
-    assert!(keys.iter().any(|&(j, k, _)| j == 0 && k == index::interval_key(&[8, -2, -2, 2])));
-}
-
-#[test]
-fn note_alignment_survives_an_inserted_note() {
-    let shape_of = |p: &[f32]| {
-        let steps: Vec<Step> = p
-            .iter()
-            .enumerate()
-            .map(|(i, &x)| Step { pitch: x, onset_ms: i as u32 * 300, end_ms: i as u32 * 300 + 250 })
-            .collect();
-        shape(&steps)
-    };
-    let reference = shape_of(&[55.0, 57.0, 60.0, 62.0, 64.0, 62.0, 60.0, 59.0, 60.0, 67.0, 65.0, 64.0]);
-    // Reference notes 1..9 a fourth up, with a passing 66 inserted.
-    let query = shape_of(&[62.0, 65.0, 66.0, 67.0, 69.0, 67.0, 65.0, 64.0, 65.0]);
-    let mut table = AlignTable::default();
-    let found = align_notes(&query, &reference, &mut table);
-    let (cost, pairs) = found.first().expect("alignment");
-    assert!(*cost < 0.3, "cost {cost}");
-    assert_eq!(pairs.first(), Some(&(0, 1)));
+fn votes_pool_into_the_right_placement() {
+    let tempos = tempo_grid();
+    // Consistent votes for track 3 at tempo index 5, anchor ≈ 40, plus noise.
+    let mut votes: Vec<Vote> = (0..20).map(|i| (3, 5, 40.0 + (i % 3) as f32, 1.0)).collect();
+    votes.extend((0..10).map(|i| (3, 2, 100.0 + 13.0 * i as f32, 1.0)));
+    votes.extend((0..5).map(|i| (7, 5, 10.0 * i as f32, 1.0)));
+    let placements = pool_votes(votes, 10);
+    let best = placements.iter().max_by(|a, b| a.votes.total_cmp(&b.votes)).expect("placement");
+    assert_eq!(best.track, 3);
+    assert!((best.tempo - tempos[5]).abs() < 1e-6);
+    assert!((best.anchor - 41.0).abs() < 1.0, "{}", best.anchor);
+    assert!(placements.iter().filter(|p| p.track == 3).count() <= PLACEMENTS_PER_TRACK);
 }

@@ -48,6 +48,19 @@ pub enum MelodyCommand {
         #[arg(long)]
         expect: Option<String>,
     },
+    /// Export the matcher's view of query recordings (TSV: wav path first) as JSONL:
+    /// pitch frames, the 20 fps contour and the notes.
+    Queries {
+        #[arg(long)]
+        queries: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 8)]
+        threads: usize,
+        /// Resolve relative wav paths against this directory.
+        #[arg(long)]
+        base: Option<PathBuf>,
+    },
     /// Build or inspect a melody index.
     /// Dispatched through the shared `mf index` command.
     #[command(skip)]
@@ -88,15 +101,24 @@ pub enum EvalCommand {
         /// Only the first N queries.
         #[arg(long)]
         limit: Option<usize>,
-        /// Phrases scored in detail after the coarse vote.
+        /// Index cells probed per query window.
+        #[arg(long)]
+        probe: Option<usize>,
+        /// Tracks whose alignment votes are pooled after the coarse vote.
         #[arg(long)]
         shortlist: Option<usize>,
-        /// Anchors given a quick placement and a coarse DTW.
+        /// Placements given the quick linear-scaling check.
         #[arg(long)]
         pool: Option<usize>,
         /// Candidates re-ranked with full linear scaling and DTW.
         #[arg(long)]
         rerank: Option<usize>,
+        /// Logit weight of the popularity prior (0 = off, the app uses 0.3).
+        #[arg(long, default_value_t = 0.0)]
+        popularity: f32,
+        /// Skip following the expected song through the stages (halves the run time).
+        #[arg(long)]
+        no_trace: bool,
     },
     /// Run the impression detector over labelled clips (TSV: wav, impression|music,
     /// start s, duration s) as a live session would, and report its verdicts.
@@ -116,15 +138,18 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
         MelodyCommand::Pitch { wav, bench: Some(n), threads, .. } => bench_pitch(&wav, n, threads),
         MelodyCommand::Pitch { wav, raw, stream, out, bench: None, .. } => pitch(&wav, raw, stream, out.as_deref()),
         MelodyCommand::Hum { wav, index, k, expect } => hum(&wav, &index, k, expect.as_deref()),
+        MelodyCommand::Queries { queries, out, threads, base } => {
+            export_queries(&queries, &out, threads, base.as_deref())
+        }
         MelodyCommand::Index(IndexCommand::Build { jsonl, out, version }) => {
             let started = Instant::now();
             let stats = builder::build_index(&jsonl, &out, &version)?;
             println!(
-                "{} songs, {} phrases, {} notes, {} keys, {} bytes ({:.0} B/song), {} skipped, {:.1} s",
+                "{} songs, {} tracks, {} frames, {} windows, {} bytes ({:.0} B/song), {} skipped, {:.1} s",
                 stats.songs,
-                stats.phrases,
-                stats.notes,
-                stats.keys,
+                stats.tracks,
+                stats.frames,
+                stats.windows,
                 stats.bytes,
                 stats.bytes as f64 / stats.songs.max(1) as f64,
                 stats.skipped,
@@ -133,8 +158,23 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             Ok(())
         }
         MelodyCommand::Index(IndexCommand::Info { mfi }) => index_info(&mfi),
-        MelodyCommand::Eval(EvalCommand::Qbsh { index, queries, out, threads, limit, shortlist, pool, rerank }) => {
-            let mut options = MatchOptions { popularity_weight: 0.0, ..MatchOptions::default() };
+        MelodyCommand::Eval(EvalCommand::Qbsh {
+            index,
+            queries,
+            out,
+            threads,
+            limit,
+            probe,
+            shortlist,
+            pool,
+            rerank,
+            popularity,
+            no_trace,
+        }) => {
+            let mut options = MatchOptions { popularity_weight: popularity, ..MatchOptions::default() };
+            if let Some(p) = probe {
+                options.probe = p;
+            }
             if let Some(s) = shortlist {
                 options.shortlist = s;
             }
@@ -144,7 +184,7 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             if let Some(r) = rerank {
                 options.rerank = r;
             }
-            eval_qbsh(&index, &queries, out.as_deref(), threads, limit, &options)
+            eval_qbsh(&index, &queries, out.as_deref(), threads, limit, &options, !no_trace)
         }
         MelodyCommand::Eval(EvalCommand::Detect { list, out, threads }) => eval_detect(&list, out.as_deref(), threads),
     }
@@ -333,11 +373,26 @@ fn index_info(path: &Path) -> anyhow::Result<()> {
     let started = Instant::now();
     let index = MelodyIndex::open(path)?;
     let opened = ms(started);
+    println!("format    {}", mfcore::melody::index::FORMAT);
     println!("version   {}", index.version());
     println!("songs     {}", index.song_count());
-    println!("phrases   {}", index.phrase_count());
-    println!("notes     {}", index.note_count());
-    println!("keys      {}", index.key_count());
+    println!("tracks    {}", index.track_count());
+    println!("frames    {} ({:.1} h)", index.frame_count(), index.frame_count() as f64 / 20.0 / 3600.0);
+    println!("windows   {}", index.window_count());
+    let mut cells: Vec<u32> = (0..mfcore::melody::index::CELLS).map(|c| index.cell_len(c)).filter(|&n| n > 0).collect();
+    cells.sort_unstable();
+    let pct = |p: f64| cells.get(((cells.len() as f64 - 1.0) * p) as usize).copied().unwrap_or(0);
+    let total: u64 = cells.iter().map(|&n| n as u64).sum();
+    let top1: u64 = cells.iter().rev().take(cells.len() / 100).map(|&n| n as u64).sum();
+    println!(
+        "cells     {} used; postings p50 {} p90 {} p99 {} max {}; top 1 % of cells hold {:.0} %",
+        cells.len(),
+        pct(0.5),
+        pct(0.9),
+        pct(0.99),
+        pct(1.0),
+        100.0 * top1 as f64 / total.max(1) as f64
+    );
     println!(
         "bytes     {} ({:.0} B/song)",
         index.size_bytes(),
@@ -389,15 +444,15 @@ fn hum(wav: &Path, index: &Path, k: usize, expect: Option<&str>) -> anyhow::Resu
         else {
             bail!("{title} is not in the index");
         };
-        for p in index.song_phrases(song.id) {
-            if let Some(phrase) = index.phrase(p) {
-                let notes: Vec<String> = phrase
-                    .notes
-                    .iter()
-                    .take(40)
-                    .map(|n| format!("{:.1}@{}+{}", n.pitch, n.onset_ms, n.dur_ms))
-                    .collect();
-                println!("reference phrase {p}: {}", notes.join(" "));
+        for t in index.song_tracks(song.id) {
+            if let Some(track) = index.track(t) {
+                let voiced = track.contour.iter().filter(|v| v.is_finite()).count();
+                println!(
+                    "reference track {t} ({:?}): {:.1} s, {:.0} % voiced",
+                    track.source,
+                    track.contour.len() as f64 / 20.0,
+                    100.0 * voiced as f64 / track.contour.len().max(1) as f64
+                );
             }
         }
         let options = MatchOptions { popularity_weight: 0.0, ..MatchOptions::default() };
@@ -415,6 +470,50 @@ fn hum(wav: &Path, index: &Path, k: usize, expect: Option<&str>) -> anyhow::Resu
             Some(m) => println!("score_song: {:.3} key {:+.1} tempo x{:.2}", m.score, m.key_shift, m.tempo),
             None => println!("score_song: none"),
         }
+    }
+    Ok(())
+}
+
+fn export_queries(list: &Path, out: &Path, threads: usize, base: Option<&Path>) -> anyhow::Result<()> {
+    let text = std::fs::read_to_string(list)?;
+    let wavs: Vec<String> =
+        text.lines().filter_map(|l| l.split('\t').next()).filter(|w| !w.trim().is_empty()).map(String::from).collect();
+    let tracker = PitchTracker::with_threads(1)?;
+    let next = AtomicUsize::new(0);
+    let rows: Vec<Mutex<String>> = wavs.iter().map(|_| Mutex::new(String::new())).collect();
+    std::thread::scope(|s| {
+        for _ in 0..threads.max(1) {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(wav) = wavs.get(i) else { break };
+                    let path = base.map(|b| b.join(wav)).unwrap_or_else(|| PathBuf::from(wav));
+                    let json = match read_wav_16k(&path).and_then(|s| Ok(tracker.analyze_detailed(&s)?)) {
+                        Ok(a) => {
+                            let q = query_from_details(&a.frames);
+                            let frames: Vec<[f32; 3]> =
+                                a.frames.iter().map(|f| [f.midi(), f.confidence, f.loudness_db]).collect();
+                            let nan = |v: f32| if v.is_finite() { Some(v) } else { None };
+                            serde_json::json!({
+                                "wav": wav, "whistle": a.whistle,
+                                "frames": frames.iter().map(|f| [nan(f[0]), nan(f[1]), nan(f[2])]).collect::<Vec<_>>(),
+                                "contour": q.as_ref().map(|q| q.contour.iter().map(|&m| nan(m)).collect::<Vec<_>>()),
+                                "notes": q.as_ref().map(|q| q.notes.iter().map(|n| (n.pitch, n.onset_ms, n.dur_ms)).collect::<Vec<_>>()),
+                                "voiced_ms": q.as_ref().map(|q| q.voiced_ms),
+                            })
+                        }
+                        Err(e) => serde_json::json!({"wav": wav, "error": e.to_string()}),
+                    };
+                    if let Ok(mut slot) = rows[i].lock() {
+                        *slot = json.to_string();
+                    }
+                }
+            });
+        }
+    });
+    let mut w = std::io::BufWriter::new(std::fs::File::create(out)?);
+    for r in rows {
+        writeln!(w, "{}", r.into_inner().unwrap_or_default())?;
     }
     Ok(())
 }
@@ -437,6 +536,7 @@ fn eval_qbsh(
     threads: usize,
     limit: Option<usize>,
     options: &MatchOptions,
+    trace: bool,
 ) -> anyhow::Result<()> {
     let index = MelodyIndex::open(index)?;
     let list = std::fs::read_to_string(queries)?;
@@ -463,7 +563,7 @@ fn eval_qbsh(
                     let Some((wav, title, artist)) = items.get(i) else {
                         break;
                     };
-                    let row = eval_one(&index, &tracker, wav, title, artist, options);
+                    let row = eval_one(&index, &tracker, wav, title, artist, options, trace);
                     if let Ok(mut slot) = rows[i].lock() {
                         *slot = Some(row);
                     }
@@ -536,6 +636,7 @@ fn eval_one(
     title: &str,
     artist: &str,
     options: &MatchOptions,
+    trace: bool,
 ) -> EvalRow {
     let mut row = EvalRow {
         wav: wav.to_string(),
@@ -567,24 +668,38 @@ fn eval_one(
     let candidates = matcher::candidates(index, &query, options);
     row.search_ms = ms(t);
     let mut seen = HashSet::new();
-    let songs: Vec<_> = candidates.iter().filter(|c| seen.insert(c.song)).collect();
+    let mut songs: Vec<_> = candidates.iter().filter(|c| seen.insert(c.song)).collect();
+    // The popularity prior, as the app applies it.
+    let prior = |c: &matcher::Candidate| {
+        let p = c.score.clamp(1e-6, 1.0 - 1e-6);
+        let z = (p / (1.0 - p)).ln() + options.popularity_weight * ((index.popularity(c.song) + 0.05) / 0.55).ln();
+        1.0 / (1.0 + (-z).exp())
+    };
+    songs.sort_by(|a, b| prior(b).total_cmp(&prior(a)));
     row.rank = expected.and_then(|e| songs.iter().position(|c| c.song == e).map(|p| p + 1));
-    row.top = songs.first().and_then(|c| index.song(c.song).map(|s| (s.title, c.score)));
-    row.trace = expected.map(|e| matcher::trace(index, &query, options, e)).unwrap_or_default();
+    row.top = songs.first().and_then(|c| index.song(c.song).map(|s| (s.title, prior(c))));
+    if trace {
+        row.trace = expected.map(|e| matcher::trace(index, &query, options, e)).unwrap_or_default();
+    }
     let cands: Vec<serde_json::Value> = songs
         .iter()
         .map(|c| {
             serde_json::json!({
-                "song": c.song, "label": Some(c.song) == expected, "score": c.score,
-                "votes": c.features.votes, "align": c.features.align, "linear": c.features.linear, "dtw": c.features.dtw,
-                "edit": c.features.edit, "key": c.key_shift, "tempo": c.tempo,
+                "song": c.song, "track": c.track, "label": Some(c.song) == expected, "score": c.score,
+                "votes": c.features.votes, "linear": c.features.linear, "dtw": c.features.dtw,
+                "coverage": c.features.coverage, "tempo_dev": c.features.tempo, "align": c.features.align,
+                "edit": c.features.edit, "note_votes": c.features.note_votes, "key": c.key_shift, "tempo": c.tempo,
+                "popularity": index.popularity(c.song),
             })
         })
         .collect();
+    // How the expected song scores when asked about directly (an upper bound for retrieval).
+    let oracle =
+        if trace { expected.and_then(|e| matcher::score_song(index, &query, e)).map(|m| m.score) } else { None };
     row.json = serde_json::json!({
         "wav": wav, "expected": expected, "rank": row.rank, "voiced_ms": query.voiced_ms,
         "notes": query.notes.len(), "pitch_ms": row.pitch_ms, "search_ms": row.search_ms, "candidates": cands,
-        "trace": [row.trace.retrieval, row.trace.linear, row.trace.reranked],
+        "trace": [row.trace.retrieval, row.trace.linear, row.trace.reranked], "oracle_score": oracle,
     })
     .to_string();
     row

@@ -10,7 +10,7 @@ struct MenuBarContent: View {
     var body: some View {
         let listen = app.listen!
         VStack(spacing: 0) {
-            GlassEffectContainer(spacing: 24) {
+            GlassContainer(spacing: 24) {
                 ListenButton(listen: listen, diameter: 72)
                     .frame(height: 96)
             }

@@ -85,6 +85,12 @@ def run(
             }
         )
 
+    # Full-track melodies (stage 3b), when that stage has run.
+    audio: dict[int, list[dict[str, Any]]] = {}
+    if conn.execute("SELECT name FROM sqlite_master WHERE name='track_melody'").fetchone():
+        for r in conn.execute("SELECT song_id, phrases FROM track_melody WHERE status='ok' AND phrases IS NOT NULL"):
+            audio[r["song_id"]] = json.loads(r["phrases"])
+
     rows = conn.execute(
         "SELECT s.id, s.title, s.artist, s.year, s.score, s.origin, d.status AS dz_status, d.deezer_id, d.isrc,"
         " d.release_date, d.has_preview, p.status AS p_status, p.phrases AS pp FROM songs s"
@@ -104,7 +110,12 @@ def run(
             midi.get(r["id"], []), validation.get(r["id"], {}), min_agreement
         )
         verdicts[verdict] += 1
-        phrases = [_clean_phrase(p) for p in preview] + [_clean_phrase(p) for p in midi_phrases]
+        full = audio.get(r["id"], [])
+        phrases = (
+            [_clean_phrase(p) for p in preview]
+            + [_clean_phrase(p) for p in full]
+            + [_clean_phrase(p) for p in midi_phrases]
+        )
         if not phrases:
             continue
         rec = {
@@ -119,6 +130,7 @@ def run(
         meta = {
             "decade": decade,
             "preview": bool(preview),
+            "audio": bool(full),
             "midi": bool(midi_phrases),
             "origin": r["origin"],
         }
@@ -152,6 +164,7 @@ def build_stats(
             phrases_by_source[p["source"]] += 1
             notes_by_source[p["source"]] += len(p["notes"])
     by_kind = {"preview_only": 0, "midi_only": 0, "both": 0}
+    full_tracks = sum(1 for _, _, meta in records if meta.get("audio"))
     decade: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"universe": 0, "exported": 0, "preview": 0, "midi": 0}
     )
@@ -191,6 +204,7 @@ def build_stats(
         "bytes": out.stat().st_size,
         "songs": len(records),
         "songs_by_source": by_kind,
+        "songs_with_full_track": full_tracks,
         "songs_by_origin": {
             o: sum(1 for _, _, m in records if m["origin"] == o) for o in ("chart", "midi")
         },

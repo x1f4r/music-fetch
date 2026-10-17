@@ -26,7 +26,8 @@ use crate::shazam::signature::MIN_SAMPLES;
 use crate::util::cancel::CancelToken;
 use crate::util::ratelimit::RateLimiter;
 
-const ENDPOINT: &str = "https://amp.shazam.com";
+/// Origin of the recognizer (also used to tell "offline" from "no match").
+pub const ENDPOINT: &str = "https://amp.shazam.com";
 const QUERY: &str = "sync=true&webv3=true&sampling=true&connected=&shazamapiversion=v3&sharehub=true&video=v3";
 const CACHE_CAPACITY: usize = 256;
 /// Upper bound on breaker rounds within one `recognize` call.

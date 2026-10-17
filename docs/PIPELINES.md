@@ -150,9 +150,16 @@ Rate limits from recognizers were the main failure of 0.4. Rules:
    (`links::extract_url`, first URL in shared text) → `Link`; else `InvalidInput`.
 2. `Started`, then for links `Phase(Resolving)` and `links::resolve` (when the page
    itself cannot be fetched, the media backend still gets the link):
-   - `Resolution::Tracks` → `Source`; enrich tracks (4 at a time); one `Segment` per
-     track (`kind Track`, `start = end = 0`, `item_index` = position, confidence 0.99,
-     `Confirmed`, evidence `Metadata`) → `Finished(Completed { n, n })`.
+   - `Resolution::Tracks` → `Source`; at once one `Segment` per track from the page's
+     metadata (`kind Track`, `start = end = 0`, `item_index` = position, confidence 0.99,
+     `Confirmed`, evidence `Metadata`, search links for every service), then each
+     segment again under the same id as its enrichment arrives (8 lookups in flight,
+     the catalogs' rate limiters pace them) → `Finished(Completed { n, n })`. A
+     single track gets every catalog; collections get Deezer only (ISRC or search;
+     iTunes just for tracks Deezer misses, and only while nothing else waits for
+     it; tracks read from Deezer itself are not looked up again). A 50-track
+     Spotify playlist lists every track within a fraction of a second and
+     finishes in about 8 s.
    - `Resolution::Media` → `Source` (with hints); continue.
 3. Media: unless `direct`, `MediaBackend::probe` → `media::parse_probe` → refresh
    `Source` (title, uploader, thumbnail, duration, item count). For media ≥ 8 min the
@@ -161,7 +168,9 @@ Rate limits from recognizers were the main failure of 0.4. Rules:
    description is probed once more with comments.
 4. Playlists: see "Playlists" below.
 5. Single media: `Phase(Downloading, fraction)` → `download_audio` (or a direct HTTP
-   download with the SSRF guard and a 2 GiB cap) into `cache_dir/sessions/<id>/` →
+   download with the SSRF guard and a 2 GiB cap) into `cache_dir/sessions/<id>/`
+   (a failed backend download is tried twice more, 1.5 s and 4 s later, each time
+   into a fresh folder; cancellation stops a running download at once) →
    `Phase(Decoding)` → `audio::decode::decode_file` → delete the download.
 6. Strategy (see below): `Impression` mode → impression analysis on the first 30 s;
    otherwise **survey → single or mix**.
@@ -188,9 +197,14 @@ Collected before any recognizer call:
 - Version qualifiers (remix, edit, extended, live, acoustic, VIP, bootleg, rework,
   sped up, slowed) are kept: they select the exact recording. `hints::version_key`
   reduces a title to what distinguishes a recording ("Tiësto Remix" → `tiesto remix`;
-  "Extended Mix", "Radio Edit", "Original Mix", remasters → the original);
-  `same_recording` = no ISRC/provider-id conflict + same song + compatible version, and
-  is what stitching and deduplication use.
+  "Extended Mix", "Radio Edit", "Original Mix", remasters → the original); two
+  versions are compatible when they share a kind (remix, live, …) and, when both name
+  people or places, one of those (style words such as trap, dubstep or house name
+  nobody: "Thrizzo Trap Remix" is not "Eff3cts Trap Remix"). `same_recording` = no
+  ISRC/provider-id conflict + same song + compatible version, and is what stitching and
+  deduplication use. `same_song` also accepts a version credited to its remixers in
+  one place and to someone else in another ("Argy, Omnya – Aria" and "Habib Alberto –
+  Aria [Argy & Omnya RMX]").
 
 ### Local fingerprint matching (`fingerprint/`)
 
@@ -233,9 +247,21 @@ Never decide by duration alone. A single song must never be split.
      most probes name (the prior's version first); tier from agreement (2+ probes or a
      confirmed page prior → Confirmed).
    - Probes disagree → two more probes (35 %, 65 %); then **mix** only if two songs each
-     have ≥ 2 answers, or their start estimates line up as consecutive songs. A clear
-     majority (≥ 3) with stray single answers (samples, interpolations), or a song the
-     page names, stays a single; the strays become alternates. Ambiguity never splits.
+     have ≥ 2 answers that do not alternate in time, or their start estimates line up
+     as consecutive songs. Answers that alternate (A B A A B) are one recording known
+     under two names (a DJ set or compilation containing the song, a record sampling
+     it): a single of the page's song, else of the recording whose answers place its
+     start near the media's. A clear majority (≥ 3) with stray single answers
+     (samples, interpolations), or a song the page names, stays a single; the strays
+     become alternates. Ambiguity never splits.
+   - The page against the verdict: one recognizer answer naming another song (the
+     other probes silent or disagreeing) does not outweigh the page's song, and
+     neither does a cover by another artist when the artist's own channel uploaded
+     the media (channel named like the artist, Topic, VEVO); the page's song is
+     `Likely` from the artist's channel, else `Possible`, with the answer as first
+     alternate. The page names a version (live, remix) the recognizer only knows in
+     its original, or whose versions the answers disagree on (none named twice): the
+     page's version, the recognizer's as first alternate.
    - No probe matches → two more probes (35 %, 65 %), then paid providers; still nothing
      → the page's song as `Possible`, else one `Unidentified` segment. Never several
      `Unidentified` pieces for a short file.
@@ -262,9 +288,11 @@ Never decide by duration alone. A single song must never be split.
    "Episode … (Intro)") get one probe and otherwise become `Unidentified` or `Speech`.
    When three of the last six settled entries were overruled, the tracklist no longer
    describes the media (re-edited upload, shifted times): entries from the first of
-   them on are dropped, their probes kept, and the rest is analysed blind. Untimed
-   hints (YouTube "Music" cards) become the candidate set for local matching across the
-   whole mix before any probing.
+   them on are dropped, their probes kept, and the rest is analysed blind. A list
+   written "Title - Artist" throughout is turned around first when the catalog knows
+   at least two of its first four entries only that way. Untimed hints (YouTube
+   "Music" cards) become the candidate set for local matching across the whole mix
+   before any probing.
 3. **Adaptive probing** for everything still unexplained, in time order (probe starts
    snap to a 2 s grid so a re-analysis hits the answer cache):
    - A match of X at window start T with Shazam offset o and skew s gives the start
@@ -272,7 +300,10 @@ Never decide by duration alone. A single song must never be split.
      Eₓ = Sₓ + D/(1 + s). Only the middle of a 12 s window counts as surely X.
    - Next probe at Eₓ + 10 s (just past X's latest end, where the next track must play)
      when that is at most 4 min ahead, else T + 150 s; at least T + 30 s; without D, or
-     when X was heard past Eₓ (wrong duration), T + 90 s. No match → T + 25 s.
+     when X was heard past Eₓ (wrong duration), T + 90 s. No match → T + 25 s, twice;
+     further unanswered probes in a row double the step up to 150 s (interviews,
+     unreleased tracks and long breakdowns do not eat the budget; gap probing looks
+     between them later).
    - Each new recording's preview is fetched and looked for between Sₓ and Eₓ; a hit
      confirms the answer for free and shows more of where X plays. Before each probe the
      previews of everything identified so far are looked for around T (continuing or
@@ -305,6 +336,23 @@ Never decide by duration alone. A single song must never be split.
      probe 10–40 s away inside the stretch it must occupy: the same recording confirms
      it, another version of the same song replaces it, anything else is kept as a
      neighbour (and checked for overlap again), nothing keeps it as it is.
+   - What counts as backing: a second answer of the same recording whose start
+     estimate agrees, from a window at least 12 s away (overlapping windows hear the
+     same audio; a window within 6 s of an earlier probe is never asked again), or the
+     preview found inside the stretch the play must occupy. Two answers at a speed and
+     pitch no player produces do not back each other up (a sampled vocal repeats).
+   - Refining probes only decide which of the two neighbours dominates; a third
+     recording heard in the middle of a blend is ignored (the blend confusing the
+     recognizer far more often than a hidden track).
+   - Answers of one play that name different versions of a song (a radio edit and the
+     extended mix, a remix and its original sharing most of their audio) become one
+     recording — the version most answers name, local matches counting twice — so a
+     play is never split by version; a song heard only after the other ended (an
+     album's reprise, a replay) stays separate.
+   - A play heard over 15 s past the end its catalog duration gives (the catalog
+     knows a shorter edit) has no known end; a recording without a known end is
+     taken to last 90 s past its last hearing when nothing else was heard after it,
+     instead of being stretched over minutes nobody heard it in.
 4. Unresolved music regions ≥ 45 s: one more probe at a different position, then paid
    providers (≤ 30 calls) if configured.
 5. **Stitch** (`pipeline/stitch.rs`, ported from 0.4): bridge Track(X) → short gap →

@@ -1,7 +1,7 @@
 //! Deezer public API (keyless): tracks, albums, playlists, ISRC lookup, search.
 //!
-//! Requests are spaced to stay under Deezer's limit (about 50 per 5 s per IP;
-//! we allow 40) and responses are cached for 10 minutes, shorter than the
+//! Requests are spaced to stay under Deezer's limit (50 per 5 s per IP; we
+//! allow about 44) and responses are cached for 10 minutes, shorter than the
 //! lifetime of the signed preview URLs they contain.
 
 use std::sync::LazyLock;
@@ -23,7 +23,7 @@ const SITE: &str = "Deezer";
 pub(crate) const MAX_PLAYLIST_TRACKS: usize = 500;
 
 static LIMITER: LazyLock<RateLimiter> =
-    LazyLock::new(|| RateLimiter::new(Duration::from_millis(125), Duration::from_millis(25)));
+    LazyLock::new(|| RateLimiter::new(Duration::from_millis(105), Duration::from_millis(15)));
 static CACHE: LazyLock<TtlCache<Value>> = LazyLock::new(|| TtlCache::new(256, Duration::from_secs(600)));
 /// Set once `artist:"…" track:"…"` searches return nothing where a plain search
 /// finds the track (Deezer's advanced search has been broken at times).

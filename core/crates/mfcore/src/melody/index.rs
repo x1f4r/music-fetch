@@ -1,57 +1,72 @@
-//! The melody index file: song metadata plus reference phrases as notes, with
-//! precomputed n-gram postings.
+//! The melody index file: song metadata, one continuous pitch contour per song
+//! and source ("track"), and an inverted multi-index over the tracks' window
+//! vectors (see [`crate::melody::contour`]).
 //!
-//! Layout (little-endian; `.mfi`, format 1):
+//! Layout (little-endian; `.mfi`, format 2):
 //!
 //! ```text
-//! header   160 B   magic "MFMELODY", format, counts, version string, 7 section (offset, len) pairs
+//! header   256 B   magic "MFMELODY", format, counts, version string, 10 section (offset, len) pairs
 //! STRS             UTF-8 string table (titles, artists, version)
 //! SONG     40 B    title (off u32, len u16), artist (len u16, off u32), ISRC [12], Deezer id u64,
-//!                  year u16, popularity u16 (×65535), first phrase u32
-//! PHRS     16 B    song u32, start_ms u32, notes byte offset u32, note count u16, source u8, base pitch u8
-//! NOTE             per note: pitch u8 (quarter tones above the phrase base), onset delta and
-//!                  duration as LEB128 varints in 10 ms units
-//! KEYS     12 B    n-gram key u32, postings byte offset u32, posting count u32 (sorted by key)
-//! POST             per posting: phrase delta varint, collapsed-note position varint
+//!                  year u16, popularity u16 (×65535), first track u32
+//! TRCK     16 B    song u32, contour byte offset u32, frames u32, base pitch u8, source u8, encoding u8, 0
+//! CONT             per track, 20 fps frames: code 0 = unvoiced, else base + (code − 1) / 4 semitones;
+//!                  encoding 0 = one byte per frame, 1 = runs of (code u8, length varint)
+//! CODE             two codebooks (first and second half of the window vector), 256 × HALF f32 each,
+//!                  then SUBS residual codebooks, 256 × SUB f32 each
+//! CELL     8 B     per cell (first-half code × 256 + second-half code): postings byte offset u32, count u32
+//! POST             per cell, sorted by track: track delta varint, window start / REF_HOP varint,
+//!                  SUBS residual codes (u8): the window vector minus the cell's centroids, quantized
 //! TITL     12 B    (hash u64, song u32) sorted by hash: title+artist keys, then title-only keys
+//! KEYS     12 B    note n-gram key u32, postings byte offset u32, posting count u32 (sorted by key)
+//! NPST             per key, sorted by track: track delta varint, step position varint
 //! ```
 //!
-//! N-grams are taken over the phrase's notes with repeated pitches collapsed
-//! ("pitch changes"): interval 4-grams (exact semitones, clipped to ±12) and
-//! coarse contour 6-grams (±1–2, ±3–4, ±5+). Opening maps the file and checks
-//! the header; nothing is decoded until used.
+//! The note n-grams (see [`crate::melody::ngrams`]) are taken over each track's
+//! pitch changes as [`crate::melody::steps::frame_steps`] finds them in the
+//! decoded contour.
+//!
+//! Opening maps the file and checks the header; nothing is decoded until used.
 
 use std::fs::File;
 use std::path::Path;
 
 use crate::error::{MfError, Result};
-use crate::melody::notes::Note;
+use crate::melody::contour::{HALF, SUB, SUBS};
 
 pub(crate) const MAGIC: &[u8; 8] = b"MFMELODY";
-pub(crate) const FORMAT: u32 = 1;
-pub(crate) const HEADER_LEN: usize = 160;
-pub(crate) const SECTIONS: usize = 7;
+/// File format this core reads and writes. Each format is published under its own
+/// release tag (`melody-index-<format>`); manifests name it (`Manifest::format`).
+pub const FORMAT: u32 = 2;
+pub(crate) const HEADER_LEN: usize = 256;
+pub(crate) const SECTIONS: usize = 10;
 pub(crate) const SONG_LEN: usize = 40;
-pub(crate) const PHRASE_LEN: usize = 16;
-pub(crate) const KEY_LEN: usize = 12;
+pub(crate) const TRACK_LEN: usize = 16;
 pub(crate) const TITLE_LEN: usize = 12;
-/// Time unit of stored notes.
-pub(crate) const NOTE_TICK_MS: u32 = 10;
+pub(crate) const KEY_LEN: usize = 12;
+/// Centroids per half codebook.
+pub const CODES: usize = 256;
+/// Cells of the inverted multi-index.
+pub const CELLS: usize = CODES * CODES;
+pub(crate) const CELL_LEN: usize = 8;
+pub(crate) const CODEBOOK_BYTES: usize = (2 * CODES * HALF + SUBS * CODES * SUB) * 4;
+/// Section table starts here; each entry is (offset u64, length u64).
+pub(crate) const SECTION_TABLE: usize = 48;
 
 pub(crate) const S_STRS: usize = 0;
 pub(crate) const S_SONG: usize = 1;
-pub(crate) const S_PHRS: usize = 2;
-pub(crate) const S_NOTE: usize = 3;
-pub(crate) const S_KEYS: usize = 4;
-pub(crate) const S_POST: usize = 5;
-pub(crate) const S_TITL: usize = 6;
+pub(crate) const S_TRCK: usize = 2;
+pub(crate) const S_CONT: usize = 3;
+pub(crate) const S_CODE: usize = 4;
+pub(crate) const S_CELL: usize = 5;
+pub(crate) const S_POST: usize = 6;
+pub(crate) const S_TITL: usize = 7;
+pub(crate) const S_KEYS: usize = 8;
+pub(crate) const S_NPST: usize = 9;
 
-/// Interval n-gram length (intervals; one more note).
-pub(crate) const INTERVAL_N: usize = 4;
-/// Contour n-gram length (intervals).
-pub(crate) const CONTOUR_N: usize = 6;
-const KIND_INTERVAL: u32 = 0;
-const KIND_CONTOUR: u32 = 1;
+/// Contour encodings.
+pub(crate) const ENC_RAW: u8 = 0;
+pub(crate) const ENC_RUNS: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SongMeta {
@@ -65,40 +80,43 @@ pub struct SongMeta {
     pub popularity: f32,
 }
 
-/// Where a phrase's notes come from.
+/// Where a track's melody comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PhraseSource {
+pub enum TrackSource {
+    /// A 30 s audio preview.
     Preview,
+    /// The full recording.
     Audio,
+    /// A MIDI transcription.
     Midi,
 }
 
-impl PhraseSource {
+impl TrackSource {
     pub(crate) fn code(self) -> u8 {
         match self {
-            PhraseSource::Preview => 0,
-            PhraseSource::Audio => 1,
-            PhraseSource::Midi => 2,
+            TrackSource::Preview => 0,
+            TrackSource::Audio => 1,
+            TrackSource::Midi => 2,
         }
     }
 
     fn from_code(c: u8) -> Self {
         match c {
-            1 => PhraseSource::Audio,
-            2 => PhraseSource::Midi,
-            _ => PhraseSource::Preview,
+            1 => TrackSource::Audio,
+            2 => TrackSource::Midi,
+            _ => TrackSource::Preview,
         }
     }
 }
 
-/// A reference phrase with its decoded notes.
+/// A decoded track: one source's continuous melody of a song.
 #[derive(Debug, Clone)]
-pub struct Phrase {
+pub struct Track {
     pub id: u32,
     pub song: u32,
-    pub start_ms: u32,
-    pub source: PhraseSource,
-    pub notes: Vec<Note>,
+    pub source: TrackSource,
+    /// 20 fps contour in MIDI semitones; NaN = unvoiced.
+    pub contour: Vec<f32>,
 }
 
 enum Bytes {
@@ -117,15 +135,27 @@ impl std::ops::Deref for Bytes {
 }
 
 /// An open melody index. All reads are bounds-checked; a damaged file yields
-/// missing songs or phrases, never a panic.
+/// missing songs or tracks, never a panic.
 pub struct MelodyIndex {
     bytes: Bytes,
     sections: [(usize, usize); SECTIONS],
     song_count: u32,
-    phrase_count: u32,
-    note_count: u32,
+    track_count: u32,
+    frame_count: u32,
+    window_count: u32,
     key_count: u32,
+    step_count: u32,
     version: String,
+    codebooks: Box<[[[f32; HALF]; CODES]; 2]>,
+    residuals: Box<[[[f32; SUB]; CODES]; SUBS]>,
+}
+
+/// The format number in an index file's header, when it is a melody index at all.
+pub fn file_format(path: &Path) -> Option<u32> {
+    use std::io::Read;
+    let mut head = [0u8; 12];
+    File::open(path).ok()?.read_exact(&mut head).ok()?;
+    (&head[..8] == MAGIC).then(|| u32::from_le_bytes([head[8], head[9], head[10], head[11]]))
 }
 
 impl MelodyIndex {
@@ -148,24 +178,34 @@ impl MelodyIndex {
 
     fn parse(bytes: Bytes) -> Result<Self> {
         let bad = || MfError::Internal { message: "the melody index is damaged".into() };
-        if bytes.len() < HEADER_LEN || &bytes[..8] != MAGIC {
+        if bytes.len() < 16 || &bytes[..8] != MAGIC {
             return Err(bad());
         }
         let format = le_u32(&bytes, 8).ok_or_else(bad)?;
         if format != FORMAT {
-            return Err(MfError::Internal { message: "the melody index needs a newer app version".into() });
+            let message = if format > FORMAT {
+                "the melody index needs a newer app version"
+            } else {
+                "the melody index is from an older app version"
+            };
+            return Err(MfError::Internal { message: message.into() });
+        }
+        if bytes.len() < HEADER_LEN {
+            return Err(bad());
         }
         let header_len = le_u32(&bytes, 12).ok_or_else(bad)? as usize;
         let song_count = le_u32(&bytes, 16).ok_or_else(bad)?;
-        let phrase_count = le_u32(&bytes, 20).ok_or_else(bad)?;
-        let note_count = le_u32(&bytes, 24).ok_or_else(bad)?;
-        let key_count = le_u32(&bytes, 28).ok_or_else(bad)?;
+        let track_count = le_u32(&bytes, 20).ok_or_else(bad)?;
+        let frame_count = le_u32(&bytes, 24).ok_or_else(bad)?;
+        let window_count = le_u32(&bytes, 28).ok_or_else(bad)?;
         let version_off = le_u32(&bytes, 32).ok_or_else(bad)? as usize;
         let version_len = le_u32(&bytes, 36).ok_or_else(bad)? as usize;
+        let key_count = le_u32(&bytes, 40).ok_or_else(bad)?;
+        let step_count = le_u32(&bytes, 44).ok_or_else(bad)?;
         let mut sections = [(0usize, 0usize); SECTIONS];
         for (i, s) in sections.iter_mut().enumerate() {
-            let off = le_u64(&bytes, 48 + 16 * i).ok_or_else(bad)?;
-            let len = le_u64(&bytes, 56 + 16 * i).ok_or_else(bad)?;
+            let off = le_u64(&bytes, SECTION_TABLE + 16 * i).ok_or_else(bad)?;
+            let len = le_u64(&bytes, SECTION_TABLE + 8 + 16 * i).ok_or_else(bad)?;
             let end = off.checked_add(len).ok_or_else(bad)?;
             if (off as usize) < header_len.min(HEADER_LEN) || end > bytes.len() as u64 {
                 return Err(bad());
@@ -174,9 +214,11 @@ impl MelodyIndex {
         }
         let expect = [
             (S_SONG, song_count as usize * SONG_LEN),
-            (S_PHRS, phrase_count as usize * PHRASE_LEN),
-            (S_KEYS, key_count as usize * KEY_LEN),
+            (S_TRCK, track_count as usize * TRACK_LEN),
+            (S_CODE, CODEBOOK_BYTES),
+            (S_CELL, CELLS * CELL_LEN),
             (S_TITL, 2 * song_count as usize * TITLE_LEN),
+            (S_KEYS, key_count as usize * KEY_LEN),
         ];
         if expect.iter().any(|&(s, len)| sections[s].1 != len) {
             return Err(bad());
@@ -187,7 +229,29 @@ impl MelodyIndex {
             .and_then(|b| std::str::from_utf8(b).ok())
             .ok_or_else(bad)?
             .to_string();
-        Ok(Self { bytes, sections, song_count, phrase_count, note_count, key_count, version })
+        let code = &bytes[sections[S_CODE].0..sections[S_CODE].0 + CODEBOOK_BYTES];
+        let mut codebooks = Box::new([[[0f32; HALF]; CODES]; 2]);
+        let mut residuals = Box::new([[[0f32; SUB]; CODES]; SUBS]);
+        let values = codebooks.iter_mut().flatten().flatten().chain(residuals.iter_mut().flatten().flatten());
+        for (i, x) in values.enumerate() {
+            *x = f32::from_le_bytes(code[4 * i..4 * i + 4].try_into().map_err(|_| bad())?);
+            if !x.is_finite() {
+                return Err(bad());
+            }
+        }
+        Ok(Self {
+            bytes,
+            sections,
+            song_count,
+            track_count,
+            frame_count,
+            window_count,
+            key_count,
+            step_count,
+            version,
+            codebooks,
+            residuals,
+        })
     }
 
     pub fn version(&self) -> &str {
@@ -198,16 +262,49 @@ impl MelodyIndex {
         self.song_count
     }
 
-    pub fn phrase_count(&self) -> u32 {
-        self.phrase_count
+    pub fn track_count(&self) -> u32 {
+        self.track_count
     }
 
-    pub fn note_count(&self) -> u32 {
-        self.note_count
+    /// Contour frames over all tracks.
+    pub fn frame_count(&self) -> u32 {
+        self.frame_count
     }
 
+    /// Indexed windows (postings).
+    pub fn window_count(&self) -> u32 {
+        self.window_count
+    }
+
+    /// Distinct note n-gram keys.
     pub fn key_count(&self) -> u32 {
         self.key_count
+    }
+
+    /// Pitch changes over all tracks (n-gram positions).
+    pub fn step_count(&self) -> u32 {
+        self.step_count
+    }
+
+    /// Postings of a note n-gram key: (track, step position), and the count.
+    pub(crate) fn note_postings(&self, key: u32) -> Option<(NotePostings<'_>, u32)> {
+        let keys = self.section(S_KEYS);
+        let (mut lo, mut hi) = (0usize, self.key_count as usize);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let k = le_u32(keys, mid * KEY_LEN)?;
+            match k.cmp(&key) {
+                std::cmp::Ordering::Less => lo = mid + 1,
+                std::cmp::Ordering::Greater => hi = mid,
+                std::cmp::Ordering::Equal => {
+                    let off = le_u32(keys, mid * KEY_LEN + 4)? as usize;
+                    let count = le_u32(keys, mid * KEY_LEN + 8)?;
+                    let blob = self.section(S_NPST);
+                    return Some((NotePostings { blob, pos: off, left: count, track: 0 }, count));
+                }
+            }
+        }
+        None
     }
 
     /// File size in bytes.
@@ -245,79 +342,87 @@ impl MelodyIndex {
         Some(SongMeta { id, title, artist, isrc, deezer_id, year, popularity })
     }
 
-    /// Phrase ids of a song.
-    pub fn song_phrases(&self, id: u32) -> std::ops::Range<u32> {
+    /// Song popularity (0..=1) without decoding strings.
+    pub fn popularity(&self, id: u32) -> f32 {
+        self.song_record(id).and_then(|r| le_u16(r, 34)).map(|p| p as f32 / 65535.0).unwrap_or(0.0)
+    }
+
+    /// Track ids of a song.
+    pub fn song_tracks(&self, id: u32) -> std::ops::Range<u32> {
         let first = |s: u32| self.song_record(s).and_then(|r| le_u32(r, 36));
         let Some(a) = first(id) else { return 0..0 };
-        let b = if id + 1 < self.song_count { first(id + 1).unwrap_or(a) } else { self.phrase_count };
-        a.min(self.phrase_count)..b.clamp(a, self.phrase_count)
+        let b = if id + 1 < self.song_count { first(id + 1).unwrap_or(a) } else { self.track_count };
+        a.min(self.track_count)..b.clamp(a, self.track_count)
     }
 
-    /// Song of a phrase.
-    pub fn phrase_song(&self, phrase: u32) -> Option<u32> {
-        le_u32(self.phrase_record(phrase)?, 0)
-    }
-
-    fn phrase_record(&self, id: u32) -> Option<&[u8]> {
-        if id >= self.phrase_count {
+    fn track_record(&self, id: u32) -> Option<&[u8]> {
+        if id >= self.track_count {
             return None;
         }
-        let at = id as usize * PHRASE_LEN;
-        self.section(S_PHRS).get(at..at + PHRASE_LEN)
+        let at = id as usize * TRACK_LEN;
+        self.section(S_TRCK).get(at..at + TRACK_LEN)
     }
 
-    /// Decode a phrase.
-    pub fn phrase(&self, id: u32) -> Option<Phrase> {
-        let r = self.phrase_record(id)?;
+    /// Song of a track.
+    pub fn track_song(&self, track: u32) -> Option<u32> {
+        le_u32(self.track_record(track)?, 0)
+    }
+
+    /// Decode a track's contour.
+    pub fn track(&self, id: u32) -> Option<Track> {
+        let r = self.track_record(id)?;
         let song = le_u32(r, 0)?;
-        let start_ms = le_u32(r, 4)?;
-        let off = le_u32(r, 8)? as usize;
-        let count = le_u16(r, 12)? as usize;
-        let source = PhraseSource::from_code(r[14]);
-        let base = r[15] as f32;
-        let blob = self.section(S_NOTE);
-        let mut pos = off;
-        let mut onset = 0u32;
-        let mut notes = Vec::with_capacity(count);
-        for _ in 0..count {
-            let q = *blob.get(pos)?;
-            pos += 1;
-            let delta = read_varint(blob, &mut pos)?;
-            let dur = read_varint(blob, &mut pos)?;
-            onset = onset.saturating_add(delta.saturating_mul(NOTE_TICK_MS));
-            notes.push(Note {
-                pitch: base + q as f32 / 4.0,
-                onset_ms: onset,
-                dur_ms: dur.saturating_mul(NOTE_TICK_MS),
-            });
+        let off = le_u32(r, 4)? as usize;
+        let frames = le_u32(r, 8)? as usize;
+        let base = r[12] as f32;
+        let source = TrackSource::from_code(r[13]);
+        let blob = self.section(S_CONT);
+        if frames > blob.len().saturating_mul(1 << 16) {
+            return None;
         }
-        Some(Phrase { id, song, start_ms, source, notes })
-    }
-
-    /// Postings of an n-gram key: (phrase, collapsed-note position), and the count.
-    pub(crate) fn postings(&self, key: u32) -> Option<(Postings<'_>, u32)> {
-        let keys = self.section(S_KEYS);
-        let (mut lo, mut hi) = (0usize, self.key_count as usize);
-        while lo < hi {
-            let mid = (lo + hi) / 2;
-            let k = le_u32(keys, mid * KEY_LEN)?;
-            match k.cmp(&key) {
-                std::cmp::Ordering::Less => lo = mid + 1,
-                std::cmp::Ordering::Greater => hi = mid,
-                std::cmp::Ordering::Equal => {
-                    let off = le_u32(keys, mid * KEY_LEN + 4)? as usize;
-                    let count = le_u32(keys, mid * KEY_LEN + 8)?;
-                    let post = self.section(S_POST);
-                    return Some((Postings { blob: post, pos: off, left: count, phrase: 0 }, count));
+        let pitch = |code: u8| if code == 0 { f32::NAN } else { base + (code - 1) as f32 / 4.0 };
+        let mut contour = Vec::with_capacity(frames);
+        match r[14] {
+            ENC_RAW => contour.extend(blob.get(off..off.checked_add(frames)?)?.iter().map(|&c| pitch(c))),
+            ENC_RUNS => {
+                let mut pos = off;
+                while contour.len() < frames {
+                    let code = *blob.get(pos)?;
+                    pos += 1;
+                    let run = read_varint(blob, &mut pos)? as usize;
+                    if run == 0 || contour.len() + run > frames {
+                        return None;
+                    }
+                    contour.extend(std::iter::repeat_n(pitch(code), run));
                 }
             }
+            _ => return None,
         }
-        None
+        Some(Track { id, song, source, contour })
     }
 
-    /// Total n-gram positions (for weighting keys by rarity).
-    pub(crate) fn positions(&self) -> u64 {
-        (self.note_count as u64).max(1)
+    /// The half-vector codebooks.
+    pub(crate) fn codebooks(&self) -> &[[[f32; HALF]; CODES]; 2] {
+        &self.codebooks
+    }
+
+    /// The residual sub-codebooks.
+    pub(crate) fn residuals(&self) -> &[[[f32; SUB]; CODES]; SUBS] {
+        &self.residuals
+    }
+
+    /// Number of postings in a cell.
+    pub fn cell_len(&self, cell: usize) -> u32 {
+        let t = self.section(S_CELL);
+        le_u32(t, cell * CELL_LEN + 4).unwrap_or(0)
+    }
+
+    /// Postings of a cell: (track, window start frame, residual codes).
+    pub(crate) fn cell(&self, cell: usize) -> Postings<'_> {
+        let t = self.section(S_CELL);
+        let off = le_u32(t, cell * CELL_LEN).unwrap_or(0) as usize;
+        let count = le_u32(t, cell * CELL_LEN + 4).unwrap_or(0);
+        Postings { blob: self.section(S_POST), pos: off, left: count, track: 0 }
     }
 
     /// A song whose normalized title and artist match; falls back to a title match
@@ -385,15 +490,40 @@ impl MelodyIndex {
     }
 }
 
-/// Iterator over a key's postings.
+/// Iterator over a cell's postings: (track, window start frame, residual codes).
 pub(crate) struct Postings<'a> {
     blob: &'a [u8],
     pos: usize,
     left: u32,
-    phrase: u32,
+    track: u32,
 }
 
 impl Iterator for Postings<'_> {
+    type Item = (u32, u32, [u8; SUBS]);
+
+    fn next(&mut self) -> Option<(u32, u32, [u8; SUBS])> {
+        if self.left == 0 {
+            return None;
+        }
+        self.left -= 1;
+        let delta = read_varint(self.blob, &mut self.pos)?;
+        let hop = read_varint(self.blob, &mut self.pos)?;
+        let codes: [u8; SUBS] = self.blob.get(self.pos..self.pos + SUBS)?.try_into().ok()?;
+        self.pos += SUBS;
+        self.track = self.track.checked_add(delta)?;
+        Some((self.track, hop.saturating_mul(crate::melody::contour::REF_HOP as u32), codes))
+    }
+}
+
+/// Iterator over a note n-gram key's postings: (track, step position).
+pub(crate) struct NotePostings<'a> {
+    blob: &'a [u8],
+    pos: usize,
+    left: u32,
+    track: u32,
+}
+
+impl Iterator for NotePostings<'_> {
     type Item = (u32, u32);
 
     fn next(&mut self) -> Option<(u32, u32)> {
@@ -403,75 +533,9 @@ impl Iterator for Postings<'_> {
         self.left -= 1;
         let delta = read_varint(self.blob, &mut self.pos)?;
         let at = read_varint(self.blob, &mut self.pos)?;
-        self.phrase = self.phrase.checked_add(delta)?;
-        Some((self.phrase, at))
+        self.track = self.track.checked_add(delta)?;
+        Some((self.track, at))
     }
-}
-
-/// A note of the collapsed sequence: consecutive notes of the same semitone merged.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Step {
-    pub pitch: f32,
-    pub onset_ms: u32,
-    pub end_ms: u32,
-}
-
-/// Merge consecutive notes whose pitch rounds to the same semitone difference 0.
-pub(crate) fn collapse(notes: &[Note]) -> Vec<Step> {
-    let mut out: Vec<Step> = Vec::with_capacity(notes.len());
-    for n in notes {
-        if !n.pitch.is_finite() {
-            continue;
-        }
-        let end = n.onset_ms.saturating_add(n.dur_ms);
-        match out.last_mut() {
-            Some(last) if (n.pitch - last.pitch).round() == 0.0 => last.end_ms = last.end_ms.max(end),
-            _ => out.push(Step { pitch: n.pitch, onset_ms: n.onset_ms, end_ms: end }),
-        }
-    }
-    out
-}
-
-/// Semitone intervals between collapsed notes, clipped to ±12 (never 0).
-pub(crate) fn intervals(steps: &[Step]) -> Vec<i8> {
-    steps
-        .windows(2)
-        .map(|w| {
-            let d = (w[1].pitch - w[0].pitch).round().clamp(-12.0, 12.0) as i8;
-            if d == 0 { if w[1].pitch >= w[0].pitch { 1 } else { -1 } } else { d }
-        })
-        .collect()
-}
-
-/// Coarse contour class of an interval: ±1 (1–2 semitones), ±2 (3–4), ±3 (5+).
-pub(crate) fn contour_class(d: i8) -> i8 {
-    let m = match d.unsigned_abs() {
-        0..=2 => 1,
-        3..=4 => 2,
-        _ => 3,
-    };
-    if d < 0 { -m } else { m }
-}
-
-pub(crate) fn interval_key(d: &[i8]) -> u32 {
-    d.iter().fold(0u32, |k, &x| k * 25 + (x.clamp(-12, 12) + 12) as u32) | (KIND_INTERVAL << 30)
-}
-
-pub(crate) fn contour_key(c: &[i8]) -> u32 {
-    c.iter().fold(0u32, |k, &x| k * 7 + (x.clamp(-3, 3) + 3) as u32) | (KIND_CONTOUR << 30)
-}
-
-/// Every (position, key) of a collapsed interval sequence, both kinds.
-pub(crate) fn ngram_keys(iv: &[i8]) -> Vec<(u32, u32)> {
-    let mut out = Vec::with_capacity(2 * iv.len());
-    for (i, w) in iv.windows(INTERVAL_N).enumerate() {
-        out.push((i as u32, interval_key(w)));
-    }
-    let classes: Vec<i8> = iv.iter().map(|&d| contour_class(d)).collect();
-    for (i, w) in classes.windows(CONTOUR_N).enumerate() {
-        out.push((i as u32, contour_key(w)));
-    }
-    out
 }
 
 /// Lowercase, accents folded, bracketed parts and "feat." credits removed,
@@ -604,20 +668,6 @@ mod tests {
     }
 
     #[test]
-    fn collapse_merges_repeats_and_keys_are_distinct() {
-        let n = |p: f32, t: u32| Note { pitch: p, onset_ms: t, dur_ms: 100 };
-        let steps = collapse(&[n(60.0, 0), n(60.2, 100), n(62.0, 200), n(64.0, 300), n(64.0, 400), n(60.0, 500)]);
-        assert_eq!(steps.len(), 4);
-        assert_eq!(steps[0].end_ms, 200);
-        assert_eq!(intervals(&steps), vec![2, 2, -4]);
-        assert_eq!(contour_class(-4), -2);
-        assert_eq!(contour_class(7), 3);
-        assert_ne!(interval_key(&[1, 2, 3, 4]), interval_key(&[4, 3, 2, 1]));
-        assert_ne!(interval_key(&[1, 1, 1, 1]) & !(3 << 30), 0);
-        assert_eq!(contour_key(&[1; 6]) >> 30, 1);
-    }
-
-    #[test]
     fn normalization() {
         assert_eq!(normalize_title("Hello (Remastered 2011) - Live"), "hello");
         assert_eq!(normalize_title("Café del Mar feat. Someone"), "cafe del mar");
@@ -628,13 +678,16 @@ mod tests {
     }
 
     #[test]
-    fn damaged_files_are_rejected() {
+    fn damaged_and_old_files_are_rejected() {
         assert!(MelodyIndex::from_bytes(Vec::new()).is_err());
         assert!(MelodyIndex::from_bytes(vec![0; 400]).is_err());
         let mut b = vec![0u8; HEADER_LEN];
         b[..8].copy_from_slice(MAGIC);
         b[8..12].copy_from_slice(&FORMAT.to_le_bytes());
-        b[48..56].copy_from_slice(&1_000_000u64.to_le_bytes());
-        assert!(MelodyIndex::from_bytes(b).is_err());
+        b[SECTION_TABLE..SECTION_TABLE + 8].copy_from_slice(&1_000_000u64.to_le_bytes());
+        assert!(MelodyIndex::from_bytes(b.clone()).is_err());
+        b[8..12].copy_from_slice(&1u32.to_le_bytes());
+        let old = MelodyIndex::from_bytes(b).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(old.contains("older"), "{old}");
     }
 }

@@ -45,6 +45,7 @@ import app.musicfetch.ui.components.ContourMark
 import app.musicfetch.ui.library.LibraryScreen
 import app.musicfetch.ui.listen.ListenScreen
 import app.musicfetch.ui.lyrics.LyricSearchScreen
+import app.musicfetch.ui.provider.ProviderSettingsScreen
 import app.musicfetch.ui.session.SessionScreen
 import app.musicfetch.ui.settings.LicensesScreen
 import app.musicfetch.ui.settings.SettingsScreen
@@ -130,6 +131,7 @@ fun AppNavigation(navigator: Navigator, listenStack: NavBackStack<NavKey>, libra
         entry<LyricsRoute> { LyricSearchScreen() }
         entry<SettingsRoute> { SettingsScreen() }
         entry<LicensesRoute> { LicensesScreen() }
+        entry<ProviderRoute> { ProviderSettingsScreen() }
     }
     val listenEntries = rememberDecoratedNavEntries(
         listenStack,

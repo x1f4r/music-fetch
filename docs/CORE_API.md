@@ -48,6 +48,10 @@ This document describes the behaviour the types cannot express.
 - If 3 s of pushed audio are digital silence the core emits `Notice::CaptureSilent`
   (permission denied or the source app blocks capture); the session continues until
   the app stops it or the 30 s limit.
+- `Finished { Waiting }`: the recognizer could not be reached at all (no network). The
+  session is stored with status `Waiting` and `Engine::retry_waiting` identifies it
+  later; the app says it was saved for later instead of "no match". (The live pipeline
+  does not produce it yet; the apps already handle it.)
 
 ## Analysis sessions
 
@@ -65,7 +69,7 @@ This document describes the behaviour the types cannot express.
 |---|---|---|---|
 | `MediaBackend` | not supplied: the core runs the bundled yt-dlp via `EngineConfig.media_tools` | Chaquopy wrapper | links that are not streaming metadata |
 | `PlatformDecoder` | AVFoundation | MediaExtractor + MediaCodec | symphonia fails on a file |
-| `SpeechToText` | SpeechTranscriber (macOS 26) | on-device SpeechRecognizer | impression sessions where speech is detected |
+| `SpeechToText` | SpeechTranscriber (macOS 26), SFSpeechRecognizer (macOS 15) | on-device SpeechRecognizer | impression sessions where speech is detected |
 
 All three are called from engine worker threads, may block, must honour
 `TaskHandle.is_canceled()` and must return `PlatformError::Canceled` when canceled.
@@ -79,8 +83,15 @@ English sentences without stack traces or URLs containing secrets.
 ## Melody index
 
 - Manifest (`EngineConfig.melody_index_manifest_url`), JSON:
-  `{"version": "2026.10.1", "url": "https://…/melody-index.mfi", "sha256": "…", "bytes": 12345678, "songs": 41234, "min_core": "1.0.0"}`
+  `{"version": "2026.11.1", "url": "https://…/melody-index.mfi", "sha256": "…", "bytes": 12345678, "songs": 41234, "min_core": "1.1.0", "format": 2}`
 - Installed under `data_dir/melody/` as `melody-index.mfi` + `manifest.json`.
+- File format 2 (one continuous contour per song and source, window and note indexes; see
+  `melody/index.rs`). Each format is published under its own release tag,
+  `melody-index-<format>`, with `min_core` set to the first core that reads it (format 2:
+  1.1.0) and `format` naming it; the apps point at the tag of their core's format. A
+  manifest of another format (one without `format` is format 1) fails with
+  `IndexUnavailable` before anything is downloaded, and an installed index of another
+  format is deleted at startup, so the app offers the download again.
 - Without an index, impression sessions still run lyrics and ACRCloud humming and emit
   `Notice::MelodyIndexMissing`.
 
@@ -98,4 +109,11 @@ One song per line, produced by `tools/melody-index` and consumed by `mf index bu
 - `notes`: `[pitch, onset_ms, dur_ms]`, pitch in fractional MIDI numbers, onset relative to
   the phrase start, sorted by onset, monophonic (no overlaps).
 - `source`: `"preview"` (30 s audio preview), `"audio"` (full track audio) or `"midi"`.
+- `start_ms`: the phrase's position in its source. The phrases of one source are placed on
+  one timeline (rests between them stay rests), so a hum may span several; phrases that
+  overlap in time (two MIDI parts) become separate timelines.
 - `popularity` in 0..=1; `isrc`, `deezer_id`, `year` may be null.
+- Optional `contours`: frame melodies, e.g.
+  `[{"source": "preview", "fps": 20, "pitch": [61.25, 61.5, null, …]}]` with fractional
+  MIDI pitches and `null` for unvoiced frames (other rates are resampled to 20 fps). A source
+  with a contour ignores its phrases.
