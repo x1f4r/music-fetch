@@ -403,7 +403,11 @@ final class ListenModel {
                 stage = .noMatch(reason)
                 announce(Copy.noMatchAnnouncement(reason))
                 app.sessionFinished(model)
-                showOfflineIfSaved(model)
+            case .waiting:
+                // Saved without a connection; WaitingSessions identifies it once online.
+                stage = .offline
+                announce(Copy.offline)
+                app.sessionFinished(model)
             case .completed:
                 stage = .idle
             }
@@ -412,30 +416,12 @@ final class ListenModel {
             handle = nil
             stage = .failed(code, message)
             announce(Copy.failure(code, message: message))
-            if code == .network { showOfflineIfSaved(model) }
         case .canceled:
             stopCapture()
             handle = nil
             if stage == .listening || stage == .matching { stage = .idle }
         default:
             break
-        }
-    }
-
-    /// A capture without a connection is stored as `Waiting`: say so instead of the
-    /// no-match or network failure.
-    private func showOfflineIfSaved(_ model: SessionModel) {
-        guard let engine = app.engine else { return }
-        let id = model.id
-        let shownStage = stage
-        Task {
-            guard let detail = try? await offMain({ try engine.session(id: id) }), detail.entry.status == .waiting,
-                liveSession === model, stage == shownStage
-            else { return }
-            model.apply(detail: detail)
-            stage = .offline
-            announce(Copy.offline)
-            app.library.scheduleRefresh()
         }
     }
 

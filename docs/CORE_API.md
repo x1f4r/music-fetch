@@ -48,6 +48,10 @@ This document describes the behaviour the types cannot express.
 - If 3 s of pushed audio are digital silence the core emits `Notice::CaptureSilent`
   (permission denied or the source app blocks capture); the session continues until
   the app stops it or the 30 s limit.
+- `Finished { Waiting }`: the recognizer could not be reached at all (no network). The
+  session is stored with status `Waiting` and `Engine::retry_waiting` identifies it
+  later; the app says it was saved for later instead of "no match". (The live pipeline
+  does not produce it yet; the apps already handle it.)
 
 ## Analysis sessions
 

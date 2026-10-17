@@ -305,6 +305,10 @@ pub enum Outcome {
     NoMatch {
         reason: NoMatchReason,
     },
+    /// A live session could not reach the recognizer (no network). The capture is
+    /// kept and the session is stored as `Waiting` until `Engine::retry_waiting`
+    /// identifies it.
+    Waiting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]

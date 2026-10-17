@@ -26,7 +26,8 @@ platforms.
 
 - `ListenModel` — `phase: idle | listening(source, mode) | analyzing | result`;
   live `level`, `pitchTrace` (ring of the last 8 s of `PitchFrame`s), `impression: Bool`,
-  `notice`, `elapsed`; result: `matched(Track) | candidates([Candidate]) | noMatch(reason)`;
+  `notice`, `elapsed`; result: `matched(Track) | candidates([Candidate]) |
+  noMatch(reason) | offline` (`Outcome::Waiting`: saved to identify once online);
   actions `start(source, mode)`, `stop()`, `cancel()`, `retryAsHum()`.
 - `SessionModel` — for link/file/lyrics sessions and library detail: `source`,
   `phase`/`fraction`, `progress` (analyzed/total/ETA), ordered `segments` (upsert by id,

@@ -23,12 +23,10 @@ import app.musicfetch.core.ListenOptions
 import app.musicfetch.core.LiveSession
 import app.musicfetch.core.MfException
 import app.musicfetch.core.Notice
-import app.musicfetch.core.Outcome
 import app.musicfetch.core.Phase
 import app.musicfetch.core.SessionEvent
 import app.musicfetch.core.SessionKind
 import app.musicfetch.core.SessionObserver
-import app.musicfetch.core.SessionStatus
 import app.musicfetch.engine.EngineHost
 import app.musicfetch.engine.EngineUnavailableException
 import app.musicfetch.notify.Notifications
@@ -314,38 +312,15 @@ class ListenController(
             is SessionEvent.Pitch -> signal.pitch.add(event.frames)
             is SessionEvent.Notice -> onNotice(event.notice)
             is SessionEvent.Finished -> {
-                val id = _state.value.sessionId
-                val result = when (val outcome = event.outcome) {
-                    is Outcome.Matched -> if (id != null) ListenResult.Matched(id, outcome.track) else null
-                    is Outcome.Candidates -> if (id != null) ListenResult.Candidates(id, lastCandidates) else null
-                    is Outcome.NoMatch -> ListenResult.NoMatch(id, outcome.reason)
-                    is Outcome.Completed -> null
-                } ?: ListenResult.Failed(id, ErrorCode.INTERNAL, "Something went wrong.")
-                if (result is ListenResult.NoMatch) endUnlessWaiting(gen, result) else end(gen, result)
+                val result = listenResult(event.outcome, _state.value.sessionId, lastCandidates)
+                end(gen, result)
+                // Saved without a connection: identified once the phone is online again.
+                if (result is ListenResult.Waiting) app.appGraph.waitingRetry.onWaitingSaved()
             }
             is SessionEvent.Candidates -> lastCandidates = event.candidates
-            is SessionEvent.Failed ->
-                endUnlessWaiting(gen, ListenResult.Failed(_state.value.sessionId, event.code, event.message))
+            is SessionEvent.Failed -> end(gen, ListenResult.Failed(_state.value.sessionId, event.code, event.message))
             is SessionEvent.Canceled -> end(gen, null)
             else -> Unit
-        }
-    }
-
-    /**
-     * A session without an answer may have been saved for later because the phone is offline
-     * (status `Waiting`); the stored status tells, whatever the terminal event was.
-     */
-    private fun endUnlessWaiting(gen: Long, result: ListenResult) {
-        val id = result.sessionId ?: return end(gen, result)
-        scope.launch(Dispatchers.IO) {
-            val waiting = runCatching { engineHost.engine().session(id)?.entry?.status == SessionStatus.WAITING }
-                .getOrDefault(false)
-            if (waiting) {
-                end(gen, ListenResult.Waiting(id))
-                app.appGraph.waitingRetry.onWaitingSaved()
-            } else {
-                end(gen, result)
-            }
         }
     }
 
