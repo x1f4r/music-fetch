@@ -68,7 +68,13 @@ final class ScreenshotTests: XCTestCase {
                     XCTFail("result \(variant.name): no toolbar Listen")
                     return
                 }
-                listen.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).click()
+                let chevron = window.toolbars.firstMatch.descendants(matching: .any)
+                    .matching(NSPredicate(format: "label == %@", "Other Ways to Identify")).firstMatch
+                if chevron.exists {
+                    chevron.click()
+                } else {
+                    listen.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).click()
+                }
                 sleep(1)
                 self.attachScreen("listen-menu", variant)
                 app.typeKey(.escape, modifierFlags: [])
