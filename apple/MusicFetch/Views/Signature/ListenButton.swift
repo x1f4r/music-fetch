@@ -56,6 +56,7 @@ struct ListenButton: View {
         .accessibilityLabel(Copy.listenAction)
         .accessibilityValue(listen.buttonValue)
         .accessibilityHint(Copy.listenHint)
+        .accessibilityIdentifier("mf.listenButton")
     }
 
     @ViewBuilder

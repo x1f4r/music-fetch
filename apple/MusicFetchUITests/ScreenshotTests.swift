@@ -112,9 +112,21 @@ final class ScreenshotTests: XCTestCase {
         }
     }
 
+    /// Renderings of the split Listen button to choose from (Debug `-MFListenStyle`).
+    func testListenStyles() throws {
+        for style in ["menu", "pair", "control"] {
+            for variant in Variant.pair {
+                let app = launch("result", variant, extra: ["-MFListenStyle", style])
+                defer { app.terminate() }
+                guard let window = mainWindow(app, state: "result") else { continue }
+                attachWindow(window, "listen-style-\(style)", variant)
+            }
+        }
+    }
+
     // MARK: - Running states
 
-    private func launch(_ state: String, _ variant: Variant) -> XCUIApplication {
+    private func launch(_ state: String, _ variant: Variant, extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "-MFDemoState", state,
@@ -123,7 +135,7 @@ final class ScreenshotTests: XCTestCase {
             "-MFReduceMotion", "YES",
             "-MFInspector", variant.inspector ? "YES" : "NO",
             "-ApplePersistenceIgnoreState", "YES",
-        ]
+        ] + extra
         app.launch()
         return app
     }

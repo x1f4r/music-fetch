@@ -30,7 +30,17 @@ final class AppModel {
     var route: Route? = .listen
     /// Sessions pushed on the Library stack.
     var libraryPath: [String] = []
-    var showInspector: Bool
+    /// The inspector preference (View › Show Inspector).
+    private(set) var showInspector: Bool
+    /// The window is too narrow for the inspector next to the content: it stays folded
+    /// away until the window widens again, without changing the preference (§3.1).
+    private(set) var inspectorCollapsed = false
+    @ObservationIgnored private var inspectorFits: Bool?
+    @ObservationIgnored private var windowWidth: CGFloat = 0
+    /// When the window last folded the inspector away or brought it back.
+    @ObservationIgnored private var inspectorFoldedAt = Date.distantPast
+    @ObservationIgnored private var sidebarShown = true
+    @ObservationIgnored private var foldTask: Task<Void, Never>?
     var linkText = ""
     /// Bumped to move focus into the toolbar link field (⌘K) or library search (⌘F).
     var linkFieldFocusRequest = 0
@@ -143,13 +153,48 @@ final class AppModel {
         route == .listen && listen.shown == nil
     }
 
+    /// ⌘1 and the sidebar's Listen row: the stage, unless a mix is still being
+    /// analyzed there.
     func showListen() {
         route = .listen
-        listen.showStage()
+        if listen.shown?.isRunning != true { listen.showStage() }
+    }
+
+    /// The sidebar selection. Choosing Listen, or clicking it again, shows the stage.
+    func selectRoute(_ route: Route?) {
+        if route == .listen {
+            showListen()
+        } else if self.route != route {
+            self.route = route
+        }
+    }
+
+    /// "Show in Library" on a pinned session: the row, selected, in the full list.
+    func showInLibrary(_ id: String) {
+        route = .library
+        libraryPath = []
+        if !(library.visibleEntries.contains { $0.id == id }) {
+            library.filter = .all
+            library.search = ""
+        }
+        library.selection = [id]
+    }
+
+    /// "Show All" under the sidebar's pinned sessions.
+    func showPinnedInLibrary() {
+        route = .library
+        libraryPath = []
+        library.filter = .pinned
     }
 
     func showLibrary() {
         route = .library
+    }
+
+    /// ⌘K and "Identify Link…": the toolbar link field on the Listen pane.
+    func focusLinkField() {
+        route = .listen
+        linkFieldFocusRequest += 1
     }
 
     /// Starts listening from anywhere (toolbar Listen, ⌘L, menus, intents).
@@ -213,17 +258,12 @@ final class AppModel {
         }
     }
 
-    /// The session Pin/Unpin acts on: the one in the detail column, or the single
-    /// selected Library row.
-    var targetSessionID: String? {
-        if let id = currentSession?.id { return id }
-        if route == .library, libraryPath.isEmpty, library.selection.count == 1 { return library.selection.first }
-        return nil
-    }
-
-    var isTargetPinned: Bool {
-        guard let id = targetSessionID else { return false }
-        return library.entry(id: id)?.pinned ?? cachedSession(id)?.pinned ?? false
+    /// The sessions Pin/Unpin acts on: the one in the detail column, or every selected
+    /// Library row.
+    var targetSessionIDs: [String] {
+        if let id = currentSession?.id { return [id] }
+        if route == .library, libraryPath.isEmpty { return library.selection.sorted() }
+        return []
     }
 
     /// The track ⌘C, ⌘↩ and Space act on.
@@ -472,8 +512,8 @@ final class AppModel {
     /// opens the source at its cue. Returns false when there is nothing to play.
     @discardableResult
     func playSelection() -> Bool {
-        guard let session = currentSession else { return false }
-        let segment = session.presentation == .timeline || session.presentation == .collection ? session.selectedSegment : nil
+        let session = currentSession
+        let segment = session?.presentation == .timeline || session?.presentation == .collection ? session?.selectedSegment : nil
         if let track = selectedTrack, let link = track.previewUrl, let url = URL(string: link) {
             self.preview.toggle(id: track.identityKey, url: url)
             return true
@@ -682,8 +722,67 @@ final class AppModel {
     /// Shows or hides the inspector and remembers it (demo states don't).
     func setInspector(_ shown: Bool) {
         showInspector = shown
+        if shown { inspectorCollapsed = false }
         guard !isDemo else { return }
         UserDefaults.standard.set(shown, forKey: PreferenceKey.showInspector)
+    }
+
+    /// Whether the inspector column is on screen.
+    var isInspectorPresented: Bool {
+        showInspector && !inspectorCollapsed
+    }
+
+    /// The inspector toggle, ⌥⌘I: showing it in a narrow window keeps it open anyway.
+    func toggleInspector() {
+        setInspector(!isInspectorPresented)
+    }
+
+    /// The inspector's `isPresented` binding: dragging its divider closed. The split view
+    /// also reports closing by itself when the window has no room, and it reports
+    /// folding away for a narrow window a moment late; neither changes the preference.
+    func presentInspector(_ shown: Bool) {
+        if shown {
+            setInspector(true)
+        } else if inspectorFits == true, Date.now.timeIntervalSince(inspectorFoldedAt) > 1 {
+            setInspector(false)
+        } else if showInspector {
+            // Closed by the split view: follow it, then let the width decide again.
+            inspectorCollapsed = true
+            scheduleFold(force: true)
+        }
+    }
+
+    /// Window width below which the inspector folds away while the sidebar shows: the
+    /// toolbars of every screen fit beside it from there on.
+    nonisolated static let inspectorWindowWidth: CGFloat = 1060
+    nonisolated static let sidebarAllowance: CGFloat = 228
+
+    /// Folds the inspector away when the window gets too narrow for it and brings it
+    /// back when the window widens. Only crossing the threshold changes anything, so an
+    /// inspector opened in a narrow window stays open. Sizes that last less than 150 ms
+    /// (a window's first layout, a fast drag) don't count.
+    func windowWidthChanged(_ width: CGFloat?, sidebarShown: Bool) {
+        if let width { windowWidth = width }
+        self.sidebarShown = sidebarShown
+        scheduleFold(force: false)
+    }
+
+    private func scheduleFold(force: Bool) {
+        foldTask?.cancel()
+        foldTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            self?.fold(force: force)
+        }
+    }
+
+    private func fold(force: Bool) {
+        guard windowWidth > 0 else { return }
+        let fits = windowWidth >= Self.inspectorWindowWidth - (sidebarShown ? 0 : Self.sidebarAllowance)
+        guard force || fits != inspectorFits else { return }
+        inspectorFits = fits
+        inspectorCollapsed = !fits
+        inspectorFoldedAt = .now
     }
 
     var reduceMotion: Bool {

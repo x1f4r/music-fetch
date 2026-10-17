@@ -34,7 +34,7 @@ final class ListenModel {
         case rateLimited(until: Date)
     }
 
-    /// Buttons in the action row (§5.4).
+    /// Buttons in the recovery row under the source toggles (§5.4).
     enum Action: Hashable {
         case tryAgain, humIt, typeLyric, useMicrophone, continueSystemAudio, openMicrophoneSettings, stop, dismiss
     }
@@ -132,16 +132,17 @@ final class ListenModel {
         stage == .matching || (stage == .link && linkSession?.phase == .recognizing)
     }
 
-    /// The action row, or nil for the source toggles.
-    var actions: [Action]? {
+    /// The recovery row: what helps after a no-match, an error or a prompt. Empty while
+    /// idle; the source toggles above it never leave the stage (§5.4).
+    var recoveryActions: [Action] {
         switch stage {
         case .idle, .matching:
-            return nil
+            return []
         case .listening:
             switch notice {
             case .captureSilent: return [.useMicrophone]
             case .rateLimited: return [.stop]
-            default: return nil
+            default: return []
             }
         case .systemAudioPrePrompt:
             return [.continueSystemAudio, .useMicrophone]
@@ -150,9 +151,11 @@ final class ListenModel {
         case .link:
             return [.stop]
         case .noMatch(let reason):
+            // "Hum it" only offers something new when the last try wasn't a hum.
+            let hum: [Action] = runningSource == .hum ? [] : [.humIt]
             switch reason {
-            case .notFound: return [.tryAgain, .humIt, .typeLyric]
-            case .tooQuiet, .noisy, .mostlySpeech: return [.tryAgain, .humIt]
+            case .notFound: return [.tryAgain] + hum + [.typeLyric]
+            case .tooQuiet, .noisy, .mostlySpeech: return [.tryAgain] + hum
             case .tooShort: return [.tryAgain]
             case .captureSilent: return [.useMicrophone]
             }
@@ -178,6 +181,17 @@ final class ListenModel {
     }
 
     // MARK: - Listening
+
+    /// A source toggle: chooses the method without listening. A finished state (no
+    /// match, an error, a prompt) gives way to the idle stage for the new method.
+    func select(_ source: ListenSource) {
+        guard !isBusy else { return }
+        self.source = source
+        switch stage {
+        case .noMatch, .failed, .offline, .microphoneDenied, .systemAudioPrePrompt: stage = .idle
+        default: break
+        }
+    }
 
     /// The big button and ⌘L: start with the selected source, or stop.
     func toggle() {
@@ -329,7 +343,9 @@ final class ListenModel {
     func perform(_ action: Action) {
         switch action {
         case .tryAgain:
-            if case .failed = stage, let lastInput, runningSource == nil {
+            // A link or file that failed or found nothing is analyzed again; a live
+            // session listens again with the same method.
+            if runningSource == nil, let lastInput {
                 analyze(lastInput.input, mode: lastInput.mode)
             } else {
                 start(runningSource ?? source)
@@ -346,9 +362,11 @@ final class ListenModel {
         }
     }
 
-    /// Back to the idle stage (Esc on a result, ⌘1).
+    /// Back to the idle stage (Esc or "‹" on a result, ⌘1). A mix still being analyzed
+    /// carries on in the background and lands in the library.
     func showStage() {
         app.preview.stop()
+        if let shown, shown === linkSession { detachLink() }
         shown = nil
         switch stage {
         case .noMatch, .failed, .offline, .systemAudioPrePrompt, .microphoneDenied: stage = .idle

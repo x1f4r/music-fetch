@@ -9,16 +9,33 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
     @Namespace private var glass
     @FocusState private var searchFocused: Bool
+    @State private var columns = NavigationSplitViewVisibility.automatic
 
     var body: some View {
         @Bindable var app = app
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             Sidebar()
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
         } detail: {
             detail
         }
+        // One inspector for every screen. Its toolbar item makes SwiftUI add the
+        // inspector's tracking separator, so no item of the detail column ever sits on
+        // the inspector's divider.
+        .inspector(isPresented: Binding(get: { app.isInspectorPresented }, set: { app.presentInspector($0) })) {
+            InspectorView()
+                .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
+                .toolbar {
+                    ToolbarItem { InspectorToggle() }
+                }
+        }
         .frame(minWidth: 900, minHeight: 600)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            app.windowWidthChanged(width, sidebarShown: columns != .detailOnly)
+        }
+        .onChange(of: columns) { _, columns in
+            app.windowWidthChanged(nil, sidebarShown: columns != .detailOnly)
+        }
         .sheet(item: $app.lyricSearch) { model in
             LyricSearchSheet(model: model)
         }
@@ -88,7 +105,6 @@ struct RootView: View {
         switch app.route {
         case .listen, nil:
             ListenPane(glass: glass)
-                .appInspector()
         case .library:
             @Bindable var app = app
             NavigationStack(path: $app.libraryPath) {
@@ -96,37 +112,23 @@ struct RootView: View {
                     .navigationTitle(Copy.libraryTitle)
                     .navigationDestination(for: String.self) { id in
                         SessionScreen(id: id)
-                            .appInspector()
                     }
-                    .appInspector()
                     .toolbar { libraryToolbar }
-                    .searchable(text: $app.library.search, placement: .toolbar, prompt: Copy.search)
+                    .searchable(text: $app.library.search, placement: .toolbar, prompt: Copy.searchLibrary)
                     .searchFocused($searchFocused)
                     .onChange(of: app.searchFocusRequest) { _, _ in searchFocused = true }
             }
         case .session(let id):
             NavigationStack {
                 SessionScreen(id: id)
-                    .appInspector()
             }
         }
     }
 
     @ToolbarContentBuilder
     private var libraryToolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            @Bindable var library = app.library
-            Picker(Copy.filter, selection: $library.filter) {
-                ForEach(LibraryModel.Filter.allCases) { filter in
-                    Text(filter.title).tag(filter)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-        }
-        ToolbarItem(placement: .automatic) { ListenToolbarButton() }
-        ToolbarItem(placement: .automatic) { InspectorToggle() }
+        ToolbarItem { PinToolbarToggle(ids: Array(app.library.selection)) }
+        ToolbarItem { ListenToolbarButton() }
     }
 }
 
@@ -158,19 +160,28 @@ struct ListenPane: View {
         .onExitCommand {
             if listen.stage == .listening || listen.stage == .matching {
                 listen.escape()
-            } else if listen.shown != nil {
-                listen.showStage()
+            } else {
+                // A result, a no-match or an error: back to the idle stage.
+                withAnimation(app.motion(.hero)) { listen.showStage() }
             }
         }
+        // The sidebar already says "Listen"; the title stays for the Window menu.
         .navigationTitle(Copy.listenTitle)
+        .toolbar(removing: .title)
         .toolbar {
-            ToolbarItem(placement: .principal) { LinkField() }
-            if let shown = listen.shown, shown.presentation == .timeline || shown.presentation == .collection {
-                ToolbarItem(placement: .automatic) { ExportMenu(model: shown) }
+            if listen.shown != nil {
+                ToolbarItem(placement: .navigation) { BackToStageButton() }
             }
-            ToolbarItem(placement: .automatic) { ListenToolbarButton() }
+            ToolbarItem(placement: .navigation) { LinkField() }
+            // Without a title nothing pushes the actions to the trailing edge (macOS 26).
+            if #available(macOS 26, *) {
+                ToolbarSpacer(.flexible)
+            }
+            if let shown = listen.shown {
+                SessionToolbarItems(model: shown)
+            }
+            ToolbarItem { ListenToolbarButton() }
                 .hidden(app.isOnListenStage)
-            ToolbarItem(placement: .automatic) { InspectorToggle() }
         }
     }
 }
@@ -197,12 +208,42 @@ struct SessionScreen: View {
             if #available(macOS 26, *) {
                 ToolbarSpacer(.flexible)
             }
-            if let model, model.presentation == .timeline || model.presentation == .collection || model.presentation == .result {
-                ToolbarItem(placement: .automatic) { ExportMenu(model: model) }
+            if let model {
+                SessionToolbarItems(model: model)
             }
-            ToolbarItem(placement: .automatic) { ListenToolbarButton() }
-            ToolbarItem(placement: .automatic) { InspectorToggle() }
+            ToolbarItem { ListenToolbarButton() }
         }
+    }
+}
+
+/// Export and Pin for the session on screen, sharing one glass capsule (§3.1).
+struct SessionToolbarItems: ToolbarContent {
+    var model: SessionModel
+
+    var body: some ToolbarContent {
+        ToolbarItemGroup {
+            if model.hasExport {
+                ExportMenu(model: model)
+            }
+            PinToolbarToggle(ids: [model.id])
+        }
+    }
+}
+
+/// "‹" on a result shown on the Listen pane: back to the stage (⌘[, Esc).
+struct BackToStageButton: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        Button {
+            withAnimation(app.motion(.hero)) { app.listen.showStage() }
+        } label: {
+            Label(Copy.backToListen, systemImage: "chevron.backward")
+        }
+        .labelStyle(.iconOnly)
+        .keyboardShortcut("[", modifiers: .command)
+        .help(Copy.backToListen)
+        .accessibilityIdentifier("mf.backToStage")
     }
 }
 
@@ -223,26 +264,122 @@ struct LinkField: View {
                 .onSubmit { app.submitLinkField() }
                 .accessibilityLabel(Copy.pasteLink)
         }
-        .padding(.horizontal, 12)
-        .frame(width: 300)
+        .modifier(LinkFieldChrome())
         .onChange(of: app.linkFieldFocusRequest) { _, _ in focused = true }
     }
 }
 
-/// [Listen ▸] in the toolbar (prominent; the SDK has no `.glassProminent` yet, and
-/// `.borderedProminent` is the native style before macOS 26 too).
+/// On macOS 26 the toolbar draws the field's capsule; before, it gets a rounded border
+/// like a search field.
+private struct LinkFieldChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        if Compat.usesMacOS26Features {
+            content
+                .padding(.horizontal, 12)
+                .frame(width: 240)
+        } else {
+            content
+                .padding(.horizontal, 7)
+                .frame(width: 240, height: 22)
+                .background(.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(.separator, lineWidth: 1)
+                }
+        }
+    }
+}
+
+/// [Listen ▾] in the toolbar: the button listens again with the current method, the
+/// menu offers every other way to identify (§3.1). Shows Stop while capturing.
 struct ListenToolbarButton: View {
     @Environment(AppModel.self) private var app
 
+    #if DEBUG
+    /// Screenshot comparison of renderings: `-MFListenStyle menu|pair|control`.
+    private static let style = UserDefaults.standard.string(forKey: "MFListenStyle") ?? "menu"
+    #else
+    private static let style = "menu"
+    #endif
+
     var body: some View {
-        Button {
-            app.listenNow()
-        } label: {
-            Label(Copy.listenAction, image: "ContourMark")
-                .labelStyle(.titleAndIcon)
+        let listen = app.listen!
+        Group {
+            switch Self.style {
+            case "pair":
+                HStack(spacing: 4) {
+                    Button { app.listenNow() } label: { label(listen) }
+                        .buttonStyle(.borderedProminent)
+                    methodsMenu
+                }
+            case "control":
+                ControlGroup {
+                    Button { app.listenNow() } label: { label(listen) }
+                    methodsMenu
+                }
+            default:
+                Menu {
+                    ListenMethodItems()
+                } label: {
+                    label(listen)
+                } primaryAction: {
+                    app.listenNow()
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderedProminent)
+            }
         }
-        .buttonStyle(.borderedProminent)
-        .help(Copy.listenHelp)
+        .labelStyle(.titleAndIcon)
+        .disabled(app.engine == nil || listen.stage == .matching)
+        .help(listen.isCapturing ? Copy.stop : Copy.listenHelp(listen.source))
+        .accessibilityLabel(Copy.listenAction)
+        .accessibilityValue(listen.buttonValue)
+        .accessibilityIdentifier("mf.listen")
+    }
+
+    @ViewBuilder
+    private func label(_ listen: ListenModel) -> some View {
+        switch listen.stage {
+        case .listening:
+            Label(Copy.stop, systemImage: "stop.fill")
+        case .matching:
+            Label(Copy.matching, systemImage: "ellipsis")
+        default:
+            Label { Text(Copy.listenAction) } icon: { listen.source.icon }
+        }
+    }
+
+    private var methodsMenu: some View {
+        Menu {
+            ListenMethodItems()
+        } label: {
+            Label(Copy.listenMethods, systemImage: "chevron.down")
+                .labelStyle(.iconOnly)
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(Copy.listenMethods)
+    }
+}
+
+/// Every way to identify, for the Listen button's menu.
+struct ListenMethodItems: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        let busy = app.listen.isBusy
+        ForEach(ListenSource.allCases) { source in
+            Button {
+                app.listenNow(source)
+            } label: {
+                Label { Text(source.menuTitle) } icon: { source.icon }
+            }
+            .disabled(busy)
+        }
+        Divider()
+        Button(Copy.identifyLinkMenu) { app.focusLinkField() }
+        Button(Copy.openFileMenu) { app.openFile() }
+        Button(Copy.searchLyricsMenu) { app.presentLyricSearch() }
     }
 }
 
@@ -251,11 +388,31 @@ struct InspectorToggle: View {
 
     var body: some View {
         Button {
-            withAnimation(AppModel.spring(.large)) { app.setInspector(!app.showInspector) }
+            withAnimation(AppModel.spring(.large)) { app.toggleInspector() }
         } label: {
             Label(Copy.inspector, systemImage: "sidebar.trailing")
         }
-        .help(app.showInspector ? Copy.hideInspector : Copy.showInspector)
+        .help(app.isInspectorPresented ? Copy.hideInspector : Copy.showInspector)
+        .accessibilityIdentifier("mf.inspectorToggle")
+    }
+}
+
+/// Pin or unpin sessions (§3.3): Unpin when all of them are pinned.
+struct PinToolbarToggle: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.undoManager) private var undoManager
+    var ids: [String]
+
+    var body: some View {
+        let unpin = !ids.isEmpty && app.library.allPinned(ids)
+        Button {
+            app.library.togglePinned(ids, undoManager: undoManager)
+        } label: {
+            Label(unpin ? Copy.unpin : Copy.pin, systemImage: unpin ? "pin.slash" : "pin")
+        }
+        .disabled(ids.isEmpty)
+        .help(unpin ? Copy.unpin : Copy.pin)
+        .accessibilityIdentifier("mf.pin")
     }
 }
 
@@ -279,22 +436,10 @@ struct ExportMenu: View {
     }
 }
 
-extension View {
-    /// The inspector column (§3.1), on each screen of the detail column so it stays
-    /// visible when sessions are pushed.
-    func appInspector() -> some View {
-        modifier(AppInspector())
-    }
-}
-
-private struct AppInspector: ViewModifier {
-    @Environment(AppModel.self) private var app
-
-    func body(content: Content) -> some View {
-        content.inspector(isPresented: Binding(get: { app.showInspector }, set: { app.setInspector($0) })) {
-            InspectorView()
-                .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
-        }
+extension ListenSource {
+    /// The source's symbol: `mic`, `macbook` or the contour mark.
+    var icon: Image {
+        symbol.map { Image(systemName: $0) } ?? Image("contour.mark")
     }
 }
 

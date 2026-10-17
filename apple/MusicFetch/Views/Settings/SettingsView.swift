@@ -20,13 +20,13 @@ struct SettingsView: View {
             Tab(Copy.settingsGeneral, systemImage: "gearshape", value: SettingsPane.general.rawValue) {
                 GeneralPane()
             }
-            Tab("Audio", systemImage: "mic", value: SettingsPane.audio.rawValue) {
+            Tab(Copy.settingsAudio, systemImage: "mic", value: SettingsPane.audio.rawValue) {
                 AudioPane()
             }
             Tab(Copy.settingsServices, systemImage: "key", value: SettingsPane.services.rawValue) {
                 ServicesPane()
             }
-            Tab(Copy.settingsMelody, image: "ContourMark", value: SettingsPane.melody.rawValue) {
+            Tab(Copy.settingsMelody, image: "contour.mark", value: SettingsPane.melody.rawValue) {
                 MelodyPane()
             }
             Tab(Copy.settingsStorage, systemImage: "internaldrive", value: SettingsPane.storage.rawValue) {
@@ -135,26 +135,26 @@ struct AudioPane: View {
                 }
                 .frame(minHeight: 132)
             } header: {
-                Text("Microphone order")
+                Text(Copy.microphoneOrder)
             } footer: {
-                Text("Music Fetch listens with the first connected microphone. Drag to reorder.")
+                Text(Copy.microphoneOrderFooter)
                     .foregroundStyle(.secondary)
             }
 
             Section {
-                Picker("Listen to", selection: $captureOutput) {
-                    Text("System output").tag("")
+                Picker(Copy.listenTo, selection: $captureOutput) {
+                    Text(Copy.systemOutput).tag("")
                     ForEach(devices.outputs) { device in
                         Text(device.name).tag(device.uid)
                     }
                     if !captureOutput.isEmpty, !devices.outputs.contains(where: { $0.uid == captureOutput }) {
-                        Text("Not connected").tag(captureOutput)
+                        Text(Copy.notConnected).tag(captureOutput)
                     }
                 }
             } header: {
-                Text("This Mac")
+                Text(Copy.thisMac)
             } footer: {
-                Text("When the chosen output isn't connected, the system output is used.")
+                Text(Copy.outputFooter)
                     .foregroundStyle(.secondary)
             }
         }
@@ -183,19 +183,19 @@ private struct MicrophoneRow: View {
                 Text(device.name)
                     .foregroundStyle(connected ? .primary : .secondary)
                 if active {
-                    Text("In use").font(.caption).foregroundStyle(.tint)
+                    Text(Copy.inUse).font(.caption).foregroundStyle(.tint)
                 } else if !connected {
-                    Text("Not connected").font(.caption).foregroundStyle(.secondary)
+                    Text(Copy.notConnected).font(.caption).foregroundStyle(.secondary)
                 }
             }
             Spacer()
             ControlGroup {
                 Button { list.moveUp(device.uid) } label: { Image(systemName: "chevron.up") }
                     .disabled(isFirst)
-                    .accessibilityLabel("Move \(device.name) up")
+                    .accessibilityLabel(Copy.moveUp(device.name))
                 Button { list.moveDown(device.uid) } label: { Image(systemName: "chevron.down") }
                     .disabled(isLast)
-                    .accessibilityLabel("Move \(device.name) down")
+                    .accessibilityLabel(Copy.moveDown(device.name))
             }
             .controlGroupStyle(.navigation)
             .fixedSize()
@@ -203,7 +203,7 @@ private struct MicrophoneRow: View {
         .padding(.vertical, 2)
         .contextMenu {
             if !connected {
-                Button("Forget \(device.name)") { list.forget(device.uid) }
+                Button(Copy.forget(device.name)) { list.forget(device.uid) }
             }
         }
     }

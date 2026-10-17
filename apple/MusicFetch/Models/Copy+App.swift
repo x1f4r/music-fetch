@@ -9,7 +9,23 @@ extension Copy {
     static let libraryTitle = String(localized: "Library")
     static let listenAction = String(localized: "Listen")
     static let listenHint = String(localized: "Identifies what's playing")
-    static let listenHelp = String(localized: "Identify what's playing")
+    static let listenWithMicrophone = String(localized: "Listen with Microphone")
+    static let listenToThisMac = String(localized: "Listen to This Mac")
+    static let humWhistleOrSing = String(localized: "Hum, Whistle or Sing")
+    static let backToListen = String(localized: "Back to Listen")
+    static let listenMethods = String(localized: "Other Ways to Identify")
+    static let noSelection = String(localized: "No Selection")
+    static let showAll = String(localized: "Show All")
+    static let showInLibrary = String(localized: "Show in Library")
+
+    /// The toolbar Listen button's help: what its main part does.
+    static func listenHelp(_ source: ListenSource) -> String {
+        switch source {
+        case .microphone: String(localized: "Listen with the microphone")
+        case .thisMac: String(localized: "Listen to audio playing on this Mac")
+        case .hum: String(localized: "Hum, whistle or sing a tune")
+        }
+    }
     static let listenMenu = String(localized: "Listen")
     static let sessionMenu = String(localized: "Session")
     static let humming = String(localized: "Humming")
@@ -250,6 +266,29 @@ extension Copy {
         }
     }
 
+    // MARK: Settings › Audio
+
+    static let settingsAudio = String(localized: "Audio")
+    static let microphoneOrder = String(localized: "Microphone order")
+    static let microphoneOrderFooter = String(localized: "Music Fetch listens with the first connected microphone. Drag to reorder.")
+    static let listenTo = String(localized: "Listen to")
+    static let systemOutput = String(localized: "System output")
+    static let notConnected = String(localized: "Not connected")
+    static let outputFooter = String(localized: "When the chosen output isn't connected, the system output is used.")
+    static let inUse = String(localized: "In use")
+
+    static func moveUp(_ device: String) -> String {
+        String(localized: "Move \(device) up")
+    }
+
+    static func moveDown(_ device: String) -> String {
+        String(localized: "Move \(device) down")
+    }
+
+    static func forget(_ device: String) -> String {
+        String(localized: "Forget \(device)")
+    }
+
     // MARK: Library
 
     static let filterAll = String(localized: "All")
@@ -261,6 +300,8 @@ extension Copy {
     static let libraryEmptyTitle = String(localized: "Nothing identified yet")
     static let libraryEmptyMessage = String(localized: "Songs you identify will show up here.")
     static let libraryEmptyFiltered = String(localized: "Nothing here yet")
+    static let noPinnedTitle = String(localized: "Nothing pinned yet")
+    static let noPinnedMessage = String(localized: "Pin songs and mixes to keep them here and in the sidebar.")
     static let pin = String(localized: "Pin")
     static let unpin = String(localized: "Unpin")
     static let pinned = String(localized: "Pinned")

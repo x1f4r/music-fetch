@@ -61,6 +61,8 @@ final class LibraryModel {
     /// The newest session with a single answer (the recent row and the menu bar).
     private(set) var recent: LibraryEntry?
     private(set) var recentResults: [LibraryEntry] = []
+    /// Links and files still being analyzed (the sidebar's Library badge).
+    private(set) var runningCount = 0
     private(set) var isLoaded = false
     var selection: Set<String> = []
     /// Deleted but still undoable: hidden from every list.
@@ -69,6 +71,9 @@ final class LibraryModel {
     @ObservationIgnored private unowned let app: AppModel
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var deleteTimers: [String: Task<Void, Never>] = [:]
+    /// Pin changes still on their way to the store; refreshing before they land would
+    /// briefly show the old state.
+    @ObservationIgnored private var pinWrites = 0
 
     init(app: AppModel) {
         self.app = app
@@ -134,12 +139,14 @@ final class LibraryModel {
             let (list, pins, latest) = try await offMain {
                 (try engine.library(query: query), try engine.library(query: pinnedQuery), try engine.library(query: recentQuery))
             }
-            guard !Task.isCancelled else { return }
+            // A pin change still being written refreshes again once it has landed.
+            guard !Task.isCancelled, pinWrites == 0 else { return }
             entries = list
             pinned = pins
             let results = latest.filter { $0.track != nil && !pendingDeletes.contains($0.id) }
             recentResults = Array(results.prefix(3))
             recent = results.first
+            runningCount = latest.filter { $0.status == .running && !pendingDeletes.contains($0.id) }.count
             isLoaded = true
             selection = selection.filter { id in list.contains { $0.id == id } }
         } catch {
@@ -149,22 +156,55 @@ final class LibraryModel {
 
     // MARK: - Pin and delete
 
-    func setPinned(_ ids: [String], pinned value: Bool) {
+    /// Whether a session is pinned, from the list or an opened session.
+    func isPinned(_ id: String) -> Bool {
+        entry(id: id)?.pinned ?? app.cachedSession(id)?.pinned ?? false
+    }
+
+    func allPinned(_ ids: [String]) -> Bool {
+        !ids.isEmpty && ids.allSatisfy(isPinned)
+    }
+
+    /// Pins or unpins sessions at once: the lists change right away, the store follows
+    /// off the main thread, and Undo restores the previous state (§3.3).
+    func setPinned(_ ids: [String], pinned value: Bool, undoManager: UndoManager? = nil) {
         guard let engine = app.engine else { return }
-        for id in ids {
+        let changed = ids.filter { isPinned($0) != value }
+        guard !changed.isEmpty else { return }
+        let set = Set(changed)
+        entries = entries.map { entry in
+            guard set.contains(entry.id) else { return entry }
+            var entry = entry
+            entry.pinned = value
+            return entry
+        }
+        if value {
+            let added = entries.filter { set.contains($0.id) }
+            pinned = (pinned.filter { !set.contains($0.id) } + added).sorted { $0.createdAtMs > $1.createdAtMs }
+        } else {
+            pinned.removeAll { set.contains($0.id) }
+        }
+        for id in changed { app.cachedSession(id)?.markPinned(value) }
+        undoManager?.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated { model.setPinned(changed, pinned: !value, undoManager: undoManager) }
+        }
+        undoManager?.setActionName(value ? Copy.pin : Copy.unpin)
+        pinWrites += 1
+        Task {
             do {
-                try engine.setPinned(id: id, pinned: value)
-                app.cachedSession(id)?.markPinned(value)
+                try await offMain { for id in changed { try engine.setPinned(id: id, pinned: value) } }
             } catch {
                 Log.app.error("Pin failed: \(String(describing: error), privacy: .public)")
             }
+            pinWrites -= 1
+            if pinWrites == 0 { await refresh() }
         }
-        scheduleRefresh()
     }
 
-    func togglePin(_ id: String) {
-        let isPinned = entry(id: id)?.pinned ?? app.cachedSession(id)?.pinned ?? false
-        setPinned([id], pinned: !isPinned)
+    /// Pins all of `ids` when any is unpinned, otherwise unpins them (⌘⇧P, the toolbar,
+    /// the inspector, a row's pin).
+    func togglePinned(_ ids: [String], undoManager: UndoManager? = nil) {
+        setPinned(ids, pinned: !allPinned(ids), undoManager: undoManager)
     }
 
     /// Mixes and pinned sessions need confirmation before deleting.
