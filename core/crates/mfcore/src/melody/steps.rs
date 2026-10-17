@@ -14,6 +14,9 @@ const MIN_STEP_MS: u32 = 100;
 const QUERY_COLLAPSE: f32 = 0.7;
 /// Reference frames this far from the current step start a new one (semitones).
 const REF_SPLIT: f32 = 0.5;
+/// Reference steps shorter than this between two others are ornaments, glides or
+/// transcription noise that hums leave out (ms).
+const REF_MIN_STEP_MS: u32 = 180;
 /// Alignment costs: insertion/deletion, merge (plus its pitch cost) and the
 /// weight of rhythm against pitch in a substitution.
 const ALIGN_INDEL: f32 = 0.7;
@@ -43,7 +46,8 @@ pub fn query_steps(notes: &[Note]) -> Vec<Step> {
 }
 
 /// Pitch changes of a 20 fps contour: a new step starts where the pitch moves
-/// half a semitone from the current step's first frame; rests end steps.
+/// half a semitone from the current step's first frame; rests end steps. Short
+/// inner steps are dropped and neighbours left at the same pitch merge.
 pub fn frame_steps(frames: &[f32]) -> Vec<Step> {
     let mut out: Vec<Step> = Vec::new();
     let mut open = false;
@@ -65,7 +69,20 @@ pub fn frame_steps(frames: &[f32]) -> Vec<Step> {
             }
         }
     }
-    out
+    let mut kept: Vec<Step> = Vec::with_capacity(out.len());
+    for (i, s) in out.iter().enumerate() {
+        let inner = i > 0 && i + 1 < out.len();
+        if inner && s.end_ms - s.onset_ms < REF_MIN_STEP_MS {
+            continue;
+        }
+        match kept.last_mut() {
+            Some(last) if (s.pitch - last.pitch).abs() < REF_SPLIT && s.onset_ms <= last.end_ms + 300 => {
+                last.end_ms = s.end_ms;
+            }
+            _ => kept.push(*s),
+        }
+    }
+    kept
 }
 
 /// (interval in semitones, log2 ratio of consecutive inter-onset intervals).
@@ -281,9 +298,13 @@ mod tests {
         let s = query_steps(&[n(60.0, 0, 300), n(60.4, 300, 300), n(62.0, 600, 50), n(64.0, 700, 300)]);
         assert_eq!(s.iter().map(|s| s.pitch).collect::<Vec<_>>(), vec![60.0, 64.0]);
         assert_eq!(s[0].end_ms, 600);
-        let f = [60.0, 60.1, 62.0, 62.0, f32::NAN, 62.0, 64.0, f32::NAN, f32::NAN];
+        let mut f = vec![60.0; 6];
+        f.extend([62.0, 62.0, 62.0, 62.0, f32::NAN, 62.0, 62.0, 64.0, 64.0, 64.0, 64.0]);
         let s = frame_steps(&f);
         assert_eq!(s.iter().map(|s| s.pitch).collect::<Vec<_>>(), vec![60.0, 62.0, 64.0]);
-        assert_eq!((s[1].onset_ms, s[1].end_ms), (100, 300));
+        assert_eq!((s[1].onset_ms, s[1].end_ms), (300, 650));
+        // A 100 ms ornament between two notes of the same pitch disappears.
+        let g = [60.0, 60.0, 60.0, 60.0, 61.0, 61.0, 60.0, 60.0, 60.0, 60.0, 67.0, 67.0, 67.0, 67.0];
+        assert_eq!(frame_steps(&g).iter().map(|s| s.pitch).collect::<Vec<_>>(), vec![60.0, 67.0]);
     }
 }
