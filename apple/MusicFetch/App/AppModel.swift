@@ -56,6 +56,10 @@ final class AppModel {
     private(set) var engine: (any MusicEngine)?
     private(set) var engineError: String?
     let isDemo: Bool
+    /// A demo state finished applying (the screenshot tests wait for it).
+    var demoReady = false
+    /// The Settings pane a demo state opens, kept in memory instead of the stored pane.
+    var demoSettingsPane: String?
 
     @ObservationIgnored var listen: ListenModel!
     @ObservationIgnored var library: LibraryModel!
@@ -79,7 +83,11 @@ final class AppModel {
     init(demo: DemoState? = DemoState.fromLaunchArguments()) {
         self.demo = demo
         isDemo = demo != nil
-        showInspector = UserDefaults.standard.object(forKey: PreferenceKey.showInspector) as? Bool ?? true
+        if let demo {
+            showInspector = demo.inspector ?? true
+        } else {
+            showInspector = UserDefaults.standard.object(forKey: PreferenceKey.showInspector) as? Bool ?? true
+        }
         listen = ListenModel(app: self)
         library = LibraryModel(app: self)
         settings = SettingsModel(app: self)
@@ -671,13 +679,15 @@ final class AppModel {
 
     // MARK: - Preferences
 
+    /// Shows or hides the inspector and remembers it (demo states don't).
     func setInspector(_ shown: Bool) {
         showInspector = shown
+        guard !isDemo else { return }
         UserDefaults.standard.set(shown, forKey: PreferenceKey.showInspector)
     }
 
     var reduceMotion: Bool {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        demo?.reduceMotion == true || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
     /// The spring for `role`, or a 150 ms crossfade with Reduce Motion.

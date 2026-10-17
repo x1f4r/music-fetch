@@ -64,6 +64,9 @@ struct RootView: View {
         ) {
             Button(Copy.ok) { app.exportError = nil }
         }
+        .overlay(alignment: .topLeading) {
+            if app.demoReady { DemoReadyMarker() }
+        }
         .onOpenURL { app.handleURL($0) }
         .task {
             app.openSettingsAction = { openSettings() }
@@ -292,5 +295,17 @@ private struct AppInspector: ViewModifier {
             InspectorView()
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
         }
+    }
+}
+
+/// An invisible element the screenshot tests wait for (demo states only).
+private struct DemoReadyMarker: View {
+    var body: some View {
+        Text(verbatim: "MFDemoReady")
+            .font(.system(size: 1))
+            .foregroundStyle(.clear)
+            .frame(width: 1, height: 1)
+            .allowsHitTesting(false)
+            .accessibilityIdentifier("MFDemoReady")
     }
 }

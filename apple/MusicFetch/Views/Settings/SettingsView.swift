@@ -3,10 +3,20 @@ import SwiftUI
 
 /// Settings (§6.9): five panes, grouped forms, the last pane restored.
 struct SettingsView: View {
-    @AppStorage(PreferenceKey.settingsPane) private var pane = SettingsPane.general.rawValue
+    @Environment(AppModel.self) private var app
+    @AppStorage(PreferenceKey.settingsPane) private var storedPane = SettingsPane.general.rawValue
+
+    /// The stored pane; demo states keep theirs in memory.
+    private var pane: Binding<String> {
+        Binding {
+            app.demoSettingsPane ?? storedPane
+        } set: { value in
+            if app.isDemo { app.demoSettingsPane = value } else { storedPane = value }
+        }
+    }
 
     var body: some View {
-        TabView(selection: $pane) {
+        TabView(selection: pane) {
             Tab(Copy.settingsGeneral, systemImage: "gearshape", value: SettingsPane.general.rawValue) {
                 GeneralPane()
             }

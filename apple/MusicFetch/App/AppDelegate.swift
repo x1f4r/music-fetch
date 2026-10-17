@@ -5,6 +5,10 @@ import MusicFetchCore
 /// ("Identify with Music Fetch"), staying alive for the menu bar extra, and
 /// committing pending deletes at quit.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        AppModel.shared?.demo?.applyAppearance()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
