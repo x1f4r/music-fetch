@@ -67,6 +67,8 @@ Single stages (`uv run mfidx <stage> --help`):
 | `mfidx years` | release dates for songs without a chart year (`/track/{id}`) |
 | `mfidx extract [--limit N] [--follow]` | 3. previews -> RMVPE -> notes -> phrases |
 | `mfidx renote` | recompute preview phrases from stored f0 (no network) |
+| `mfidx fulltrack [--top 3000] [--interval 12.5]` | 3b. full-track melodies of the most popular songs (YouTube) |
+| `mfidx eval-references [--groups F]` | f0 of the CHAD original videos, for coverage analysis only |
 | `mfidx midi [--step catalog\|link\|extract]` | 4. Lakh MIDI melodies |
 | `mfidx validate` / `mfidx famous` | MIDI vs preview DTW agreement (all songs / report on well-known songs) |
 | `mfidx export [--date D]` | 5. JSONL + stats.json |
@@ -115,6 +117,23 @@ touching notes within 0.5 semitone merged. Phrases split at rests ≥ 400 ms, no
 their longest rest, phrases need ≥ 6 notes, exact repeats removed. `start_ms` is the
 phrase start inside the preview (the preview's offset in the song is not known).
 
+**3b. Full tracks.** A preview covers about 30 s; people often hum a verse, the intro or the
+bridge. For the `--top` most popular resolved songs, `mfidx fulltrack` finds the studio recording
+on YouTube: one flat search for "artist - title", then the most plausible result by title and
+artist similarity, a duration within max(12 s, 8 %) of Deezer's, no live/cover/remix/sped-up/…
+words that the song title lacks, preferring "- Topic" art tracks and VEVO uploads. The audio is
+streamed through ffmpeg into memory, RMVPE runs in 30.72 s chunks with 1.28 s of context, and
+only the f0 track, confidences and notes (same parameters as the previews) are stored in
+`track_melody`; audio never touches the disk. Downloads are paced (`--interval`, ±20 % jitter)
+and the stage pauses 30 min, then longer, when YouTube asks for a sign-in. YouTube flagged the
+build host after about 400 videos in 90 minutes at 12.5 s; 25 s has been sustainable. It needs
+a current yt-dlp (`MFIDX_YTDLP`, e.g. a separate `uv venv` with `yt-dlp[default]`) and uses
+Node as the JS runtime when Deno is missing. Export adds these melodies as `"audio"` phrases.
+
+`mfidx eval-references` stores the same data for the original videos of the CHAD hums in
+`eval_reference` (never exported). It shows where each Deezer preview sits in the song and
+how much of each hummed section it covers.
+
 **4. MIDI.** clean_midi (artist/title from the path) and lmd_matched (MSD id ->
 `unique_tracks.txt`, best match score per file) are linked to universe songs by the same keys.
 Songs that are not in the universe but have ≥ 2 distinct clean_midi transcriptions are added
@@ -148,7 +167,8 @@ On 20 songs the stem raised mean agreement from 0.74 to 0.76–0.78 (better for 
 2–4 GPU-seconds per preview with audio-separator's per-file processing, i.e. 35–70 GPU-hours
 for the whole universe, so the default build runs on the mix.
 
-**5. Export.** One line per song with at least one phrase (preview phrases first, then MIDI),
+**5. Export.** One line per song with at least one phrase (preview phrases first, then full
+track, then MIDI),
 popularity re-ranked over the exported songs. `stats.json` has counts by source and origin,
 notes per song and coverage by decade.
 
