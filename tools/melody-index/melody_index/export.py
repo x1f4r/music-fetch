@@ -31,9 +31,12 @@ TIERS: dict[str, dict[str, Any]] = {
     "android": {"max_songs": 25000, "budget_mb": 75.0},
     "mac": {"max_songs": None, "budget_mb": 150.0},
 }
-# Format-2 index bytes per exported note and per song, from 59.1 MB for the 2026-10-14 export
-# (58,006 songs, 7.15 M notes). Check the estimate against `mf index build` after a large change.
-NOTE_BYTES = 7.95
+# Format-2 index bytes per exported note and per song, fitted to two `mf index build` runs of
+# 2026-10-18 (android 24,982 songs: 32.82 MB; mac 58,288 songs: 63.89 MB; both with 583,660
+# full-track notes). Full-track notes cost more: long continuous tracks make more contour frames
+# and windows per note. A full track (~700 notes) costs ~9.2 KB. Refit after a builder change.
+NOTE_BYTES = 7.52
+FULL_NOTE_BYTES = 13.1
 SONG_BYTES = 40.0
 
 
@@ -41,8 +44,10 @@ def _notes(phrases: list[dict[str, Any]]) -> int:
     return sum(len(p["notes"]) for p in phrases)
 
 
-def estimate_bytes(notes: int, songs: int) -> float:
-    return NOTE_BYTES * notes + SONG_BYTES * songs
+def estimate_bytes(notes: int, songs: int, full_notes: int = 0) -> float:
+    """Estimated index size: ``notes`` from previews, MIDI, windows and transcriptions, plus
+    ``full_notes`` from full tracks."""
+    return NOTE_BYTES * notes + FULL_NOTE_BYTES * full_notes + SONG_BYTES * songs
 
 
 def apply_tier(
@@ -60,17 +65,18 @@ def apply_tier(
             _, _, m = kept.pop()
             base_notes -= _notes(m["parts"]["base"]) + _notes(m["parts"]["window"])
             dropped_songs += 1
-    notes = base_notes
+    notes, full_notes = base_notes, 0
     full_in, full_out = 0, 0
     for _, _, m in kept:
         parts = m["parts"]
         if not parts["full"]:
             m["use_full"] = False
             continue
-        extra = _notes(parts["full"]) - _notes(parts["window"])
-        if budget is None or estimate_bytes(notes + extra, len(kept)) <= budget:
+        add, drop = _notes(parts["full"]), _notes(parts["window"])
+        if budget is None or estimate_bytes(notes - drop, len(kept), full_notes + add) <= budget:
             m["use_full"] = True
-            notes += extra
+            notes -= drop
+            full_notes += add
             full_in += 1
         else:
             m["use_full"] = False
@@ -81,7 +87,7 @@ def apply_tier(
         "songs_dropped_for_budget": dropped_songs,
         "full_tracks_included": full_in,
         "full_tracks_left_out": full_out,
-        "estimated_index_mb": round(estimate_bytes(notes, len(kept)) / 1e6, 1),
+        "estimated_index_mb": round(estimate_bytes(notes, len(kept), full_notes) / 1e6, 1),
     }
 
 
@@ -253,7 +259,10 @@ def run(
     stats = build_stats(records, rows, universe_by_decade, verdicts, min_agreement, date, out)
     if tier_info is not None:
         stats["tier"] = {"name": tier, **tier_info}
-    stats["estimated_index_mb"] = round(estimate_bytes(stats["notes"], stats["songs"]) / 1e6, 1)
+    full_notes = stats["notes_by_source"].get("audio", 0)
+    stats["estimated_index_mb"] = round(
+        estimate_bytes(stats["notes"] - full_notes, stats["songs"], full_notes) / 1e6, 1
+    )
     (paths.out / f"stats{suffix}.json").write_text(json.dumps(stats, indent=2, ensure_ascii=False))
     log.info("export: %d songs -> %s", len(records), out)
     return stats

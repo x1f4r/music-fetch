@@ -175,8 +175,9 @@ scores), then `resolve`, `extract`; `refs` picks the songs up by popularity.
 **Tiers.** `mfidx export --tier android` keeps the 25,000 most popular songs and gives full
 tracks to as many of the most popular as fit an estimated 75 MB format-2 index; `--tier mac`
 keeps every song within 150 MB. Songs whose full track does not fit keep their preview and
-second window. The estimate (7.95 B per note, 40 B per song, from the 59.1 MB index of
-2026-10-14) is in `stats-<tier>.json`; check it against `mf index build`.
+second window. The estimate (7.52 B per preview, MIDI or transcription note, 13.1 B per
+full-track note, 40 B per song, fitted to two format-2 builds of 2026-10-18; a full track costs
+~9.2 KB) is in `stats-<tier>.json`; check it against `mf index build` after builder changes.
 
 `mfidx eval-references` stores the same data for the original videos of the CHAD hums in
 `eval_reference` (never exported). It shows where each Deezer preview sits in the song and

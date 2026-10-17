@@ -21,7 +21,7 @@ def test_full_tracks_go_to_the_most_popular_songs_that_fit():
     recs = [record(i, full=600, window=80 if i == 2 else 0) for i in range(5)]
     base = estimate_bytes(5 * 100 + 80, 5)
     # Room for two full tracks: the two most popular songs get them.
-    budget = (base + 2 * estimate_bytes(600, 0) + 1) / 1e6
+    budget = (base + 2 * estimate_bytes(0, 0, 600) + 1) / 1e6
     kept, info = apply_tier(recs, None, budget)
     assert len(kept) == 5 and info["full_tracks_included"] == 2 and info["full_tracks_left_out"] == 3
     for _, rec, meta in kept:
@@ -39,3 +39,9 @@ def test_max_songs_and_a_budget_too_small_for_the_songs_themselves():
     assert len(kept) == 4 and info["songs_dropped_for_budget"] == 2 and info["full_tracks_included"] == 0
     kept, info = apply_tier(recs, 3, None)
     assert len(kept) == 3 and info["full_tracks_included"] == 3
+
+
+def test_estimate_matches_the_measured_builds():
+    # mf index build, 2026-10-18: android 32,816,843 B; mac 63,888,548 B.
+    assert abs(estimate_bytes(3_801_759 - 583_660, 24_982, 583_660) - 32_816_843) < 0.01 * 32_816_843
+    assert abs(estimate_bytes(7_759_215 - 583_660, 58_288, 583_660) - 63_888_548) < 0.01 * 63_888_548
