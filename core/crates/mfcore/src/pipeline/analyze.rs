@@ -686,7 +686,17 @@ async fn single_prior<S: Services>(services: &S, hints: &Hints, duration_ms: u64
         let fits = found.as_ref().and_then(|f| f.duration_ms).is_none_or(|d| within(d, duration_ms, 0.12));
         return Prior { track: Some(found.filter(|_| fits).unwrap_or_else(|| track.clone())), strong: true };
     }
-    let Some(parsed) = &hints.title_track else { return Prior::default() };
+    let Some(parsed) = &hints.title_track else {
+        // "Artist-Title" with a bare hyphen counts once the catalog knows the
+        // song by that artist (in any version).
+        let Some(loose) = &hints.loose_title_track else { return Prior::default() };
+        let known = services.find(&hints::bare_title(&loose.title), &loose.artist, None).await;
+        return match known {
+            Some(found) if hints::same_version(&found, loose) => Prior { track: Some(found), strong: false },
+            Some(_) => Prior { track: Some(loose.clone()), strong: false },
+            None => Prior::default(),
+        };
+    };
     match services.find(&parsed.title, &parsed.artist, None).await {
         Some(found) => {
             let strong = found.duration_ms.is_some_and(|d| within(d, duration_ms, 0.12));

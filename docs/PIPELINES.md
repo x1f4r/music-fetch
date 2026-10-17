@@ -197,9 +197,14 @@ Collected before any recognizer call:
 - Version qualifiers (remix, edit, extended, live, acoustic, VIP, bootleg, rework,
   sped up, slowed) are kept: they select the exact recording. `hints::version_key`
   reduces a title to what distinguishes a recording ("Tiësto Remix" → `tiesto remix`;
-  "Extended Mix", "Radio Edit", "Original Mix", remasters → the original);
-  `same_recording` = no ISRC/provider-id conflict + same song + compatible version, and
-  is what stitching and deduplication use.
+  "Extended Mix", "Radio Edit", "Original Mix", remasters → the original); two
+  versions are compatible when they share a kind (remix, live, …) and, when both name
+  people or places, one of those (style words such as trap, dubstep or house name
+  nobody: "Thrizzo Trap Remix" is not "Eff3cts Trap Remix"). `same_recording` = no
+  ISRC/provider-id conflict + same song + compatible version, and is what stitching and
+  deduplication use. `same_song` also accepts a version credited to its remixers in
+  one place and to someone else in another ("Argy, Omnya – Aria" and "Habib Alberto –
+  Aria [Argy & Omnya RMX]").
 
 ### Local fingerprint matching (`fingerprint/`)
 
