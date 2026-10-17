@@ -107,21 +107,9 @@ final class ScreenshotTests: XCTestCase {
                 sleep(1)
                 self.attachWindow(window, "noMatch-hum", variant)
             }
-            // Hovering a library row shows its pin button.
-            run("library", variant) { app, window in
-                let row = window.staticTexts["Take On Me"].firstMatch
-                if row.exists { row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover() }
-                sleep(1)
-                self.attachWindow(window, "library-hover", variant)
-            }
-            // The context menu of a multiple selection, then ⌘⇧P pins all of it.
+            // ⌘⇧P pins the whole selection. (Synthetic hover and right clicks don't reach
+            // list rows on the runners, so row hover and context menus aren't shot.)
             run("library-selection", variant) { app, window in
-                let row = window.staticTexts["Take On Me"].firstMatch
-                if row.exists { row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick() }
-                sleep(1)
-                self.attachScreen("library-selection-menu", variant)
-                app.typeKey(.escape, modifierFlags: [])
-                sleep(1)
                 app.typeKey("p", modifierFlags: [.command, .shift])
                 sleep(1)
                 self.attachWindow(window, "library-selection-pinned", variant)
