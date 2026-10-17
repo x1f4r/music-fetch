@@ -4,11 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.musicfetch.appGraph
-import app.musicfetch.core.Service
 import app.musicfetch.core.StorageUsage
 import app.musicfetch.core.coreVersion
 import app.musicfetch.platform.AppSettings
 import app.musicfetch.platform.CredentialField
+import app.musicfetch.platform.ProviderPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -46,9 +46,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) { _engineVersion.value = runCatching { coreVersion() }.getOrDefault("") }
     }
 
-    fun setDefaultService(service: Service) {
-        viewModelScope.launch { graph.settings.setDefaultService(service) }
-    }
+    /** Where results open, for the "Open songs in" row. */
+    val preference: StateFlow<ProviderPreference?> = graph.preference
 
     fun setNotify(on: Boolean) {
         viewModelScope.launch { graph.settings.setNotifyInBackground(on) }

@@ -12,6 +12,8 @@ import app.musicfetch.engine.EngineHost
 import app.musicfetch.engine.MelodyLibrary
 import app.musicfetch.notify.Notifications
 import app.musicfetch.platform.CredentialStore
+import app.musicfetch.platform.ProviderPreference
+import app.musicfetch.platform.Providers
 import app.musicfetch.platform.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +21,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 
 class MusicFetchApplication : Application() {
     /** Process-wide services; created in [onCreate]. */
@@ -50,6 +57,15 @@ class AppGraph(val app: Application) {
     val analyses = AnalysisController(app, scope, engineHost, settings)
     val melody = MelodyLibrary(scope, engineHost)
     val deletions = Deletions(scope, engineHost) { notifyLibraryChanged() }
+
+    /**
+     * Where results open (docs/APPS.md, "Opening links"); before the user decided, what the
+     * first-launch panel would pre-select. Null only until the settings are read.
+     */
+    val preference: StateFlow<ProviderPreference?> = settings.settings
+        .map { it.preference ?: Providers.undecided(app) }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, null)
 
     /** Set by "Hum it" on an unidentified mix segment; the next confirmed hum fills it in. */
     val pendingSegmentFix = MutableStateFlow<SegmentFix?>(null)

@@ -384,7 +384,7 @@ class ListenController(
             val prefs = settings.current()
             val visible = app.appGraph.isAppVisible
             val wanted = state.origin != ListenOrigin.App || (!visible && prefs.notifyInBackground)
-            if (wanted) Notifications.postListenResult(app, state, result, prefs.defaultService)
+            if (wanted) Notifications.postListenResult(app, state, result, settings.preference())
             if (result is ListenResult.Matched || result is ListenResult.Candidates) ListenWidget.refresh(app)
         }
     }

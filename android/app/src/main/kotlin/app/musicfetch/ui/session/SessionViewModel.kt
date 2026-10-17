@@ -27,17 +27,15 @@ import app.musicfetch.core.SessionKind
 import app.musicfetch.core.SessionStatus
 import app.musicfetch.core.SourceInfo
 import app.musicfetch.core.Track
+import app.musicfetch.platform.ProviderPreference
 import app.musicfetch.ui.common.ArtworkLoader
 import app.musicfetch.widget.ListenWidget
 import com.materialkolor.ktx.themeColorOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -103,8 +101,8 @@ class SessionViewModel(app: Application, private val id: String) : AndroidViewMo
     /** Dominant artwork colour of the result, for the content-based scheme. */
     val seed: StateFlow<Color?> = _seed.asStateFlow()
 
-    val preferred: StateFlow<Service> = graph.settings.settings.map { it.defaultService }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, Service.SPOTIFY)
+    /** Where results open; null until the settings are read. */
+    val preference: StateFlow<ProviderPreference?> = graph.preference
 
     private val _messages = MutableStateFlow<String?>(null)
 

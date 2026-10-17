@@ -27,5 +27,9 @@ data object SettingsRoute : Route
 @Serializable
 data object LicensesRoute : Route
 
+/** Settings › Open songs in. */
+@Serializable
+data object ProviderRoute : Route
+
 /** The two navigation destinations, each with its own back stack. */
 enum class Tab { Listen, Library }

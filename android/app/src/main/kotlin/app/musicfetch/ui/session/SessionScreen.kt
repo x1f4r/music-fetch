@@ -50,7 +50,6 @@ import app.musicfetch.core.ExportFormat
 import app.musicfetch.core.LibraryEntry
 import app.musicfetch.core.SessionKind
 import app.musicfetch.core.Track
-import app.musicfetch.platform.ServiceLinkOpener
 import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.common.ListRow
 import app.musicfetch.ui.navigation.LocalNavigator
@@ -303,7 +302,7 @@ private fun EmptyContent(view: SessionView.Empty, viewModel: SessionViewModel, o
 }
 
 internal fun shareText(track: Track): String {
-    val link = ServiceLinkOpener.pick(track.links, track.links.firstOrNull()?.service ?: app.musicfetch.core.Service.SPOTIFY)
+    val link = track.links.firstOrNull { !it.isSearch } ?: track.links.firstOrNull()
     return listOfNotNull("${track.title} — ${track.artist}", link?.url).joinToString("\n")
 }
 

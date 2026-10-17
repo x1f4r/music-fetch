@@ -234,7 +234,7 @@ class AnalysisController(
                 else -> app.getString(R.string.state_no_match) to (state.source?.title ?: state.input)
             }
             val track = if (!state.isCollection) single else null
-            Notifications.postAnalysisResult(app, id, title, text, track, prefs.defaultService)
+            Notifications.postAnalysisResult(app, id, title, text, track, settings.preference())
         }
     }
 

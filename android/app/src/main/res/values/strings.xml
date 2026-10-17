@@ -266,6 +266,21 @@
     <string name="tile_matching">Matching</string>
     <string name="widget_label">Music Fetch</string>
 
+    <!-- Where songs open -->
+    <string name="provider_panel_title">Where do you listen?</string>
+    <string name="provider_panel_message">Songs you identify open there.</string>
+    <string name="provider_installed">Installed</string>
+    <string name="provider_more">More…</string>
+    <string name="provider_custom">Another app or site</string>
+    <string name="provider_custom_name">Name</string>
+    <string name="provider_custom_link">Link</string>
+    <string name="provider_custom_placeholder" translatable="false">https://example.com/search?q={query}</string>
+    <string name="provider_custom_hint">Put {query}, {artist}, {title} or {isrc} where the song goes.</string>
+    <string name="provider_custom_invalid">Enter an https link with {query}, {artist}, {title} or {isrc}.</string>
+    <string name="provider_custom_needs_name">Give it a name.</string>
+    <string name="provider_skip">Skip</string>
+    <string name="provider_custom_edit">Edit</string>
+
     <plurals name="mix_eta">
         <item quantity="one">About %d min left</item>
         <item quantity="other">About %d min left</item>

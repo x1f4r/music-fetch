@@ -329,7 +329,7 @@ private fun SegmentSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val preferred by viewModel.preferred.collectAsStateWithLifecycle()
+    val preference by viewModel.preference.collectAsStateWithLifecycle()
     val colors = MaterialTheme.colorScheme
     val track = segment.track
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -359,7 +359,7 @@ private fun SegmentSheet(
                 Detail(stringResource(R.string.mix_match), tierText(segment))
                 evidenceText(segment)?.let { Detail(stringResource(R.string.mix_evidence), it) }
                 track.album?.takeIf { it.isNotBlank() }?.let { Detail(stringResource(R.string.result_album), it) }
-                OpenInSplitButton(track, preferred, height = 48.dp)
+                preference?.let { OpenInSplitButton(track, it, height = 48.dp) }
             }
             val sourceUrl = segment.sourceUrl
             if (sourceUrl != null && view.timed) {
