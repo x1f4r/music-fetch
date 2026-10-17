@@ -77,8 +77,9 @@ final class AppModel {
     let preview = PreviewPlayer()
     @ObservationIgnored let notifier = Notifier()
 
-    /// Sessions the app holds a model for (running analyses, opened sessions).
-    @ObservationIgnored private var sessions: [String: SessionModel] = [:]
+    /// Sessions the app holds a model for (running analyses, opened sessions). Observed,
+    /// so the inspector and menus update when a pushed session finishes loading.
+    private var sessions: [String: SessionModel] = [:]
     /// A mix segment waiting for a hum ("Hum it" on an ID row).
     @ObservationIgnored private var segmentHum: (sessionID: String, segmentID: String)?
     @ObservationIgnored private let host = EngineHost()
