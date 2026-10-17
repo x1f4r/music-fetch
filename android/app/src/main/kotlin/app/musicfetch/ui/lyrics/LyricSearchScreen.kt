@@ -53,6 +53,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.musicfetch.R
+import app.musicfetch.ui.common.tag
 import app.musicfetch.analysis.AnalysisState
 import app.musicfetch.appGraph
 import app.musicfetch.core.Candidate
@@ -153,7 +154,7 @@ fun LyricSearchScreen(viewModel: LyricSearchViewModel = viewModel()) {
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { submit() }),
-                        modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                        modifier = Modifier.fillMaxWidth().focusRequester(focus).tag("lyrics.field"),
                     )
                 }
                 if (text.isNotEmpty()) {
@@ -163,6 +164,12 @@ fun LyricSearchScreen(viewModel: LyricSearchViewModel = viewModel()) {
                         focus.requestFocus()
                     }) {
                         Icon(painterResource(R.drawable.ic_close), contentDescription = stringResource(R.string.settings_clear))
+                    }
+                }
+                // Search without the keyboard's action key (mirrors the link field).
+                if (text.isNotBlank()) {
+                    IconButton(onClick = ::submit, modifier = Modifier.tag("lyrics.search")) {
+                        Icon(painterResource(R.drawable.ic_search), contentDescription = stringResource(R.string.lyrics_search))
                     }
                 }
             }

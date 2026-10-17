@@ -49,16 +49,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.musicfetch.R
-import app.musicfetch.appGraph
-import app.musicfetch.capture.ListenOrigin
-import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.EvidenceSource
-import app.musicfetch.core.ListenMode
 import app.musicfetch.core.Segment
 import app.musicfetch.core.SegmentKind
 import app.musicfetch.core.Tier
+import app.musicfetch.platform.ListenSource
 import app.musicfetch.platform.ServiceLinkOpener
 import app.musicfetch.platform.displayName
+import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.common.Formatters
 import app.musicfetch.ui.components.Artwork
 import app.musicfetch.ui.components.HatchedTile
@@ -156,15 +154,13 @@ internal fun MixContent(view: SessionView.Mix, viewModel: SessionViewModel, onBa
     }
 }
 
-/** Starts a hum whose confirmed answer fills in [segment]. */
+/** Starts a hum on the Listen stage whose confirmed answer fills in [segment]. */
 @Composable
 private fun humItAction(): (SessionViewModel, Segment) -> Unit {
-    val context = LocalContext.current
     val navigator = LocalNavigator.current
     return { vm, segment ->
         vm.humForSegment(segment)
-        context.appGraph.listen.start(CaptureSource.MICROPHONE, ListenMode.HUM, ListenOrigin.App)
-        navigator.showListen()
+        AppIntents.listenNow(ListenSource.Hum, navigator)
     }
 }
 
