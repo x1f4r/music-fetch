@@ -83,6 +83,9 @@ pub enum IndexCommand {
     },
     /// Print an index's header and size.
     Info { mfi: PathBuf },
+    /// Print the reference contours of songs as JSONL (song, track, source, 20 fps
+    /// contour in MIDI semitones, null when unvoiced).
+    Tracks { mfi: PathBuf, songs: Vec<u32> },
 }
 
 #[derive(Subcommand)]
@@ -166,6 +169,18 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             Ok(())
         }
         MelodyCommand::Index(IndexCommand::Info { mfi }) => index_info(&mfi),
+        MelodyCommand::Index(IndexCommand::Tracks { mfi, songs }) => {
+            let index = MelodyIndex::open(&mfi)?;
+            for song in songs {
+                for id in index.song_tracks(song) {
+                    let Some(t) = index.track(id) else { continue };
+                    let contour: Vec<Option<f32>> = t.contour.iter().map(|m| m.is_finite().then_some(*m)).collect();
+                    let source = format!("{:?}", t.source).to_lowercase();
+                    println!("{}", serde_json::json!({"song": song, "track": id, "source": source, "contour": contour}));
+                }
+            }
+            Ok(())
+        }
         MelodyCommand::Eval(EvalCommand::Qbsh {
             index,
             queries,
