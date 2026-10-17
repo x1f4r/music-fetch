@@ -150,9 +150,16 @@ Rate limits from recognizers were the main failure of 0.4. Rules:
    (`links::extract_url`, first URL in shared text) → `Link`; else `InvalidInput`.
 2. `Started`, then for links `Phase(Resolving)` and `links::resolve` (when the page
    itself cannot be fetched, the media backend still gets the link):
-   - `Resolution::Tracks` → `Source`; enrich tracks (4 at a time); one `Segment` per
-     track (`kind Track`, `start = end = 0`, `item_index` = position, confidence 0.99,
-     `Confirmed`, evidence `Metadata`) → `Finished(Completed { n, n })`.
+   - `Resolution::Tracks` → `Source`; at once one `Segment` per track from the page's
+     metadata (`kind Track`, `start = end = 0`, `item_index` = position, confidence 0.99,
+     `Confirmed`, evidence `Metadata`, search links for every service), then each
+     segment again under the same id as its enrichment arrives (8 lookups in flight,
+     the catalogs' rate limiters pace them) → `Finished(Completed { n, n })`. A
+     single track gets every catalog; collections get Deezer only (ISRC or search;
+     iTunes just for tracks Deezer misses, and only while nothing else waits for
+     it; tracks read from Deezer itself are not looked up again). A 50-track
+     Spotify playlist lists every track within a fraction of a second and
+     finishes in about 8 s.
    - `Resolution::Media` → `Source` (with hints); continue.
 3. Media: unless `direct`, `MediaBackend::probe` → `media::parse_probe` → refresh
    `Source` (title, uploader, thumbnail, duration, item count). For media ≥ 8 min the

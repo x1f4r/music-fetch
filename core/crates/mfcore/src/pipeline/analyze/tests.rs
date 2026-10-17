@@ -76,6 +76,43 @@ async fn a_two_song_file_is_a_mix() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn collections_list_every_track_before_enriching() {
+    use crate::model::SessionEvent;
+    use crate::pipeline::testutil::{FakeServices, session, track};
+    let dir = temp_dir();
+    let (ctx, events) = session(&dir, SessionKind::Link);
+    let mut services = FakeServices::new(Vec::new(), Vec::new());
+    services.catalog = vec![track("A", "One", 200), track("B", "Two", 180), track("C", "Three", 210)];
+    let page = |artist: &str, title: &str| Track { title: title.into(), artist: artist.into(), ..Track::default() };
+    let tracks = vec![page("A", "One"), page("B", "Two"), page("C", "Three")];
+    let options = AnalyzeOptions::default();
+    let mut run = Run { ctx: &ctx, services: &services, options: &options, log: Vec::new(), probes: 0, paid: 0 };
+    let report = run.tracks(SourceInfo::default(), tracks).await.unwrap();
+    assert_eq!(report.outcome, Outcome::Completed { identified: 3, total: 3 });
+    assert!(report.segments.iter().all(|s| s.track.as_ref().is_some_and(|t| t.duration_ms.is_some())));
+    let segments: Vec<Segment> = events
+        .0
+        .lock()
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::Segment { segment } => Some(segment.clone()),
+            _ => None,
+        })
+        .collect();
+    // Every track at once from the page, with search links, before any enrichment...
+    let first: Vec<&str> = segments[..3].iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(first, ["track-0", "track-1", "track-2"]);
+    assert!(
+        segments[..3].iter().all(|s| s.track.as_ref().is_some_and(|t| t.duration_ms.is_none() && !t.links.is_empty()))
+    );
+    // ...then each again under the same id once enriched.
+    assert_eq!(segments.len(), 6);
+    assert!(segments[3..].iter().all(|s| s.track.as_ref().is_some_and(|t| t.duration_ms.is_some())));
+    ctx.cleanup();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn durations_within_tolerance() {
     assert!(within(212_000, 213_000, 0.12));

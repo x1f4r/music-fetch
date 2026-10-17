@@ -41,8 +41,9 @@ const INTERACTIVE_MAX_MS: u64 = 10 * 60_000;
 const MAX_DIRECT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Impression analysis looks at the start of the media.
 const IMPRESSION_MS: u64 = 30_000;
-/// Enrichment of streaming-service tracks runs this many at a time.
-const ENRICH_PARALLEL: usize = 4;
+/// Enrichment of streaming-service tracks runs this many at a time (the
+/// catalogs' own rate limiters pace the requests).
+const ENRICH_PARALLEL: usize = 8;
 
 /// A validated analysis input.
 #[derive(Debug, Clone, PartialEq)]
@@ -241,39 +242,47 @@ impl<S: Services> Run<'_, S> {
         self.analyze_audio(&pcm, &hints, &source, None, mode).await
     }
 
-    /// Streaming-service tracks: enrich and list them, no audio.
+    /// Streaming-service tracks, no audio: every segment at once from the
+    /// page's metadata, then each one again under the same id as its
+    /// enrichment (artwork, ISRC, links) arrives. A single track gets every
+    /// catalog; collections get the fast ones.
     async fn tracks(&mut self, source: SourceInfo, tracks: Vec<Track>) -> Result<Report> {
+        use futures_util::StreamExt;
         let ctx = self.ctx;
         let mut source = source;
         source.item_count = tracks.len().max(1) as u32;
         ctx.emitter.source(source.clone());
         let total = tracks.len() as u32;
-        let mut segments = Vec::with_capacity(tracks.len());
-        let mut done: Vec<(usize, Track)> = Vec::with_capacity(tracks.len());
-        for (chunk_index, chunk) in tracks.chunks(ENRICH_PARALLEL).enumerate() {
+        let mut segments: Vec<Segment> = tracks
+            .into_iter()
+            .enumerate()
+            .map(|(index, track)| metadata_segment(index, crate::catalog::with_search_links(track)))
+            .collect();
+        for segment in &segments {
+            ctx.emitter.segment(segment.clone());
+        }
+        let single = segments.len() == 1;
+        // Futures are built up front (no closure): the session future must stay `Send`.
+        let mut pending = Vec::with_capacity(segments.len());
+        for (index, segment) in segments.iter().enumerate() {
+            let Some(track) = segment.track.clone() else { continue };
+            let services = self.services;
+            pending.push(async move {
+                let enriched = if single { services.enrich(track).await } else { services.enrich_quick(track).await };
+                (index, enriched)
+            });
+        }
+        let mut enriched = futures_util::stream::iter(pending).buffer_unordered(ENRICH_PARALLEL);
+        while let Some((index, track)) = enriched.next().await {
             ctx.cancel.check()?;
-            let enriched = futures_util::future::join_all(chunk.iter().cloned().map(|t| self.services.enrich(t))).await;
-            for (k, track) in enriched.into_iter().enumerate() {
-                done.push((chunk_index * ENRICH_PARALLEL + k, track));
+            let segment = &mut segments[index];
+            if segment.track.as_ref() != Some(&track) {
+                segment.track = Some(track);
+                ctx.emitter.segment(segment.clone());
             }
         }
-        for (index, track) in done {
-            let segment = Segment {
-                id: format!("track-{index}"),
-                item_index: index as u32,
-                start_ms: 0,
-                end_ms: 0,
-                kind: SegmentKind::Track,
-                track: Some(track),
-                confidence: 0.99,
-                tier: crate::model::Tier::Confirmed,
-                evidence: vec![Evidence { source: EvidenceSource::Metadata, at_ms: 0, score: 0.99, detail: None }],
-                alternates: Vec::new(),
-                source_url: None,
-            };
-            ctx.emitter.segment(segment.clone());
-            segments.push(segment);
-        }
+        drop(enriched);
+        ctx.cancel.check()?;
         let update = SessionUpdate {
             title: source.title.clone(),
             track: (total == 1).then(|| segments.first().and_then(|s| s.track.clone())).flatten(),
@@ -327,6 +336,23 @@ impl<S: Services> Run<'_, S> {
             log: Vec::new(),
             update,
         })
+    }
+}
+
+/// A streaming-service track as a segment of its collection.
+fn metadata_segment(index: usize, track: Track) -> Segment {
+    Segment {
+        id: format!("track-{index}"),
+        item_index: index as u32,
+        start_ms: 0,
+        end_ms: 0,
+        kind: SegmentKind::Track,
+        track: Some(track),
+        confidence: 0.99,
+        tier: crate::model::Tier::Confirmed,
+        evidence: vec![Evidence { source: EvidenceSource::Metadata, at_ms: 0, score: 0.99, detail: None }],
+        alternates: Vec::new(),
+        source_url: None,
     }
 }
 
