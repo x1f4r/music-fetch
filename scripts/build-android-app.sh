@@ -156,7 +156,10 @@ cp "$apk" "$out"
 # --- Verify ------------------------------------------------------------------
 
 echo "==> $out"
-printf '    size: %s bytes (%.1f MB)\n' "$(wc -c < "$out" | tr -d ' ')" "$(awk -v b="$(wc -c < "$out")" 'BEGIN { print b / 1048576 }')"
+bytes="$(wc -c < "$out" | tr -d ' ')"
+# Format the number in awk under the C locale: the shell's printf parses it with
+# LC_NUMERIC and fails in comma-decimal locales.
+printf '    size: %s bytes (%s MB)\n' "$bytes" "$(LC_ALL=C awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1048576 }')"
 if ! zipalign_log="$("$build_tools/zipalign" -c -P 16 -v 4 "$out" 2>&1)"; then
   echo "$zipalign_log" | grep -v '(OK' >&2
   echo "error: zipalign -c -P 16 failed" >&2
