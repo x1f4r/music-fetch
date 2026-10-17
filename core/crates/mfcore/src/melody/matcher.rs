@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::melody::SongMeta;
 use crate::melody::contour::{self, DIMS, Filled, HALF, QUERY_MIN_VOICED, Vector, WINDOW};
-use crate::melody::index::{self, CODES, MelodyIndex};
+use crate::melody::index::{self, CODES, MelodyIndex, fnv1a, normalize_title};
 use crate::melody::ngrams;
 use crate::melody::notes::{CONTOUR_MS, MelodyQuery, median};
 use crate::melody::steps::{self, AlignRows, AlignTable, Step};
@@ -90,7 +90,11 @@ pub struct Features {
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub song: u32,
+    /// The work (composition) the song belongs to, see [`work_key`].
+    pub work: u64,
     pub track: u32,
+    /// Voiced frames of the matched reference track.
+    pub ref_frames: u32,
     pub features: Features,
     pub score: f32,
     pub key_shift: f32,
@@ -100,6 +104,10 @@ pub struct Candidate {
 /// Where a song ended up in each stage (1-based ranks among distinct songs).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Trace {
+    /// Coarse window vote, before the shortlist.
+    pub windows: Option<usize>,
+    /// Coarse note n-gram vote, before the shortlist.
+    pub notes: Option<usize>,
     pub retrieval: Option<usize>,
     pub linear: Option<usize>,
     pub reranked: Option<usize>,
@@ -172,9 +180,19 @@ pub fn search_with(index: &MelodyIndex, query: &MelodyQuery, k: usize, options: 
         return Vec::new();
     };
     let mut refs = References::new(index);
-    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true);
+    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true, None);
     let ranked = rerank(&q, &mut refs, placements, options);
     best_per_song(index, &q, &mut refs, ranked, k, options.popularity_weight)
+}
+
+/// The work a song belongs to: recordings with the same normalized title
+/// (remasters, live and radio edits, covers of a standard) are one answer to a
+/// hum, which cannot tell versions apart.
+pub fn work_key(index: &MelodyIndex, song: u32) -> u64 {
+    match index.song(song).map(|s| normalize_title(&s.title)) {
+        Some(title) if !title.is_empty() => fnv1a(&title),
+        _ => fnv1a(&format!("\u{0}{song}")),
+    }
 }
 
 /// All re-ranked candidates with their features, best first (for evaluation).
@@ -183,14 +201,17 @@ pub fn candidates(index: &MelodyIndex, query: &MelodyQuery, options: &MatchOptio
         return Vec::new();
     };
     let mut refs = References::new(index);
-    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true);
-    rerank(&q, &mut refs, placements, options).into_iter().map(candidate).collect()
+    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true, None);
+    let ranked = rerank(&q, &mut refs, placements, options);
+    ranked.into_iter().map(|s| candidate(s, &mut refs)).collect()
 }
 
-fn candidate(s: Scored) -> Candidate {
+fn candidate(s: Scored, refs: &mut References) -> Candidate {
     Candidate {
+        work: refs.work(s.song),
         song: s.song,
         track: s.track,
+        ref_frames: s.ref_frames,
         features: s.features,
         score: s.score,
         key_shift: s.key,
@@ -208,12 +229,15 @@ pub fn trace(index: &MelodyIndex, query: &MelodyQuery, options: &MatchOptions, s
         let mut seen = HashSet::new();
         songs.filter(|s| seen.insert(*s)).position(|s| s == song).map(|p| p + 1)
     };
-    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true);
+    let mut coarse = Coarse::default();
+    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true, Some(&mut coarse));
+    let windows = song_rank(&mut coarse.windows.iter().filter_map(|&(t, _)| index.track_song(t)));
+    let notes = song_rank(&mut coarse.notes.iter().filter_map(|&(t, _)| index.track_song(t)));
     let retrieval = song_rank(&mut placements.iter().filter_map(|p| index.track_song(p.track)));
     let quick = quick_stage(&q, &mut refs, placements, options.rerank);
     let linear = song_rank(&mut quick.iter().filter_map(|(_, p)| refs.get(p.track).map(|r| r.song)));
     let reranked = song_rank(&mut full_stage(&q, &mut refs, quick).iter().map(|s| s.song));
-    Trace { retrieval, linear, reranked }
+    Trace { windows, notes, retrieval, linear, reranked }
 }
 
 /// Score one specific song (e.g. a lyric-search candidate) against the query.
@@ -227,7 +251,7 @@ pub fn score_song(index: &MelodyIndex, query: &MelodyQuery, song_id: u32) -> Opt
     let options = MatchOptions { pool: 64, rerank: 12, ..MatchOptions::default() };
     // The index's own evidence for this song, so the features read as in a search...
     let wanted = tracks.clone();
-    let mut placements = retrieve_all(index, &q, &mut refs, &options, &|t| wanted.contains(&t));
+    let mut placements = retrieve_all(index, &q, &mut refs, &options, &|t| wanted.contains(&t), None);
     // ...plus every place the song's windows resemble the query's, without vote evidence.
     for t in tracks {
         if let Some(r) = refs.get(t) {
@@ -312,6 +336,22 @@ struct Placement {
     note_votes: f32,
 }
 
+/// The coarse votes of both retrieval paths, best first (for evaluation).
+#[derive(Default)]
+struct Coarse {
+    windows: Vec<(u32, f32)>,
+    notes: Vec<(u32, f32)>,
+}
+
+/// Keep a copy of a coarse vote, best first.
+fn record(coarse: Option<&mut Vec<(u32, f32)>>, pre: &[(u32, f32)]) {
+    if let Some(out) = coarse {
+        out.clear();
+        out.extend_from_slice(pre);
+        out.sort_by(|a, b| b.1.total_cmp(&a.1));
+    }
+}
+
 /// Placements from both retrieval paths, interleaved, merged where they agree
 /// (same track, the query's middle within 1 s).
 fn retrieve_all(
@@ -320,9 +360,10 @@ fn retrieve_all(
     refs: &mut References,
     options: &MatchOptions,
     allow: &dyn Fn(u32) -> bool,
+    mut coarse: Option<&mut Coarse>,
 ) -> Vec<Placement> {
-    let mut windows = retrieve(index, q, options, allow);
-    let notes = retrieve_notes(index, q, refs, options, allow);
+    let mut windows = retrieve(index, q, options, allow, coarse.as_mut().map(|c| &mut c.windows));
+    let notes = retrieve_notes(index, q, refs, options, allow, coarse.map(|c| &mut c.notes));
     let mid = q.contour.len() as f32 / 2.0;
     let mut by_track: HashMap<u32, Vec<usize>> = HashMap::new();
     for (i, p) in windows.iter().enumerate() {
@@ -362,6 +403,7 @@ fn retrieve_notes(
     refs: &mut References,
     options: &MatchOptions,
     allow: &dyn Fn(u32) -> bool,
+    coarse: Option<&mut Vec<(u32, f32)>>,
 ) -> Vec<Placement> {
     let tracks = index.track_count() as usize;
     if tracks == 0 || q.steps.len() < 4 || index.key_count() == 0 {
@@ -404,6 +446,7 @@ fn retrieve_notes(
         })
         .collect();
     drop(hist);
+    record(coarse, &pre);
     let shortlist = options.shortlist.min(NOTE_SHORTLIST);
     if pre.len() > shortlist {
         pre.select_nth_unstable_by(shortlist, |a, b| b.1.total_cmp(&a.1));
@@ -585,7 +628,13 @@ fn hough(points: &[Point], acc: &mut Vec<f32>) -> Vec<(f32, Vec<(u16, u16)>)> {
 type Vote = (u32, u8, f32, f32);
 
 /// Stage 1: probe the inverted multi-index and pool alignment votes.
-fn retrieve(index: &MelodyIndex, q: &Query, options: &MatchOptions, allow: &dyn Fn(u32) -> bool) -> Vec<Placement> {
+fn retrieve(
+    index: &MelodyIndex,
+    q: &Query,
+    options: &MatchOptions,
+    allow: &dyn Fn(u32) -> bool,
+    coarse: Option<&mut Vec<(u32, f32)>>,
+) -> Vec<Placement> {
     let tracks = index.track_count() as usize;
     if tracks == 0 || q.windows.is_empty() {
         return Vec::new();
@@ -687,6 +736,7 @@ fn retrieve(index: &MelodyIndex, q: &Query, options: &MatchOptions, allow: &dyn 
         })
         .collect();
     drop(hist);
+    record(coarse, &pre);
     if pre.len() > options.shortlist {
         pre.select_nth_unstable_by(options.shortlist, |a, b| b.1.total_cmp(&a.1));
         pre.truncate(options.shortlist);
@@ -831,6 +881,8 @@ fn exhaustive_placements(q: &Query, track: u32, frames: &[f32]) -> Vec<Placement
 /// A reference track, decoded on first use.
 struct Reference {
     song: u32,
+    /// Voiced frames.
+    voiced: u32,
     frames: Vec<f32>,
     steps: Vec<Step>,
 }
@@ -863,11 +915,18 @@ impl Reference {
 struct References<'a> {
     index: &'a MelodyIndex,
     loaded: HashMap<u32, Option<Reference>>,
+    /// Song → work key.
+    works: HashMap<u32, u64>,
 }
 
 impl<'a> References<'a> {
     fn new(index: &'a MelodyIndex) -> Self {
-        Self { index, loaded: HashMap::new() }
+        Self { index, loaded: HashMap::new(), works: HashMap::new() }
+    }
+
+    fn work(&mut self, song: u32) -> u64 {
+        let index = self.index;
+        *self.works.entry(song).or_insert_with(|| work_key(index, song))
     }
 
     fn get(&mut self, track: u32) -> Option<&Reference> {
@@ -877,6 +936,7 @@ impl<'a> References<'a> {
             .or_insert_with(|| {
                 index.track(track).map(|t| Reference {
                     song: t.song,
+                    voiced: t.contour.iter().filter(|v| v.is_finite()).count() as u32,
                     steps: steps::frame_steps(&t.contour),
                     frames: t.contour,
                 })
@@ -889,6 +949,7 @@ impl<'a> References<'a> {
 struct Scored {
     song: u32,
     track: u32,
+    ref_frames: u32,
     features: Features,
     score: f32,
     key: f32,
@@ -961,6 +1022,7 @@ fn full_stage(q: &Query, refs: &mut References, quick: Vec<(f32, Placement)>) ->
         scored.push(Scored {
             song: r.song,
             track: p.track,
+            ref_frames: r.voiced,
             features: Features {
                 votes: p.votes,
                 linear,

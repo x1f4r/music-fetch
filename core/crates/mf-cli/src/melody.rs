@@ -11,7 +11,8 @@ use std::time::Instant;
 use anyhow::{Context, bail};
 use clap::Subcommand;
 use mfcore::melody::matcher::{self, MatchOptions};
-use mfcore::melody::notes::query_from_details;
+use mfcore::melody::notes::{self, MelodyQuery, query_from_details};
+use mfcore::melody::steps;
 use mfcore::melody::pitch::{FrameDetail, PitchTracker, StreamingPitch};
 use mfcore::melody::{MelodyIndex, builder};
 use std::sync::Mutex;
@@ -119,6 +120,13 @@ pub enum EvalCommand {
         /// Skip following the expected song through the stages (halves the run time).
         #[arg(long)]
         no_trace: bool,
+        /// Also search the first N ms of each recording (comma-separated), as a live
+        /// session would while the user is still humming; one extra row per prefix.
+        #[arg(long, value_delimiter = ',')]
+        prefix_ms: Vec<u64>,
+        /// Track pitch with the streaming tracker (the live session's frames).
+        #[arg(long)]
+        stream: bool,
     },
     /// Run the impression detector over labelled clips (TSV: wav, impression|music,
     /// start s, duration s) as a live session would, and report its verdicts.
@@ -170,6 +178,8 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             rerank,
             popularity,
             no_trace,
+            prefix_ms,
+            stream,
         }) => {
             let mut options = MatchOptions { popularity_weight: popularity, ..MatchOptions::default() };
             if let Some(p) = probe {
@@ -184,7 +194,8 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             if let Some(r) = rerank {
                 options.rerank = r;
             }
-            eval_qbsh(&index, &queries, out.as_deref(), threads, limit, &options, !no_trace)
+            let run = EvalRun { options, trace: !no_trace, prefixes: prefix_ms, stream };
+            eval_qbsh(&index, &queries, out.as_deref(), threads, limit, &run)
         }
         MelodyCommand::Eval(EvalCommand::Detect { list, out, threads }) => eval_detect(&list, out.as_deref(), threads),
     }
@@ -520,7 +531,11 @@ fn export_queries(list: &Path, out: &Path, threads: usize, base: Option<&Path>) 
 
 struct EvalRow {
     wav: String,
+    /// Searched only the first this many ms (None: the whole recording).
+    prefix_ms: Option<u64>,
     rank: Option<usize>,
+    /// Rank of the expected song's work (versions of one song count once).
+    work_rank: Option<usize>,
     pitch_ms: f64,
     search_ms: f64,
     voiced_ms: u32,
@@ -529,15 +544,22 @@ struct EvalRow {
     json: String,
 }
 
+struct EvalRun {
+    options: MatchOptions,
+    trace: bool,
+    prefixes: Vec<u64>,
+    stream: bool,
+}
+
 fn eval_qbsh(
     index: &Path,
     queries: &Path,
     out: Option<&Path>,
     threads: usize,
     limit: Option<usize>,
-    options: &MatchOptions,
-    trace: bool,
+    run: &EvalRun,
 ) -> anyhow::Result<()> {
+    let options = &run.options;
     let index = MelodyIndex::open(index)?;
     let list = std::fs::read_to_string(queries)?;
     let mut items: Vec<(String, String, String)> = list
@@ -551,9 +573,9 @@ fn eval_qbsh(
     if let Some(n) = limit {
         items.truncate(n);
     }
-    let tracker = PitchTracker::with_threads(1)?;
+    let tracker = Arc::new(PitchTracker::with_threads(1)?);
     let next = AtomicUsize::new(0);
-    let rows: Vec<Mutex<Option<EvalRow>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    let rows: Vec<Mutex<Vec<EvalRow>>> = items.iter().map(|_| Mutex::new(Vec::new())).collect();
     let started = Instant::now();
     std::thread::scope(|s| {
         for _ in 0..threads.max(1) {
@@ -563,22 +585,30 @@ fn eval_qbsh(
                     let Some((wav, title, artist)) = items.get(i) else {
                         break;
                     };
-                    let row = eval_one(&index, &tracker, wav, title, artist, options, trace);
+                    let found = eval_one(&index, &tracker, wav, title, artist, run);
                     if let Ok(mut slot) = rows[i].lock() {
-                        *slot = Some(row);
+                        *slot = found;
                     }
                 }
             });
         }
     });
     let wall = started.elapsed().as_secs_f64();
-    let rows: Vec<EvalRow> = rows.into_iter().filter_map(|r| r.into_inner().ok().flatten()).collect();
+    let all: Vec<EvalRow> = rows.into_iter().flat_map(|r| r.into_inner().unwrap_or_default()).collect();
     if let Some(out) = out {
         let mut w = std::io::BufWriter::new(std::fs::File::create(out)?);
-        for r in &rows {
+        for r in &all {
             writeln!(w, "{}", r.json)?;
         }
     }
+    for &p in &run.prefixes {
+        let part: Vec<&EvalRow> = all.iter().filter(|r| r.prefix_ms == Some(p)).collect();
+        let n = part.len().max(1) as f64;
+        let hit = |k: usize| part.iter().filter(|r| r.work_rank.is_some_and(|x| x <= k)).count() as f64 / n;
+        let searched = part.iter().filter(|r| r.voiced_ms > 0).count();
+        println!("first {p:>6} ms: top-1 {:.4} top-10 {:.4} ({searched} of {} searched)", hit(1), hit(10), part.len());
+    }
+    let rows: Vec<EvalRow> = all.into_iter().filter(|r| r.prefix_ms.is_none()).collect();
     let n = rows.len().max(1) as f64;
     let top = |k: usize| rows.iter().filter(|r| r.rank.is_some_and(|x| x <= k)).count() as f64 / n;
     let mrr = rows.iter().map(|r| r.rank.map(|x| 1.0 / x as f64).unwrap_or(0.0)).sum::<f64>() / n;
@@ -593,6 +623,8 @@ fn eval_qbsh(
     println!("top-3   {:.4}", top(3));
     println!("top-10  {:.4}", top(10));
     println!("MRR     {mrr:.4}");
+    let work = |k: usize| rows.iter().filter(|r| r.work_rank.is_some_and(|x| x <= k)).count() as f64 / n;
+    println!("works   top-1 {:.4} top-10 {:.4}", work(1), work(10));
     let recall = |f: &dyn Fn(&matcher::Trace) -> Option<usize>, k: usize| {
         rows.iter().filter(|r| f(&r.trace).is_some_and(|x| x <= k)).count() as f64 / n
     };
@@ -604,6 +636,17 @@ fn eval_qbsh(
         options.rerank,
         recall(&|t| t.linear, options.rerank),
         recall(&|t| t.reranked, 10),
+    );
+    println!(
+        "coarse  windows top-100 {:.3} top-500 {:.3} any {:.3}; notes top-100 {:.3} top-500 {:.3} any {:.3}; retrieved top-100 {:.3} top-500 {:.3}",
+        recall(&|t| t.windows, 100),
+        recall(&|t| t.windows, 500),
+        recall(&|t| t.windows, usize::MAX),
+        recall(&|t| t.notes, 100),
+        recall(&|t| t.notes, 500),
+        recall(&|t| t.notes, usize::MAX),
+        recall(&|t| t.retrieval, 100),
+        recall(&|t| t.retrieval, 500),
     );
     println!("pitch   median {:.1} ms, p95 {:.1} ms (1 thread per query)", pct(&pitch, 0.5), pct(&pitch, 0.95));
     println!(
@@ -631,16 +674,18 @@ fn eval_qbsh(
 
 fn eval_one(
     index: &MelodyIndex,
-    tracker: &PitchTracker,
+    tracker: &Arc<PitchTracker>,
     wav: &str,
     title: &str,
     artist: &str,
-    options: &MatchOptions,
-    trace: bool,
-) -> EvalRow {
-    let mut row = EvalRow {
+    run: &EvalRun,
+) -> Vec<EvalRow> {
+    let expected = index.find_song(title, artist).map(|s| s.id);
+    let blank = |prefix_ms: Option<u64>| EvalRow {
         wav: wav.to_string(),
+        prefix_ms,
         rank: None,
+        work_rank: None,
         pitch_ms: 0.0,
         search_ms: 0.0,
         voiced_ms: 0,
@@ -648,24 +693,56 @@ fn eval_one(
         trace: Default::default(),
         json: String::new(),
     };
-    let expected = index.find_song(title, artist).map(|s| s.id);
     let samples = match read_wav_16k(Path::new(wav)) {
         Ok(s) => s,
         Err(e) => {
+            let mut row = blank(None);
             row.json = serde_json::json!({"wav": wav, "error": e.to_string()}).to_string();
-            return row;
+            return vec![row];
         }
     };
     let t = Instant::now();
-    let frames = tracker.analyze_detailed(&samples).map(|a| a.frames).unwrap_or_default();
-    row.pitch_ms = ms(t);
-    let Some(query) = query_from_details(&frames) else {
-        row.json = serde_json::json!({"wav": wav, "expected": expected, "rank": null, "voiced_ms": 0}).to_string();
-        return row;
+    let frames = if run.stream {
+        let mut s = StreamingPitch::new(tracker.clone());
+        let mut frames = Vec::new();
+        for chunk in samples.chunks(320) {
+            frames.extend(s.push_detailed(chunk));
+        }
+        frames.extend(s.finish_detailed());
+        frames
+    } else {
+        tracker.analyze_detailed(&samples).map(|a| a.frames).unwrap_or_default()
     };
+    let pitch_ms = ms(t);
+    let total_ms = samples.len() as u64 / 16;
+    let mut out = Vec::new();
+    let mut prefixes: Vec<Option<u64>> = vec![None];
+    prefixes.extend(run.prefixes.iter().filter(|&&p| p < total_ms).map(|&p| Some(p)));
+    for prefix in prefixes {
+        let mut row = blank(prefix);
+        row.pitch_ms = pitch_ms;
+        let part: &[FrameDetail] = match prefix {
+            Some(p) => &frames[..frames.partition_point(|f| f.t_ms < p)],
+            None => &frames,
+        };
+        let Some(query) = query_from_details(part) else {
+            row.json = serde_json::json!({"wav": wav, "prefix_ms": prefix, "expected": expected, "rank": null, "voiced_ms": 0})
+                .to_string();
+            out.push(row);
+            continue;
+        };
+        search_row(index, &query, expected, run, &mut row);
+        out.push(row);
+    }
+    out
+}
+
+/// Search one query and fill the row (rank, top answer, trace, JSON).
+fn search_row(index: &MelodyIndex, query: &MelodyQuery, expected: Option<u32>, run: &EvalRun, row: &mut EvalRow) {
+    let options = &run.options;
     row.voiced_ms = query.voiced_ms;
     let t = Instant::now();
-    let candidates = matcher::candidates(index, &query, options);
+    let candidates = matcher::candidates(index, query, options);
     row.search_ms = ms(t);
     let mut seen = HashSet::new();
     let mut songs: Vec<_> = candidates.iter().filter(|c| seen.insert(c.song)).collect();
@@ -677,32 +754,42 @@ fn eval_one(
     };
     songs.sort_by(|a, b| prior(b).total_cmp(&prior(a)));
     row.rank = expected.and_then(|e| songs.iter().position(|c| c.song == e).map(|p| p + 1));
+    let expected_work = expected.map(|e| matcher::work_key(index, e));
+    let mut works = HashSet::new();
+    row.work_rank = expected_work
+        .and_then(|w| songs.iter().filter(|c| works.insert(c.work)).position(|c| c.work == w).map(|p| p + 1));
     row.top = songs.first().and_then(|c| index.song(c.song).map(|s| (s.title, prior(c))));
-    if trace {
-        row.trace = expected.map(|e| matcher::trace(index, &query, options, e)).unwrap_or_default();
+    if run.trace {
+        row.trace = expected.map(|e| matcher::trace(index, query, options, e)).unwrap_or_default();
     }
     let cands: Vec<serde_json::Value> = songs
         .iter()
         .map(|c| {
             serde_json::json!({
                 "song": c.song, "track": c.track, "label": Some(c.song) == expected, "score": c.score,
+                "work": c.work.to_string(), "work_label": Some(c.work) == expected_work,
                 "votes": c.features.votes, "linear": c.features.linear, "dtw": c.features.dtw,
                 "coverage": c.features.coverage, "tempo_dev": c.features.tempo, "align": c.features.align,
                 "edit": c.features.edit, "note_votes": c.features.note_votes, "key": c.key_shift, "tempo": c.tempo,
-                "popularity": index.popularity(c.song),
+                "popularity": index.popularity(c.song), "ref_frames": c.ref_frames,
             })
         })
         .collect();
     // How the expected song scores when asked about directly (an upper bound for retrieval).
     let oracle =
-        if trace { expected.and_then(|e| matcher::score_song(index, &query, e)).map(|m| m.score) } else { None };
+        if run.trace { expected.and_then(|e| matcher::score_song(index, query, e)).map(|m| m.score) } else { None };
+    let mut voiced: Vec<f32> = query.contour.iter().copied().filter(|m| m.is_finite()).collect();
+    voiced.sort_by(f32::total_cmp);
+    let pct = |p: f32| voiced.get(((voiced.len() as f32 - 1.0) * p).round() as usize).copied().unwrap_or(0.0);
+    let t = row.trace;
     row.json = serde_json::json!({
-        "wav": wav, "expected": expected, "rank": row.rank, "voiced_ms": query.voiced_ms,
-        "notes": query.notes.len(), "pitch_ms": row.pitch_ms, "search_ms": row.search_ms, "candidates": cands,
-        "trace": [row.trace.retrieval, row.trace.linear, row.trace.reranked], "oracle_score": oracle,
+        "wav": row.wav, "prefix_ms": row.prefix_ms, "expected": expected, "rank": row.rank, "work_rank": row.work_rank,
+        "voiced_ms": query.voiced_ms, "duration_ms": query.contour.len() as u32 * notes::CONTOUR_MS,
+        "range": pct(0.95) - pct(0.05), "notes": query.notes.len(), "steps": steps::query_steps(&query.notes).len(),
+        "pitch_ms": row.pitch_ms, "search_ms": row.search_ms, "candidates": cands,
+        "trace": [t.retrieval, t.linear, t.reranked], "coarse": [t.windows, t.notes], "oracle_score": oracle,
     })
     .to_string();
-    row
 }
 
 fn ms(since: Instant) -> f64 {
