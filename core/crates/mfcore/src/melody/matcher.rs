@@ -117,7 +117,11 @@ pub struct Trace {
     pub windows: Option<usize>,
     /// Coarse note n-gram vote, before the shortlist.
     pub notes: Option<usize>,
+    /// Placements of the shortlisted tracks, before the pool limit.
+    pub unpooled: Option<usize>,
+    /// Placements given the quick check.
     pub retrieval: Option<usize>,
+    /// The quick check's order of all of them (the first `rerank` placements go on).
     pub linear: Option<usize>,
     pub reranked: Option<usize>,
 }
@@ -246,10 +250,14 @@ pub fn trace(index: &MelodyIndex, query: &MelodyQuery, options: &MatchOptions, s
     let windows = song_rank(&mut coarse.windows.iter().filter_map(|&(t, _)| index.track_song(t)));
     let notes = song_rank(&mut coarse.notes.iter().filter_map(|&(t, _)| index.track_song(t)));
     let retrieval = song_rank(&mut placements.iter().filter_map(|p| index.track_song(p.track)));
-    let quick = quick_stage(&q, &mut refs, placements, options.rerank);
+    let unlimited = MatchOptions { pool: usize::MAX, ..options.clone() };
+    let all = retrieve_all(index, &q, &mut refs, &unlimited, &|_| true, None);
+    let unpooled = song_rank(&mut all.iter().filter_map(|p| index.track_song(p.track)));
+    let mut quick = quick_stage(&q, &mut refs, placements, usize::MAX);
     let linear = song_rank(&mut quick.iter().filter_map(|(_, p)| refs.get(p.track).map(|r| r.song)));
+    quick.truncate(options.rerank);
     let reranked = song_rank(&mut full_stage(&q, &mut refs, quick).iter().map(|s| s.song));
-    Trace { windows, notes, retrieval, linear, reranked }
+    Trace { windows, notes, unpooled, retrieval, linear, reranked }
 }
 
 /// Score one specific song (e.g. a lyric-search candidate) against the query.

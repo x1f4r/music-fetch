@@ -790,7 +790,7 @@ fn search_row(index: &MelodyIndex, query: &MelodyQuery, expected: Option<u32>, r
         "voiced_ms": query.voiced_ms, "duration_ms": query.contour.len() as u32 * notes::CONTOUR_MS,
         "range": pct(0.95) - pct(0.05), "notes": query.notes.len(), "steps": steps::query_steps(&query.notes).len(),
         "pitch_ms": row.pitch_ms, "search_ms": row.search_ms, "candidates": cands,
-        "trace": [t.retrieval, t.linear, t.reranked], "coarse": [t.windows, t.notes], "oracle_score": oracle,
+        "trace": [t.retrieval, t.linear, t.reranked], "coarse": [t.windows, t.notes, t.unpooled], "oracle_score": oracle,
     })
     .to_string();
 }
