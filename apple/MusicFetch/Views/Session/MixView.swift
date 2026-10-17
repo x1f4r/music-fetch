@@ -163,7 +163,9 @@ struct SegmentRow: View {
             Button {
                 app.humSegment(segment, in: model)
             } label: {
+                // Without it, list rows before macOS 26 tint the mark with the accent color.
                 Label(Copy.humIt, image: "contour.mark")
+                    .foregroundStyle(.primary)
             }
             .buttonStyle(.bordered)
         } else if segment.tier == .possible, let track = segment.track {
