@@ -53,8 +53,6 @@ const TONAL_SHARE: f32 = 0.5;
 const FOUR_X_HZ: f32 = 1500.0;
 /// Minimum frames before deciding on a whistle.
 const WHISTLE_MIN_FRAMES: usize = 8;
-/// Frames the streaming tracker looks back over for whistle evidence (1 s).
-const WHISTLE_WINDOW: usize = 62;
 /// Frames the whistle path starts before the switch, so its edge effects never
 /// reach emitted frames.
 const WHISTLE_LEAD: usize = 12;
@@ -175,7 +173,8 @@ impl PitchTracker {
 /// Incremental tracker for live input. Emits each frame at most 224 ms after its
 /// center. Frames are identical to [`PitchTracker::analyze`] on the same audio
 /// unless the whistle decision differs: the stream switches to the whistle path
-/// once the last second sounds like whistling and cannot revise earlier frames.
+/// once the frames so far sound like whistling (the batch analysis votes on the
+/// whole clip) and cannot revise earlier frames.
 pub struct StreamingPitch {
     tracker: Arc<PitchTracker>,
     gain: LevelGain,
@@ -196,8 +195,8 @@ pub struct StreamingPitch {
     whistle: Option<WhistleStream>,
     /// Model frames waiting for the gate's lookahead.
     held: VecDeque<RawFrame>,
-    /// Whistle evidence of recent frames.
-    recent: VecDeque<(FrameDetail, Option<(f32, f32)>)>,
+    /// Whistle evidence of every frame so far.
+    vote: WhistleVote,
     emitted: usize,
     finished: bool,
 }
@@ -219,7 +218,7 @@ impl StreamingPitch {
             normal,
             whistle: None,
             held: VecDeque::new(),
-            recent: VecDeque::new(),
+            vote: WhistleVote::default(),
             emitted: 0,
             finished: false,
         }
@@ -313,17 +312,10 @@ impl StreamingPitch {
                 let f = (frame.t_ms / FRAME_MS) as usize;
                 let tonal = frame_loud_enough(&self.loud, f)
                     .then(|| tonal_peak(&*self.tracker.tonal_fft, &self.original, self.original_base, f));
-                self.recent.push_back((*frame, tonal));
-                if self.recent.len() > WHISTLE_WINDOW {
-                    self.recent.pop_front();
-                }
+                self.vote.add(frame, tonal);
             }
-            let mut vote = WhistleVote::default();
-            for (frame, tonal) in &self.recent {
-                vote.add(frame, *tonal);
-            }
-            if vote.is_whistle() {
-                self.start_whistle(vote.factor());
+            if self.vote.is_whistle() {
+                self.start_whistle(self.vote.factor());
                 out.extend(self.release(false));
             }
         }
@@ -375,7 +367,6 @@ impl StreamingPitch {
         let raw = stream.push(&history, false);
         self.take_raw(raw);
         self.whistle = Some(stream);
-        self.recent.clear();
     }
 
     fn trim(&mut self) {
