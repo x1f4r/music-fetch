@@ -195,3 +195,28 @@ def artist_similarity(a: str, b: str) -> float:
         default=0.0,
     )
     return max(best, whole, partial) / 100.0
+
+
+_UPLOAD_FEAT_RE = re.compile(
+    r"[(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+([^()\[\]]+?)\s*[)\]]"  # "(feat. X)", "[with X]"
+    r"|(?:^|\s)(?:feat\.?|ft\.?|featuring)\s+([^()\[\]|]+?)(?=\s*[(\[|]|\s+-\s|$)",  # "ft. X - ..."
+    re.I,
+)
+
+
+def foreign_featured_artist(upload_title: str, artist: str) -> str | None:
+    """A featured artist that an upload's title credits but the song's credit lacks, if any.
+
+    Re-uploads such as "24kGoldn - Mood ft. NCK" keep the original hook but replace a verse;
+    the song credit "24kGoldn Featuring iann dior" does not name NCK.
+    """
+    credited = artist_parts(artist)
+    folded = compact(artist)
+    for m in _UPLOAD_FEAT_RE.finditer(_clean_artist(upload_title)):
+        for name in _ARTIST_SPLIT_RE.split(m.group(1) or m.group(2) or ""):
+            k = compact(_unthe(name or ""))
+            if not k or k in folded or any(k in c or c in k for c in credited):
+                continue
+            if max((artist_similarity(name, c) for c in artist_parts(artist)), default=0.0) < 0.6:
+                return name.strip()
+    return None

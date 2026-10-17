@@ -3,8 +3,9 @@
 A ``SourceGuard`` keeps its state in a small JSON file under ``state/`` (locked with ``flock``),
 so two crawls on the same host, or a restart, never add up to more than the source's budget:
 
-- ``acquire()`` waits for a slot: at most ``limit`` requests per ``window`` seconds, at least
-  ``min_gap`` seconds (±``jitter``) between two requests, and nothing while the breaker is open.
+- ``acquire()`` waits for a slot: at most ``limit`` requests per ``window`` seconds (and at most
+  ``day_limit`` per 24 h when set), at least ``min_gap`` seconds (±``jitter``) between two
+  requests, and nothing while the breaker is open.
 - ``ok()`` after a successful request closes the breaker's count.
 - ``blocked(reason)`` opens the breaker: every user of the source waits ``block_pause`` seconds,
   doubled for each further consecutive block (capped at ``max_pause``). After ``max_blocks``
@@ -26,6 +27,8 @@ from typing import Any
 
 log = logging.getLogger("mfidx.guard")
 
+DAY = 86400.0
+
 
 class SourceDisabled(Exception):
     """The source tripped its breaker too often and stays off until reset."""
@@ -44,6 +47,7 @@ class SourceGuard:
         window: float,
         min_gap: float = 0.0,
         jitter: float = 0.2,
+        day_limit: int | None = None,
         block_pause: float = 6 * 3600.0,
         max_pause: float = 48 * 3600.0,
         max_blocks: int = 3,
@@ -57,6 +61,7 @@ class SourceGuard:
         self.window = window
         self.min_gap = min_gap
         self.jitter = jitter
+        self.day_limit = day_limit
         self.block_pause = block_pause
         self.max_pause = max_pause
         self.max_blocks = max_blocks
@@ -110,6 +115,12 @@ class SourceGuard:
                 return stamps[-1] + gap - now
             if len(stamps) >= self.limit:
                 return stamps[0] + self.window - now
+            if self.day_limit is not None:
+                day = [t for t in state.get("d", []) if now - t < DAY]
+                state["d"] = day
+                if len(day) >= self.day_limit:
+                    return day[0] + DAY - now
+                day.append(now)
             stamps.append(now)
             state["next_gap"] = self.min_gap * random.uniform(1 - self.jitter, 1 + self.jitter)
             state["requests"] = int(state.get("requests", 0)) + 1
@@ -181,7 +192,8 @@ class SourceGuard:
         return {
             "requests": s.get("requests", 0),
             "in_window": len(recent),
-            "limit": f"{self.limit}/{self.window:.0f}s",
+            "last_24h": sum(1 for t in s.get("d", []) if now - t < DAY) if self.day_limit else None,
+            "limit": f"{self.limit}/{self.window:.0f}s" + (f", {self.day_limit}/day" if self.day_limit else ""),
             "paused_for_s": max(0.0, float(s.get("pause_until", 0.0)) - now),
             "blocks_in_a_row": s.get("blocks", 0),
             "total_blocks": s.get("total_blocks", 0),

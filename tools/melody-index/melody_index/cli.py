@@ -59,9 +59,10 @@ def main(argv: list[str] | None = None) -> int:
         "refs", help="stage 3c: verified full tracks (SoundCloud, Dailymotion, YouTube) and iTunes windows (GPU)"
     )
     p.add_argument("--top", type=int, default=15000, help="songs by popularity")
-    p.add_argument("--sources", default="soundcloud,dailymotion,youtube,itunes", help="comma-separated, in order")
+    p.add_argument("--sources", default="soundcloud,dailymotion,youtube,itunes", help="comma-separated subset (they always run in this order)")
     p.add_argument("--soundcloud-workers", type=int, default=2)
-    p.add_argument("--youtube-per-hour", type=int, default=40, help="YouTube downloads per hour")
+    p.add_argument("--youtube-gap", type=float, default=30.0, help="mean seconds between two yt-dlp runs (>= 30)")
+    p.add_argument("--youtube-per-day", type=int, default=2400, help="yt-dlp runs per 24 h (<= 2500)")
     p.add_argument("--half", action="store_true", help="fp16 inference")
     p.add_argument("--reset", metavar="GUARD", help="close a tripped breaker (e.g. youtube, soundcloud-api) and exit")
 
@@ -160,7 +161,8 @@ def main(argv: list[str] | None = None) -> int:
                 ap.error(f"unknown sources {unknown}; choose from {refs.ALL_SOURCES}")
             out = refs.run(
                 P, top=args.top, sources=sources, soundcloud_workers=args.soundcloud_workers,
-                youtube_per_hour=args.youtube_per_hour, half=args.half,
+                youtube_gap=max(30.0, args.youtube_gap), youtube_per_day=min(2500, args.youtube_per_day),
+                half=args.half,
             )
     elif args.cmd == "refs-status":
         from . import refs

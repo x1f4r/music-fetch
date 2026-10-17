@@ -83,6 +83,7 @@ def test_soundcloud_candidates_reject_snippets_drm_versions_and_wrong_lengths():
     assert score_candidate(cand("Rick Astley - Never Gonna Give You Up (Daymaan Remix)", "Daymaan", 213), *s)[1] == "version"
     assert score_candidate(cand("Rick Astley - Never Gonna Give You Up", "Bent Fader", 193), *s)[1] == "duration"
     assert score_candidate(cand("Rick Astley - Together Forever", "x", 213), *s)[1] == "title"
+    assert score_candidate(cand("Rick Astley - Never Gonna Give You Up ft. MC Nobody", "x", 213), *s)[1] == "feature"
     # A version word in the artist's own name is fine; an ISRC match ranks first.
     assert score_candidate(cand("Lil Nas X - Old Town Road", "someone", 157), "Old Town Road", "Lil Nas X", 157, None)[1] == "ok"
     ranked = rank_candidates(
@@ -113,3 +114,90 @@ def test_guard_paces_opens_and_disables(tmp_path):
     assert SourceGuard(tmp_path / "x.guard", limit=3, window=0.5).summary()["disabled"]
     g.reset()
     g.acquire()
+
+
+def test_guard_day_limit_caps_requests_per_24_hours(tmp_path):
+    g = SourceGuard(tmp_path / "d.guard", limit=100, window=1.0, day_limit=2)
+    g.acquire()
+    g.acquire()
+    stop_after = time.time()
+    # The third request would wait for a day: stop it instead of waiting.
+    import threading
+
+    from melody_index.guard import Stopped
+
+    ev = threading.Event()
+    g.stop = ev
+    threading.Timer(0.2, ev.set).start()
+    try:
+        g.acquire()
+        raise AssertionError("third request in a day went through")
+    except Stopped:
+        pass
+    assert time.time() - stop_after < 5
+    assert g.summary()["last_24h"] == 2
+
+
+def test_youtube_block_signals_and_per_video_refusals():
+    from melody_index.youtube import classify
+
+    assert classify("ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies") == "block"
+    assert classify("ERROR: [youtube] abc: Sign in to confirm you're not a bot") == "block"
+    assert classify("ERROR: unable to download video data: HTTP Error 429: Too Many Requests") == "block"
+    assert classify("WARNING: [youtube] The current session has been rate-limited by YouTube for up to an hour") == "block"
+    assert classify("ERROR: [youtube] abc: Video unavailable. This content isn’t available, try again later.") == "block"
+    assert classify("ERROR: [youtube] abc: Sign in to confirm your age. This video may be inappropriate for some users.") == "video"
+    assert classify("ERROR: [youtube] abc: Private video. Sign in if you've been granted access to this video") == "video"
+    assert classify("ERROR: [youtube] abc: Video unavailable. This video has been removed by the uploader") == "video"
+    assert classify("WARNING: [youtube] [pot] Error fetching PO Token: Read timed out") is None
+    assert classify("") is None
+    # A per-video line does not hide a block signal on another line.
+    assert classify("ERROR: Private video\nWARNING: HTTP Error 429: Too Many Requests") == "block"
+
+
+def test_decoded_duration_must_match_the_song():
+    from melody_index.refs import duration_ok
+
+    assert duration_ok(214.0, 213) and duration_ok(226.0, 213)
+    assert not duration_ok(171.0, 213)  # sped up
+    assert not duration_ok(30.0, 213)  # a snippet
+    assert duration_ok(300.0, None)
+
+
+def _plan(tmp_path, sources=("soundcloud", "dailymotion", "youtube", "itunes")):
+    from melody_index import db as dbm
+    from melody_index.fulltrack import SCHEMA as TRACK_SCHEMA
+    from melody_index.refs import SCHEMA, Plan
+
+    conn = dbm.connect(tmp_path / "b.db")
+    conn.executescript(TRACK_SCHEMA)
+    conn.executescript(SCHEMA)
+    for i, score in ((1, 0.9), (2, 0.8), (3, 0.7)):
+        conn.execute("INSERT INTO songs(id, key, title, artist, score) VALUES (?, ?, ?, 'A', ?)", (i, f"k{i}", f"T{i}", score))
+        conn.execute("INSERT INTO deezer(song_id, status, duration) VALUES (?, 'ok', 200)", (i,))
+    return conn, Plan(conn, 10, sources)
+
+
+def test_plan_hands_a_song_on_after_a_verdict_or_an_error(tmp_path):
+    conn, plan = _plan(tmp_path)
+    t1 = plan.next("soundcloud")
+    assert t1.song_id == 1
+    assert plan.next("dailymotion") is None  # nothing has failed on SoundCloud yet
+    plan.done(t1, "soundcloud", "error")
+    d1 = plan.next("dailymotion")
+    assert d1.song_id == 1  # an error hands the song on
+    t2 = plan.next("soundcloud")
+    plan.done(t2, "soundcloud", "ok")
+    assert not any(plan.eligible(t2, s) for s in ("soundcloud", "dailymotion", "youtube", "itunes"))
+    # YouTube waits for Dailymotion; iTunes waits only for SoundCloud and Dailymotion.
+    assert not plan.eligible(t1, "youtube") and not plan.eligible(t1, "itunes")
+    plan.done(d1, "dailymotion", "mismatch")
+    assert plan.eligible(t1, "youtube") and plan.eligible(t1, "itunes")
+
+
+def test_plan_refresh_adds_new_songs(tmp_path):
+    conn, plan = _plan(tmp_path)
+    conn.execute("INSERT INTO songs(id, key, title, artist, score, origin) VALUES (4, 'k4', 'T4', 'B', 0.95, 'evergreen')")
+    conn.execute("INSERT INTO deezer(song_id, status, duration) VALUES (4, 'ok', 100)")
+    assert plan.refresh(conn) == 1
+    assert plan.next("soundcloud").song_id == 4  # most popular first

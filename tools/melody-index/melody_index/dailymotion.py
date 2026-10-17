@@ -3,7 +3,8 @@
 Dailymotion has many music uploads (official videos and re-uploads) and plain HLS streams without
 DRM. Its streams always carry video, so the smallest rendition is fetched (into memory, through
 yt-dlp's stdout) and only its audio is decoded. The API search and the downloads have one guard
-each; HTTP 403/429 or a run of failures open the breaker.
+each; an API 403/429, a rate-limit message from the media servers or a run of failed downloads
+opens the breaker (a 403 on one stream alone is a per-video failure, e.g. geo restrictions).
 """
 
 from __future__ import annotations
@@ -21,13 +22,13 @@ from .extract import DecodeError, decode_audio
 from .fulltrack import Song, score_candidate, ytdlp
 from .guard import SourceGuard
 from .net import session
-from .normalize import primary_artist, title_core
+from .normalize import foreign_featured_artist, primary_artist, title_core
 from .sources import Pick
 
 log = logging.getLogger("mfidx.dailymotion")
 
 API = "https://api.dailymotion.com/videos"
-_BLOCK_RE = re.compile(r"HTTP Error 429|HTTP Error 403|too many requests|rate limit", re.I)
+_BLOCK_RE = re.compile(r"HTTP Error 429|too many requests|rate[- ]?limit", re.I)
 MAX_FAILURES_IN_A_ROW = 6
 
 
@@ -42,6 +43,7 @@ class Refused(DailymotionError):
 class Dailymotion:
     Error = DailymotionError
     Refused = Refused
+    tries = 2  # candidates downloaded per song
 
     def __init__(self, paths: Paths, api_per_min: int = 6, downloads_per_hour: int = 60, stop=None) -> None:
         self.http = session(2)
@@ -86,7 +88,11 @@ class Dailymotion:
 
     def candidates(self, t) -> list[Pick]:
         song = Song(t.song_id, t.title, t.artist, t.duration)
-        scored = [(score_candidate(c, song) - 0.01 * i, c) for i, c in enumerate(self.search(song))]
+        scored = [
+            (score_candidate(c, song) - 0.01 * i, c)
+            for i, c in enumerate(self.search(song))
+            if not foreign_featured_artist(c["title"], song.artist)
+        ]
         return [
             Pick(f"dailymotion:{c['id']}", c["title"], c["channel"], c["duration"], round(s, 4), c["id"])
             for s, c in sorted(scored, key=lambda x: -x[0]) if s > 0

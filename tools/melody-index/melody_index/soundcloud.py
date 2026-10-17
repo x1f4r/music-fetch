@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -26,7 +27,15 @@ from .config import Paths
 from .extract import DecodeError, decode_audio
 from .guard import SourceGuard
 from .net import session
-from .normalize import NON_ORIGINAL_RE, artist_similarity, fold, primary_artist, title_core, title_similarity
+from .normalize import (
+    NON_ORIGINAL_RE,
+    artist_similarity,
+    fold,
+    foreign_featured_artist,
+    primary_artist,
+    title_core,
+    title_similarity,
+)
 
 log = logging.getLogger("mfidx.soundcloud")
 
@@ -144,6 +153,8 @@ def score_candidate(c: Candidate, title: str, artist: str, duration: float | Non
     bad = _NOT_RECORDING_RE.search(probe) or NON_ORIGINAL_RE.search(probe)
     if bad and not re.search(rf"\b{re.escape(bad.group(0).strip())}\b", fold(title)):
         return 0.0, "version"
+    if foreign_featured_artist(c.title, artist):
+        return 0.0, "feature"  # someone else's verse on the original hook
     if not c.full_duration or c.full_duration > MAX_DURATION_S:
         return 0.0, "duration"
     if duration and abs(c.full_duration - duration) > DURATION_TOLERANCE_S:
@@ -200,11 +211,16 @@ class SoundCloud:
         self.guards = (self.api, self.cdn)
         self._cid_path = paths.state / "soundcloud-client-id.json"
         self._cid: str | None = None
+        self._cid_lock = threading.Lock()
         self.stats = {"api": 0, "cdn": 0, "bytes": 0}
 
     # ------------------------------------------------------------------ client id
 
     def client_id(self, refresh: bool = False) -> str:
+        with self._cid_lock:
+            return self._client_id(refresh)
+
+    def _client_id(self, refresh: bool) -> str:
         if not refresh:
             if self._cid:
                 return self._cid

@@ -14,9 +14,11 @@ A song goes to the sources in that order: a source takes it once every source be
 failed for it (or is switched off). Every full-track pick is checked against the song's Deezer
 preview melody (``placement``): the preview's 10 fps RMVPE contour must find itself somewhere in
 the full track, without transposition or tempo change, for at least ``ACCEPT`` of its voiced
-frames. On the 701 YouTube full tracks of stage 3b this passes 99.3 % of the true pairs and none
-of 3,500 pairs with another song's preview (wrong pairs score at most 0.33). Sped-up, pitched,
-live, cover and remix uploads fail it; the version words in titles are only a first filter.
+frames, and the decoded audio must last as long as Deezer's track (within max(12 s, 8 %)). On
+the 701 YouTube full tracks of stage 3b, 0.5 passes 98.4 % of the true pairs and none of 6,300
+pairs with another song's preview (wrong pairs score at most 0.36); the true pairs between 0.4
+and 0.5 are mostly live sessions and award-show performances. Sped-up, pitched, cover and remix
+uploads fail it; the version words in titles are only a first filter.
 
 Audio is fetched into memory, decoded there and dropped after RMVPE; only f0, confidences and
 notes are stored, full tracks in ``track_melody`` (same rows as stage 3b, so the export and
@@ -93,10 +95,11 @@ WINDOW_SOURCES = ("itunes",)
 ALL_SOURCES = FULL_SOURCES + WINDOW_SOURCES
 # Sources whose verdict a window source waits for (YouTube is too slow to wait for).
 WINDOW_AFTER = ("soundcloud", "dailymotion")
-ACCEPT = 0.45
+ACCEPT = 0.5
 FINAL = {"ok", "mismatch", "no_match", "unverifiable", "same_window"}
 MAX_ERRORS = 3  # an erroring song is retried on later passes up to this many times
-MAX_TRIES = 3  # candidates downloaded per song and source
+MAX_TRIES = 3  # candidates downloaded per song and source (a client's ``tries`` overrides it)
+REFRESH_S = 1800.0  # new songs (evergreen items, late resolves) join the plan this often
 VOICING = 0.04
 FPS = 10
 WINDOW_MIN_SHIFT_S = 8.0  # a second window that starts closer than this to Deezer's adds nothing
@@ -161,6 +164,13 @@ def window_offset(preview: np.ndarray, window: np.ndarray, tolerance: float = 0.
     return float(share[i]), (i - len(window)) / FPS
 
 
+def duration_ok(seconds: float, expected: float | None) -> bool:
+    """The decoded audio lasts as long as the song (the same tolerance as the candidate filters)."""
+    if not expected:
+        return True
+    return abs(seconds - expected) <= max(12.0, 0.08 * expected) + 2.0
+
+
 def phrases_of(f0: np.ndarray, conf: np.ndarray, source: str) -> list[dict[str, Any]]:
     notes = f0_to_notes(f0, conf, DEFAULT_PARAMS)
     return [p.to_json(source) for p in dedupe_phrases(phrases_from_notes(notes, DEFAULT_PARAMS))]
@@ -216,6 +226,7 @@ class Plan:
 
     def __init__(self, conn, top: int, sources: tuple[str, ...]) -> None:
         self.sources = sources
+        self.top = top
         self.targets = priority(conn, top)
         self.full = {
             r[0] for r in conn.execute("SELECT song_id FROM track_melody WHERE status IN ('ok', 'empty')")
@@ -234,11 +245,15 @@ class Plan:
         return bool(st) and (st[0] in FINAL or st[1] >= MAX_ERRORS)
 
     def _failed(self, song_id: int, source: str) -> bool:
-        """The source has given its verdict and found nothing (or will not run)."""
+        """The source has tried the song and found nothing (or will not run).
+
+        An error counts as well: the next source need not wait for the retry, which happens
+        on a later pass and only if no source has found the song by then.
+        """
         if source not in self.sources or source in self.off:
             return True
         st = self.state.get((song_id, source))
-        return self._final(song_id, source) and not (st and st[0] == "ok")
+        return bool(st) and st[0] != "ok"
 
     def eligible(self, t: Target, source: str) -> bool:
         if t.song_id in self.full or (t.song_id, source) in self.claimed or self._final(t.song_id, source):
@@ -288,6 +303,16 @@ class Plan:
             for s in self.cursor:
                 self.cursor[s] = 0
 
+    def refresh(self, conn) -> int:
+        """Re-rank the targets (new songs join, scores may have changed); returns the new count."""
+        targets = priority(conn, self.top)
+        with self.lock:
+            before = {t.song_id for t in self.targets}
+            self.targets = targets
+            for s in self.cursor:
+                self.cursor[s] = 0
+            return sum(1 for t in targets if t.song_id not in before)
+
     def pending(self, source: str) -> bool:
         with self.lock:
             return any(self.eligible(t, source) or (t.song_id, source) in self.claimed for t in self.targets)
@@ -298,7 +323,7 @@ class Plan:
 
 class Refs:
     def __init__(self, paths: Paths, top: int, sources: tuple[str, ...], soundcloud_workers: int = 2,
-                 youtube_per_hour: int = 40, half: bool = False) -> None:
+                 youtube_gap: float = 30.0, youtube_per_day: int = 2400, half: bool = False) -> None:
         self.paths = paths
         self.top = top
         self.sources = sources
@@ -322,7 +347,7 @@ class Refs:
         if "youtube" in sources:
             from .youtube import YouTube
 
-            self.clients["youtube"] = YouTube(paths, per_hour=youtube_per_hour, stop=self.stop)
+            self.clients["youtube"] = YouTube(paths, gap=youtube_gap, per_day=youtube_per_day, stop=self.stop)
         if "itunes" in sources:
             from .itunes import ITunes
 
@@ -385,13 +410,23 @@ class Refs:
             return "no_match"
         best: dict[str, Any] = {"agreement": -1.0}
         errors: list[str] = []
-        for c in cands[:MAX_TRIES]:
+        for c in cands[: getattr(client, "tries", MAX_TRIES)]:
             try:
                 audio = client.fetch(c)
+            except client.Refused:
+                raise
             except (DecodeError, client.Error) as e:
                 errors.append(f"{c.ref_id}: {e}"[:160])
                 continue
             seconds = len(audio) / 16000.0
+            if not duration_ok(seconds, t.duration):
+                del audio
+                errors.append(f"{c.ref_id}: lasts {seconds:.0f} s, not {t.duration} s")
+                if best["agreement"] < 0:
+                    best = {"agreement": 0.0, "ref_id": c.ref_id, "ref_title": c.title[:300],
+                            "uploader": c.uploader[:200], "duration": round(seconds, 2),
+                            "match_score": round(c.score, 4)}
+                continue
             f0, conf = self.pitch(audio)
             del audio
             share, at = placement(preview, contour(f0, conf))
@@ -503,8 +538,40 @@ class Refs:
             c = self.counts[source]
             c[status] = c.get(status, 0) + 1
 
+    def _refresh(self) -> None:
+        conn = self._conn()
+        while not self.stop.wait(REFRESH_S):
+            try:
+                n = self.plan.refresh(conn)
+            except Exception:  # noqa: BLE001 - the plan stays as it was
+                log.exception("refs: refresh failed")
+                continue
+            if n:
+                log.info("refs: %d new target songs", n)
+
+    def _coverage(self) -> None:
+        """Log how the evaluation songs are covered (they are never given priority)."""
+        try:
+            conn = self._conn()
+            full = {r[0] for r in conn.execute("SELECT song_id FROM track_melody WHERE status='ok'")}
+            windows = {r[0] for r in conn.execute("SELECT song_id FROM window_melody WHERE status='ok'")}
+            ranks = {t.song_id for t in self.plan.targets}
+            for name, ids in _eval_songs(self.paths, conn).items():
+                log.info(
+                    "refs: eval set %s: %d songs, %d in the targets, %d with a full track, %d with a second window",
+                    name, len(ids), sum(1 for i in ids if i in ranks), sum(1 for i in ids if i in full),
+                    sum(1 for i in ids if i in windows and i not in full),
+                )
+        except Exception:  # noqa: BLE001 - only a log line
+            log.exception("refs: eval coverage failed")
+
     def _report(self) -> None:
+        self._coverage()
+        n = 0
         while not self.stop.wait(600):
+            n += 1
+            if n % 6 == 0:
+                self._coverage()
             hours = (time.time() - self.t0) / 3600
             parts = []
             for s in self.sources:
@@ -516,28 +583,31 @@ class Refs:
 
     def run(self) -> dict[str, Any]:
         log.info("refs: %d target songs, sources %s", len(self.plan.targets), ",".join(self.sources))
-        threads = [threading.Thread(target=self._report, daemon=True, name="report")]
+        threads = [
+            threading.Thread(target=self._report, daemon=True, name="report"),
+            threading.Thread(target=self._refresh, daemon=True, name="refresh"),
+        ]
         for s in self.sources:
             for n in range(self.workers.get(s, 1)):
                 threads.append(threading.Thread(target=self._work, args=(s, n), name=f"{s}-{n}"))
         for th in threads:
             th.start()
         try:
-            for th in threads[1:]:
+            for th in threads[2:]:
                 while th.is_alive():
                     th.join(5)
         except KeyboardInterrupt:
             log.warning("refs: stopping")
             self.stop.set()
-            for th in threads[1:]:
+            for th in threads[2:]:
                 th.join(60)
         self.stop.set()
         return {"targets": len(self.plan.targets), "counts": self.counts}
 
 
 def run(paths: Paths, top: int = 15000, sources: tuple[str, ...] = ALL_SOURCES, soundcloud_workers: int = 2,
-        youtube_per_hour: int = 40, half: bool = False) -> dict[str, Any]:
-    return Refs(paths, top, sources, soundcloud_workers, youtube_per_hour, half).run()
+        youtube_gap: float = 30.0, youtube_per_day: int = 2400, half: bool = False) -> dict[str, Any]:
+    return Refs(paths, top, sources, soundcloud_workers, youtube_gap, youtube_per_day, half).run()
 
 
 # ---------------------------------------------------------------------------- progress
@@ -552,14 +622,27 @@ def _eval_songs(paths: Paths, conn) -> dict[str, list[int]]:
         out["chad"] = [r[0] for r in conn.execute("SELECT song_id, deezer_id FROM deezer WHERE status='ok'") if r[1] in dz]
     user = paths.eval / "user-songs.json"  # [{"artist": …, "title": …}], private, optional
     if user.exists():
-        from .normalize import song_key
+        from .normalize import artist_similarity, title_key
 
-        keys = {song_key(x["artist"], x["title"]) for x in json.loads(user.read_text())}
-        out["user"] = [r[0] for r in conn.execute("SELECT id, key FROM songs") if r[1] in keys]
+        wanted: dict[str, list[str]] = {}
+        for x in json.loads(user.read_text()):
+            wanted.setdefault(title_key(x["title"]), []).append(x["artist"])
+        ids = []
+        for r in conn.execute("SELECT id, title, artist FROM songs WHERE in_universe=1"):
+            artists = wanted.get(title_key(r["title"]))
+            if artists and any(artist_similarity(r["artist"], a) >= 0.7 for a in artists):
+                ids.append(r["id"])
+        out["user"] = ids
     return out
 
 
-def status(paths: Paths, window: float = 3600.0) -> dict[str, Any]:
+def status(paths: Paths, window: float = 3600.0, rate_window: float = 3 * 3600.0) -> dict[str, Any]:
+    """Progress per source and tier, the settle rate and ETA, breakers and eval-song coverage.
+
+    A song is settled when it has a full track or every full-track source has given its verdict
+    (a final status, or ``MAX_ERRORS`` errors). The ETA divides a tier's unsettled songs by the
+    number of songs settled in the last ``rate_window`` seconds.
+    """
     conn = dbm.connect(paths.db)
     conn.executescript(TRACK_SCHEMA)
     conn.executescript(SCHEMA)
@@ -582,33 +665,43 @@ def status(paths: Paths, window: float = 3600.0) -> dict[str, Any]:
             continue
         guards[f.stem] = {
             "requests": g.get("requests", 0),
-            "recent": len(g.get("t", [])),
+            "last_24h": sum(1 for t in g.get("d", []) if now - t < 86400) if "d" in g else None,
             "paused_for_min": round(max(0.0, float(g.get("pause_until", 0)) - now) / 60, 1),
             "blocks_in_a_row": g.get("blocks", 0),
             "total_blocks": g.get("total_blocks", 0),
             "disabled": bool(g.get("disabled")),
             "reason": g.get("reason"),
         }
-    full = {}
+    full: dict[int, str] = {}
     for r in conn.execute("SELECT song_id, video_id FROM track_melody WHERE status='ok'"):
         vid = r["video_id"] or ""
         full[r["song_id"]] = vid.split(":", 1)[0] if ":" in vid else "youtube-3b"
     windows = {r[0] for r in conn.execute("SELECT song_id FROM window_melody WHERE status='ok'")}
+    verdicts: dict[int, dict[str, tuple[str, int]]] = {}
+    last: dict[int, float] = {}
+    for r in conn.execute("SELECT song_id, source, status, attempts, updated_at FROM ref_attempt"):
+        verdicts.setdefault(r[0], {})[r[1]] = (r[2], r[3])
+        last[r[0]] = max(last.get(r[0], 0.0), r[4] or 0.0)
+
+    def settled(i: int) -> bool:
+        if i in full:
+            return True
+        v = verdicts.get(i, {})
+        return all(s in v and (v[s][0] in FINAL or v[s][1] >= MAX_ERRORS) for s in FULL_SOURCES)
+
     ranked = [r["id"] for r in ranked_songs(conn)]
+    rate = sum(1 for i, t in last.items() if now - t < rate_window and settled(i)) / (rate_window / 3600)
     tiers = {}
-    rate_ok = sum(d.get("ok_last_hour") or 0 for s, d in by_source.items() if s in FULL_SOURCES)
-    rate_songs = by_source.get("soundcloud", {}).get("songs_last_hour") or 0
-    tried = {r[0] for r in conn.execute("SELECT DISTINCT song_id FROM ref_attempt WHERE source='soundcloud'")}
     for n in (1000, 5000, 15000):
         ids = ranked[:n]
         have = sum(1 for i in ids if i in full)
-        left = sum(1 for i in ids if i not in full and i not in tried)
+        open_ = sum(1 for i in ids if not settled(i))
         tiers[f"top{n}"] = {
             "full_track": have,
             "full_track_share": round(have / max(1, len(ids)), 3),
             "window_only": sum(1 for i in ids if i not in full and i in windows),
-            "not_tried_yet": left,
-            "eta_first_pass_h": round(left / rate_songs, 1) if rate_songs else None,
+            "unsettled": open_,
+            "eta_h": round(open_ / rate, 1) if rate else None,
         }
     evals = {}
     rank_of = {i: k for k, i in enumerate(ranked)}
@@ -622,7 +715,8 @@ def status(paths: Paths, window: float = 3600.0) -> dict[str, Any]:
     return {
         "sources": by_source,
         "full_tracks": {"total": len(full), "by_source": {s: sum(1 for v in full.values() if v == s) for s in set(full.values())}},
-        "full_tracks_per_hour": rate_ok,
+        "full_tracks_per_hour": sum(d.get("ok_last_hour") or 0 for s, d in by_source.items() if s in FULL_SOURCES),
+        "songs_settled_per_hour": round(rate, 1),
         "tiers": tiers,
         "eval_coverage": evals,
         "guards": guards,
