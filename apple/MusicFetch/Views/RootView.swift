@@ -305,7 +305,10 @@ struct ListenToolbarButton: View {
     var body: some View {
         let listen = app.listen!
         Group {
-            switch Self.style {
+            switch Compat.usesMacOS26Features ? Self.style : "capsule" {
+            case "capsule":
+                // Toolbars before macOS 26 draw every button plain, prominent or not.
+                LegacyListenSplit(label: label(listen), action: { app.listenNow() })
             case "pair":
                 HStack(spacing: 4) {
                     Button { app.listenNow() } label: { label(listen) }
@@ -359,6 +362,47 @@ struct ListenToolbarButton: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help(Copy.listenMethods)
+    }
+}
+
+/// The Listen split button before macOS 26: an accent capsule with the label and a
+/// chevron for the menu, the size of the toolbar's other controls.
+private struct LegacyListenSplit<Label: View>: View {
+    var label: Label
+    var action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: action) {
+                label
+                    .padding(.leading, 10)
+                    .padding(.trailing, 8)
+                    .frame(height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Rectangle()
+                .fill(.white.opacity(0.35))
+                .frame(width: 1, height: 14)
+                .accessibilityHidden(true)
+            Menu {
+                ListenMethodItems()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(Copy.listenMethods)
+            .accessibilityLabel(Copy.listenMethods)
+        }
+        .foregroundStyle(.white)
+        .prominentGlass(tint: .accentColor, in: Capsule())
+        .fixedSize()
     }
 }
 

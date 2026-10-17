@@ -39,6 +39,16 @@ final class ScreenshotTests: XCTestCase {
         continueAfterFailure = true
     }
 
+    /// The screen the runner gives us, for the contact sheet's notes.
+    func testScreen() throws {
+        let size = XCUIScreen.main.screenshot().image.size
+        let attachment = XCTAttachment(string: "\(Int(size.width)) x \(Int(size.height))")
+        attachment.name = "screen"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertGreaterThanOrEqual(size.width, 1480, "the screen is too small for the 1440 pt variants")
+    }
+
     func testStates() throws {
         let only = ProcessInfo.processInfo.environment["MF_SHOT_STATES"].map { Set($0.split(separator: ",").map(String.init)) }
         let plan = Self.fullStates.map { ($0, Variant.all) } + Self.pairStates.map { ($0, Variant.pair) }
