@@ -91,7 +91,7 @@ final class ScreenshotTests: XCTestCase {
             }
             // The sidebar's Listen row returns to the stage too.
             run("result", variant) { app, window in
-                let row = window.outlines.firstMatch.staticTexts["Listen"].firstMatch
+                let row = self.element("mf.sidebar.listen", in: window)
                 XCTAssertTrue(row.exists, "result \(variant.name): no Listen row in the sidebar")
                 if row.exists { row.click() }
                 XCTAssertTrue(self.element("mf.listenButton", in: window).waitForExistence(timeout: 3),
@@ -110,14 +110,14 @@ final class ScreenshotTests: XCTestCase {
             // Hovering a library row shows its pin button.
             run("library", variant) { app, window in
                 let row = window.staticTexts["Take On Me"].firstMatch
-                if row.exists { row.hover() }
+                if row.exists { row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover() }
                 sleep(1)
                 self.attachWindow(window, "library-hover", variant)
             }
             // The context menu of a multiple selection, then ⌘⇧P pins all of it.
             run("library-selection", variant) { app, window in
                 let row = window.staticTexts["Take On Me"].firstMatch
-                if row.exists { row.rightClick() }
+                if row.exists { row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick() }
                 sleep(1)
                 self.attachScreen("library-selection-menu", variant)
                 app.typeKey(.escape, modifierFlags: [])

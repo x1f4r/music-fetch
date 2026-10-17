@@ -15,16 +15,20 @@ struct Sidebar: View {
         List(selection: Binding(get: { route }, set: { app.selectRoute($0) })) {
             NavigationLink(value: AppModel.Route.listen) {
                 Label(Copy.listenTitle, image: "contour.mark")
+                    .accessibilityIdentifier("mf.sidebar.listen")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     // A click, also on the selected row, leaves a result for the stage.
                     .onTapGesture { app.selectRoute(.listen) }
             }
             .onDrop(of: [.fileURL, .url, .plainText], isTargeted: nil) { app.handleDrop($0) }
+            .tag(AppModel.Route.listen)
             NavigationLink(value: AppModel.Route.library) {
                 Label(Copy.libraryTitle, systemImage: "square.stack")
             }
             .badge(app.library.runningCount)
+            // Explicit tags: the selection must still match the rows under modifiers.
+            .tag(AppModel.Route.library)
             let pinned = app.library.visiblePinned
             if !pinned.isEmpty {
                 Section(Copy.pinnedSection, isExpanded: $pinnedExpanded) {
@@ -37,6 +41,7 @@ struct Sidebar: View {
                             }
                         }
                         .contextMenu { PinnedRowMenu(entry: entry) }
+                        .tag(AppModel.Route.session(entry.id))
                     }
                     if pinned.count > Self.pinnedLimit {
                         Button(Copy.showAll) { app.showPinnedInLibrary() }

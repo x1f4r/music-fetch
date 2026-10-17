@@ -227,27 +227,16 @@ struct TrailingActionsSpacer: ToolbarContent {
     }
 }
 
-/// Export and Pin for the session on screen, sharing one glass capsule (§3.1).
+/// Export and Pin for the session on screen, next to Listen (§3.1).
 struct SessionToolbarItems: ToolbarContent {
     var model: SessionModel
 
     var body: some ToolbarContent {
-        if Compat.usesMacOS26Features {
-            ToolbarItem {
-                ControlGroup {
-                    if model.hasExport {
-                        ExportMenu(model: model)
-                    }
-                    PinToolbarToggle(ids: [model.id])
-                }
+        ToolbarItemGroup {
+            if model.hasExport {
+                ExportMenu(model: model)
             }
-        } else {
-            ToolbarItemGroup {
-                if model.hasExport {
-                    ExportMenu(model: model)
-                }
-                PinToolbarToggle(ids: [model.id])
-            }
+            PinToolbarToggle(ids: [model.id])
         }
     }
 }
@@ -364,7 +353,7 @@ struct ListenToolbarButton: View {
         } label: {
             Label(Copy.listenMethods, systemImage: "chevron.down")
                 .labelStyle(.iconOnly)
-                .imageScale(.small)
+                .font(.footnote.weight(.semibold))
         }
         .menuIndicator(.hidden)
         .fixedSize()
