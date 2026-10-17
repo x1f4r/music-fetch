@@ -245,6 +245,9 @@ final class ListenModel {
         guard let engine = app.engine else { return }
         if stage == .link { detachLink() }
         app.preview.stop()
+        // Set before starting, so Try Again after a failed start listens again rather
+        // than repeating an earlier link.
+        runningSource = source
         let bridge = ObserverBridge()
         let handle: LiveSessionHandle
         do {
