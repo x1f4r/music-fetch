@@ -8,11 +8,13 @@ Public-domain melodies also carry a hand-written ABC transcription of the part p
 stored in ``symbolic_melody`` and exported as clean "midi" phrases. Every item records its
 licence.
 
-Item fields: ``title``, ``artist`` (composer or performer as Deezer would credit it),
-``kind`` ("symbolic": transcription only, "audio": recording only, "both"), ``fame`` (1 = known
-to nearly everyone, 2 = very well known, 3 = well known; sets the popularity), ``licence`` and
-for symbolic items ``abc``; optional ``aliases`` (other titles, e.g. the German one) and
-``category``.
+Item fields (``[[item]]``): ``title``, ``artist`` (composer or performer as Deezer would credit
+it), ``kind`` ("symbolic": transcription only, "audio": recording only, "both"), ``fame`` (1 =
+known to nearly everyone, 2 = very well known, 3 = well known; sets the popularity),
+``licence`` and for symbolic items ``abc``; optional ``aliases`` (other titles, e.g. the German
+one) and ``category``. Recordings come in ``[[group]]`` tables that share ``kind``, ``licence``
+and ``category`` and list their items as ``[title, artist, fame]`` or
+``[title, artist, fame, [aliases]]``.
 """
 
 from __future__ import annotations
@@ -70,14 +72,26 @@ def load(path: Path | None = None) -> list[dict[str, Any]]:
         raw = resources.files("melody_index").joinpath("data/evergreen.toml").read_bytes()
     else:
         raw = path.read_bytes()
-    items = tomllib.loads(raw.decode("utf-8")).get("item", [])
+    doc = tomllib.loads(raw.decode("utf-8"))
+    items = list(doc.get("item", []))
+    for g in doc.get("group", []):
+        for entry in g.get("items", []):
+            if not 3 <= len(entry) <= 4:
+                raise ValueError(f"evergreen group {g.get('category')!r}: bad entry {entry!r}")
+            it = {"title": entry[0], "artist": entry[1], "fame": entry[2], "kind": g.get("kind", "audio"),
+                  "licence": g.get("licence"), "category": g.get("category")}
+            if len(entry) == 4:
+                it["aliases"] = list(entry[3])
+            items.append(it)
     seen: set[str] = set()
     for it in items:
         for k in ("title", "artist", "kind", "fame", "licence"):
-            if k not in it:
+            if not it.get(k):
                 raise ValueError(f"evergreen item {it.get('title')!r} lacks {k!r}")
         if it["kind"] not in KINDS:
             raise ValueError(f"evergreen item {it['title']!r}: kind must be one of {KINDS}")
+        if int(it["fame"]) not in FAME_SCORE:
+            raise ValueError(f"evergreen item {it['title']!r}: fame must be 1, 2 or 3")
         if it["kind"] in ("symbolic", "both") and not it.get("abc"):
             raise ValueError(f"evergreen item {it['title']!r} needs an abc transcription")
         it["id"] = song_key(it["artist"], it["title"])
