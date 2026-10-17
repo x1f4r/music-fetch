@@ -32,7 +32,7 @@ final class ScreenshotTests: XCTestCase {
     /// The idle stage hides the toolbar Listen button (the big button is the same action).
     static let statesWithoutToolbarListen: Set<String> = [
         "idle", "noMatch", "failed", "micDenied", "prePrompt", "listening", "hum", "matching", "captureSilent",
-        "providers", "melodyPrompt", "downloading",
+        "providers", "melodyPrompt", "downloading", "lyrics",
     ]
 
     override func setUp() {
@@ -85,7 +85,8 @@ final class ScreenshotTests: XCTestCase {
             }
             // The sidebar's Listen row returns to the stage too.
             run("result", variant) { app, window in
-                let row = window.outlines.firstMatch.cells.element(boundBy: 0)
+                let row = window.outlines.firstMatch.staticTexts["Listen"].firstMatch
+                XCTAssertTrue(row.exists, "result \(variant.name): no Listen row in the sidebar")
                 if row.exists { row.click() }
                 XCTAssertTrue(self.element("mf.listenButton", in: window).waitForExistence(timeout: 3),
                               "result \(variant.name): the sidebar's Listen row did not show the stage")
@@ -102,15 +103,15 @@ final class ScreenshotTests: XCTestCase {
             }
             // Hovering a library row shows its pin button.
             run("library", variant) { app, window in
-                let rows = window.outlines.firstMatch.cells
-                if rows.count > 2 { rows.element(boundBy: 2).hover() }
+                let row = window.staticTexts["Take On Me"].firstMatch
+                if row.exists { row.hover() }
                 sleep(1)
                 self.attachWindow(window, "library-hover", variant)
             }
             // The context menu of a multiple selection, then ⌘⇧P pins all of it.
             run("library-selection", variant) { app, window in
-                let rows = window.outlines.firstMatch.cells
-                if rows.count > 1 { rows.element(boundBy: 1).rightClick() }
+                let row = window.staticTexts["Take On Me"].firstMatch
+                if row.exists { row.rightClick() }
                 sleep(1)
                 self.attachScreen("library-selection-menu", variant)
                 app.typeKey(.escape, modifierFlags: [])
@@ -118,18 +119,6 @@ final class ScreenshotTests: XCTestCase {
                 app.typeKey("p", modifierFlags: [.command, .shift])
                 sleep(1)
                 self.attachWindow(window, "library-selection-pinned", variant)
-            }
-        }
-    }
-
-    /// Renderings of the split Listen button to choose from (Debug `-MFListenStyle`).
-    func testListenStyles() throws {
-        for style in ["menu", "pair", "control"] {
-            for variant in Variant.pair {
-                let app = launch("result", variant, extra: ["-MFListenStyle", style])
-                defer { app.terminate() }
-                guard let window = mainWindow(app, state: "result") else { continue }
-                attachWindow(window, "listen-style-\(style)", variant)
             }
         }
     }

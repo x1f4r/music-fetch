@@ -232,11 +232,22 @@ struct SessionToolbarItems: ToolbarContent {
     var model: SessionModel
 
     var body: some ToolbarContent {
-        ToolbarItemGroup {
-            if model.hasExport {
-                ExportMenu(model: model)
+        if Compat.usesMacOS26Features {
+            ToolbarItem {
+                ControlGroup {
+                    if model.hasExport {
+                        ExportMenu(model: model)
+                    }
+                    PinToolbarToggle(ids: [model.id])
+                }
             }
-            PinToolbarToggle(ids: [model.id])
+        } else {
+            ToolbarItemGroup {
+                if model.hasExport {
+                    ExportMenu(model: model)
+                }
+                PinToolbarToggle(ids: [model.id])
+            }
         }
     }
 }
@@ -302,50 +313,34 @@ private struct LinkFieldChrome: ViewModifier {
 }
 
 /// [Listen ▾] in the toolbar: the button listens again with the current method, the
-/// menu offers every other way to identify (§3.1). Shows Stop while capturing.
+/// chevron offers every other way to identify (§3.1). Shows Stop while capturing.
 struct ListenToolbarButton: View {
     @Environment(AppModel.self) private var app
-
-    #if DEBUG
-    /// Screenshot comparison of renderings: `-MFListenStyle menu|pair|control`.
-    private static let style = UserDefaults.standard.string(forKey: "MFListenStyle") ?? "menu"
-    #else
-    private static let style = "menu"
-    #endif
 
     var body: some View {
         let listen = app.listen!
         Group {
-            switch Compat.usesMacOS26Features ? Self.style : "capsule" {
-            case "capsule":
-                // Toolbars before macOS 26 draw every button plain, prominent or not.
-                LegacyListenSplit(label: label(listen), action: { app.listenNow() })
-            case "pair":
-                HStack(spacing: 4) {
+            if Compat.usesMacOS26Features {
+                // A prominent button makes the toolbar tint the whole glass capsule,
+                // chevron included; the hairline marks the split like "Open in".
+                HStack(spacing: 0) {
                     Button { app.listenNow() } label: { label(listen) }
                         .buttonStyle(.borderedProminent)
+                    Rectangle()
+                        .fill(.white.opacity(0.35))
+                        .frame(width: 1, height: 16)
+                        .accessibilityHidden(true)
                     methodsMenu
                 }
-            case "control":
-                ControlGroup {
-                    Button { app.listenNow() } label: { label(listen) }
-                    methodsMenu
-                }
-            default:
-                Menu {
-                    ListenMethodItems()
-                } label: {
-                    label(listen)
-                } primaryAction: {
-                    app.listenNow()
-                }
-                .menuStyle(.button)
-                .buttonStyle(.borderedProminent)
+            } else {
+                // Toolbars before macOS 26 draw every button plain, prominent or not.
+                LegacyListenSplit(label: label(listen), action: { app.listenNow() })
             }
         }
         .labelStyle(.titleAndIcon)
         .disabled(app.engine == nil || listen.stage == .matching)
         .help(listen.isCapturing ? Copy.stop : Copy.listenHelp(listen.source))
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(listen.isCapturing ? Copy.stop : Copy.listenAction)
         .accessibilityValue(listen.buttonValue)
         .accessibilityIdentifier("mf.listen")
@@ -369,6 +364,7 @@ struct ListenToolbarButton: View {
         } label: {
             Label(Copy.listenMethods, systemImage: "chevron.down")
                 .labelStyle(.iconOnly)
+                .imageScale(.small)
         }
         .menuIndicator(.hidden)
         .fixedSize()

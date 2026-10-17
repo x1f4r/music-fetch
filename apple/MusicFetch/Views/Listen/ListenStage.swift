@@ -104,10 +104,16 @@ struct RecoveryRow: View {
         let actions = listen.recoveryActions
         GlassContainer(spacing: 12) {
             HStack(spacing: compact ? 8 : 12) {
+                // Actions, not choices: accent text, so they don't read as more toggles.
                 ForEach(actions, id: \.self) { action in
                     Button(Copy.title(for: action)) { listen.perform(action) }
-                        .glassButtonStyle()
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.tint)
+                        .fontWeight(.medium)
                         .controlSize(compact ? .small : .large)
+                        .padding(.horizontal, compact ? 4 : 8)
+                        .frame(minHeight: compact ? 24 : 28)
+                        .contentShape(Rectangle())
                         .accessibilityIdentifier("mf.action.\(action)")
                 }
             }

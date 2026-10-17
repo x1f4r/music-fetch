@@ -10,13 +10,17 @@ struct Sidebar: View {
     static let pinnedLimit = 12
 
     var body: some View {
-        List(selection: Binding(get: { app.route }, set: { app.selectRoute($0) })) {
+        // Read here so the list follows routes set in code too.
+        let route = app.route
+        List(selection: Binding(get: { route }, set: { app.selectRoute($0) })) {
             NavigationLink(value: AppModel.Route.listen) {
                 Label(Copy.listenTitle, image: "contour.mark")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    // A click, also on the selected row, leaves a result for the stage.
+                    .onTapGesture { app.selectRoute(.listen) }
             }
             .onDrop(of: [.fileURL, .url, .plainText], isTargeted: nil) { app.handleDrop($0) }
-            // Clicking Listen again leaves a result for the stage.
-            .simultaneousGesture(TapGesture().onEnded { app.selectRoute(.listen) })
             NavigationLink(value: AppModel.Route.library) {
                 Label(Copy.libraryTitle, systemImage: "square.stack")
             }
