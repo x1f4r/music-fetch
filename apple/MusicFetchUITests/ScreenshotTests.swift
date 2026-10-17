@@ -75,10 +75,10 @@ final class ScreenshotTests: XCTestCase {
             }
             // Back from a result to the stage.
             run("result", variant) { app, window in
-                let back = window.buttons["mf.backToStage"]
+                let back = self.element("mf.backToStage", in: window)
                 XCTAssertTrue(back.waitForExistence(timeout: 3), "result \(variant.name): no back button")
                 back.click()
-                XCTAssertTrue(window.descendants(matching: .any)["mf.listenButton"].waitForExistence(timeout: 3),
+                XCTAssertTrue(self.element("mf.listenButton", in: window).waitForExistence(timeout: 3),
                               "result \(variant.name): back did not show the stage")
                 sleep(1)
                 self.attachWindow(window, "result-back", variant)
@@ -87,14 +87,14 @@ final class ScreenshotTests: XCTestCase {
             run("result", variant) { app, window in
                 let row = window.outlines.firstMatch.cells.element(boundBy: 0)
                 if row.exists { row.click() }
-                XCTAssertTrue(window.descendants(matching: .any)["mf.listenButton"].waitForExistence(timeout: 3),
+                XCTAssertTrue(self.element("mf.listenButton", in: window).waitForExistence(timeout: 3),
                               "result \(variant.name): the sidebar's Listen row did not show the stage")
                 sleep(1)
                 self.attachWindow(window, "result-sidebar-listen", variant)
             }
             // After no match, a source toggle switches the method without listening.
             run("noMatch", variant) { app, window in
-                let hum = window.descendants(matching: .any)["mf.source.hum"]
+                let hum = self.element("mf.source.hum", in: window)
                 XCTAssertTrue(hum.waitForExistence(timeout: 3), "noMatch \(variant.name): no Hum toggle")
                 hum.click()
                 sleep(1)
@@ -158,7 +158,7 @@ final class ScreenshotTests: XCTestCase {
     }
 
     private func mainWindow(_ app: XCUIApplication, state: String) -> XCUIElement? {
-        let marker = app.descendants(matching: .any)["MFDemoReady"]
+        let marker = element("MFDemoReady", in: app)
         if !marker.waitForExistence(timeout: 30) {
             XCTFail("\(state): the demo state never became ready")
         }
@@ -206,8 +206,14 @@ final class ScreenshotTests: XCTestCase {
 
     // MARK: - Geometry
 
+    /// The first element with `identifier` under `root` (SwiftUI may repeat an
+    /// identifier on a container's children).
+    private func element(_ identifier: String, in root: XCUIElement) -> XCUIElement {
+        root.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
     private func toolbarListen(in window: XCUIElement) -> XCUIElement? {
-        let listen = window.toolbars.firstMatch.descendants(matching: .any)["mf.listen"]
+        let listen = element("mf.listen", in: window.toolbars.firstMatch)
         return listen.exists ? listen : nil
     }
 
@@ -249,7 +255,7 @@ final class ScreenshotTests: XCTestCase {
                 violations.append("Listen is missing from the toolbar (overflow?)")
             }
         }
-        let toggle = toolbar.descendants(matching: .any)["mf.inspectorToggle"]
+        let toggle = element("mf.inspectorToggle", in: toolbar)
         if let listen, toggle.exists, abs(listen.frame.midY - toggle.frame.midY) > 1 {
             violations.append("Listen and the inspector toggle are not on one line")
         }

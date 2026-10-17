@@ -173,10 +173,7 @@ struct ListenPane: View {
                 ToolbarItem(placement: .navigation) { BackToStageButton() }
             }
             ToolbarItem(placement: .navigation) { LinkField() }
-            // Without a title nothing pushes the actions to the trailing edge (macOS 26).
-            if #available(macOS 26, *) {
-                ToolbarSpacer(.flexible)
-            }
+            TrailingActionsSpacer()
             if let shown = listen.shown {
                 SessionToolbarItems(model: shown)
             }
@@ -204,14 +201,28 @@ struct SessionScreen: View {
         .navigationTitle(model?.title ?? "")
         .toolbar(removing: .title)
         .toolbar {
-            // Without a title nothing pushes the actions to the trailing edge (macOS 26).
-            if #available(macOS 26, *) {
-                ToolbarSpacer(.flexible)
-            }
+            TrailingActionsSpacer()
             if let model {
                 SessionToolbarItems(model: model)
             }
             ToolbarItem { ListenToolbarButton() }
+        }
+    }
+}
+
+/// Without a title nothing pushes the actions to the trailing edge: a flexible space
+/// on macOS 26, an empty centered item before (the toolbar keeps flexible space around
+/// it).
+struct TrailingActionsSpacer: ToolbarContent {
+    var body: some ToolbarContent {
+        if #available(macOS 26, *) {
+            ToolbarSpacer(.flexible)
+        } else {
+            ToolbarItem(placement: .principal) {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityHidden(true)
+            }
         }
     }
 }
