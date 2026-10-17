@@ -170,6 +170,18 @@ impl Engine {
         mode: ListenMode,
         observer: Arc<dyn SessionObserver>,
     ) -> Result<Arc<LiveSession>> {
+        self.start_listening_with(source, mode, ListenOptions::default(), observer)
+    }
+
+    /// Start a live session with options (impression auto-stop, candidates while
+    /// humming).
+    pub fn start_listening_with(
+        &self,
+        source: CaptureSource,
+        mode: ListenMode,
+        options: ListenOptions,
+        observer: Arc<dyn SessionObserver>,
+    ) -> Result<Arc<LiveSession>> {
         let kind = live::session_kind(source, mode);
         let ctx = self.open_session(kind, "", None, observer, true)?;
         let input = LiveInput::new();
@@ -186,26 +198,13 @@ impl Engine {
             emitter: ctx.emitter.clone(),
             runtime: self.ctx.runtime.clone(),
         });
-        if let Err(e) = live::spawn(ctx.clone(), source, mode, input, move || registry.remove(&id)) {
+        if let Err(e) = live::spawn(ctx.clone(), source, mode, options, input, move || registry.remove(&id)) {
             // Nothing was announced yet: report the error here only.
             self.registry.remove(&ctx.id);
             let _ = self.ctx.store.delete_sessions(std::slice::from_ref(&ctx.id));
             return Err(e);
         }
         Ok(session)
-    }
-
-    /// Start a live session with options (e.g. no impression auto-stop).
-    pub fn start_listening_with(
-        &self,
-        source: CaptureSource,
-        mode: ListenMode,
-        options: ListenOptions,
-        observer: Arc<dyn SessionObserver>,
-    ) -> Result<Arc<LiveSession>> {
-        // Options are applied by the live pipeline (wave 3); until then they are ignored.
-        let _ = options;
-        self.start_listening(source, mode, observer)
     }
 
     /// Reduce CPU and memory use (weak devices, battery saver). The engine also
