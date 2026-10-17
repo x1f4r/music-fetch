@@ -27,6 +27,14 @@ codegen-units = 1
 panic = "unwind"
 strip = "debuginfo"
 
+# Development and evaluation builds (`--profile release-fast`): release optimizations
+# with parallel codegen and no LTO, several times faster to build. Shipping builds use
+# `release`.
+[profile.release-fast]
+inherits = "release"
+codegen-units = 16
+lto = false
+
 [profile.dev.package."*"]
 opt-level = 2
 
