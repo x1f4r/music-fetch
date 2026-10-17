@@ -1471,7 +1471,7 @@ checksum = "5449c8c750f1a07ea702bbd212bd999fceece9b3d1508b17023b3e174583124b"
 
 [[package]]
 name = "mf-cli"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1486,7 +1486,7 @@ dependencies = [
 
 [[package]]
 name = "mfcore"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "base64",
  "crc32fast",
@@ -3358,7 +3358,7 @@ dependencies = [
 
 [[package]]
 name = "uniffi-bindgen"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "uniffi",
 ]

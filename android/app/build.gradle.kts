@@ -22,8 +22,8 @@ android {
         applicationId = "app.musicfetch"
         minSdk = 29
         targetSdk = 36
-        versionCode = 101
-        versionName = "1.0.1"
+        versionCode = 110
+        versionName = "1.1.0"
 
         ndk {
             abiFilters += androidAbis()
