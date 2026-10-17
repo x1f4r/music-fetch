@@ -101,11 +101,14 @@ pub struct AnalyzeOptions {
     pub use_hints: bool,
     /// Keep probes and decoded audio here between runs, keyed by URL.
     pub media_cache: Option<PathBuf>,
+    /// Replay from `media_cache` only: pages and probes are never fetched again
+    /// when a kept probe exists (evaluation replays stay off the sites).
+    pub offline: bool,
 }
 
 impl Default for AnalyzeOptions {
     fn default() -> Self {
-        Self { use_hints: true, media_cache: None }
+        Self { use_hints: true, media_cache: None, offline: false }
     }
 }
 
@@ -178,7 +181,15 @@ impl<S: Services> Run<'_, S> {
     async fn link(&mut self, url: &str, mode: AnalyzeMode) -> Result<Report> {
         let ctx = self.ctx;
         ctx.emitter.phase(Phase::Resolving, None);
-        let resolution = match links::resolve(&ctx.engine.http, url, ctx.engine.country(), &ctx.cancel).await {
+        let cached = cached_resolution(self.options, url);
+        let resolved = match cached {
+            Some(r) => Ok(r),
+            None => links::resolve(&ctx.engine.http, url, ctx.engine.country(), &ctx.cancel).await,
+        };
+        if let Ok(r) = &resolved {
+            store_resolution(self.options, url, r);
+        }
+        let resolution = match resolved {
             Ok(r) => r,
             // The page itself could not be read: the media backend may still fetch it.
             Err(MfError::Network { message }) if ctx.engine.media.is_some() => {
@@ -371,6 +382,13 @@ pub(crate) async fn probe_media(
     {
         return media::parse_probe(&json);
     }
+    // A kept probe with comments answers a request without them too.
+    if !with_comments
+        && let Some(path) = cache_path(options, url, "probe-comments.json")
+        && let Ok(json) = std::fs::read_to_string(path)
+    {
+        return media::parse_probe(&json);
+    }
     let backend = ctx.engine.media.clone().ok_or_else(|| MfError::Platform {
         message: "Links with media need the media download tools, which are not available.".into(),
     })?;
@@ -383,6 +401,54 @@ pub(crate) async fn probe_media(
         let _ = std::fs::write(path, &json);
     }
     media::parse_probe(&json)
+}
+
+/// A media resolution kept in `options.media_cache` (evaluation replays never
+/// touch the page again).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedMedia {
+    source: SourceInfo,
+    url: String,
+    direct: bool,
+}
+
+fn cached_resolution(options: &AnalyzeOptions, url: &str) -> Option<Resolution> {
+    if let Some(json) = cache_path(options, url, "resolution.json").and_then(|p| std::fs::read_to_string(p).ok())
+        && let Ok(cached) = serde_json::from_str::<CachedMedia>(&json)
+    {
+        return Some(Resolution::Media { source: cached.source, url: cached.url, direct: cached.direct });
+    }
+    if !options.offline {
+        return None;
+    }
+    // Offline replays: the kept probe describes the page well enough.
+    let canonical = links::canonicalize(url).unwrap_or_else(|_| url.to_string());
+    let (media_url, json) = [url, canonical.as_str()].iter().find_map(|u| {
+        ["probe-comments.json", "probe.json"]
+            .iter()
+            .find_map(|what| std::fs::read_to_string(cache_path(options, u, what)?).ok())
+            .map(|json| (u.to_string(), json))
+    })?;
+    let info = media::parse_probe(&json).ok()?;
+    let mut source = SourceInfo { url: Some(media_url.clone()), ..SourceInfo::default() };
+    refresh_source(&mut source, &info);
+    Some(Resolution::Media { source, url: media_url, direct: false })
+}
+
+fn store_resolution(options: &AnalyzeOptions, url: &str, resolution: &Resolution) {
+    let (Some(path), Resolution::Media { source, url: media_url, direct }) =
+        (cache_path(options, url, "resolution.json"), resolution)
+    else {
+        return;
+    };
+    // A page that did not tell the duration was probably a consent or bot wall.
+    if path.exists() || source.duration_ms.is_none() {
+        return;
+    }
+    let cached = CachedMedia { source: source.clone(), url: media_url.clone(), direct: *direct };
+    if let Ok(json) = serde_json::to_string(&cached) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 fn cache_path(options: &AnalyzeOptions, url: &str, what: &str) -> Option<PathBuf> {
