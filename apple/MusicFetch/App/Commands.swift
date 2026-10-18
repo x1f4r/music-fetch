@@ -20,8 +20,7 @@ struct MusicFetchCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button(Copy.identifyLinkMenu) {
                 showMain()
-                app.route = .listen
-                app.linkFieldFocusRequest += 1
+                app.focusLinkField()
             }
             .keyboardShortcut("k")
             Button(Copy.openFileMenu) {
@@ -93,8 +92,8 @@ struct MusicFetchCommands: Commands {
                 app.showLibrary()
             }
             .keyboardShortcut("2")
-            Button(app.showInspector ? Copy.hideInspector : Copy.showInspector) {
-                withAnimation(AppModel.spring(.large)) { app.setInspector(!app.showInspector) }
+            Button(app.isInspectorPresented ? Copy.hideInspector : Copy.showInspector) {
+                withAnimation(AppModel.spring(.large)) { app.toggleInspector() }
             }
             .keyboardShortcut("i", modifiers: [.command, .option])
             Divider()
@@ -117,17 +116,22 @@ struct MusicFetchCommands: Commands {
             }
             .keyboardShortcut("l")
             .disabled(app.engine == nil || app.listen.stage == .matching)
-            Button(Copy.hum) {
-                showMain()
-                app.listenNow(.hum)
-            }
-            .keyboardShortcut("h", modifiers: [.command, .shift])
-            .disabled(app.engine == nil || app.listen.isBusy)
             Button(Copy.stop) { app.listen.escape() }
                 .keyboardShortcut(.escape, modifiers: [])
                 .disabled(!(app.listen.stage == .listening || app.listen.stage == .matching))
             Divider()
-            Picker(Copy.source, selection: Binding(get: { app.listen.source }, set: { app.listen.source = $0 })) {
+            // Listen right away with one method, whichever is selected.
+            ForEach(ListenSource.allCases) { source in
+                Button(source.menuTitle) {
+                    showMain()
+                    app.listenNow(source)
+                }
+                .keyboardShortcut(source.shortcut)
+                .disabled(app.engine == nil || app.listen.isBusy)
+            }
+            Divider()
+            // The method the Listen button and ⌘L use (the stage's source toggles).
+            Picker(Copy.source, selection: Binding(get: { app.listen.source }, set: { app.listen.select($0) })) {
                 ForEach(ListenSource.allCases) { source in
                     Text(source.title).tag(source)
                 }
@@ -149,11 +153,12 @@ struct MusicFetchCommands: Commands {
             }
             .disabled(app.selectedTrack?.previewUrl == nil)
             Divider()
-            Button(app.isTargetPinned ? Copy.unpin : Copy.pin) {
-                if let id = app.targetSessionID { app.library.togglePin(id) }
+            let targets = app.targetSessionIDs
+            Button(!targets.isEmpty && app.library.allPinned(targets) ? Copy.unpin : Copy.pin) {
+                app.library.togglePinned(targets, undoManager: NSApp.keyWindow?.undoManager)
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
-            .disabled(app.targetSessionID == nil)
+            .disabled(targets.isEmpty)
         }
     }
 
@@ -180,5 +185,13 @@ struct MusicFetchCommands: Commands {
 
     static func sendToText(_ action: Selector) {
         NSApp.sendAction(action, to: nil, from: nil)
+    }
+}
+
+private extension ListenSource {
+    /// ⌘⇧H hums; the other methods have no shortcut of their own (⌘L listens with the
+    /// selected one).
+    var shortcut: KeyboardShortcut? {
+        self == .hum ? KeyboardShortcut("h", modifiers: [.command, .shift]) : nil
     }
 }

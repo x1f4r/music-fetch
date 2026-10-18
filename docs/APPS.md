@@ -28,13 +28,20 @@ platforms.
   live `level`, `pitchTrace` (ring of the last 8 s of `PitchFrame`s), `impression: Bool`,
   `notice`, `elapsed`; result: `matched(Track) | candidates([Candidate]) |
   noMatch(reason) | offline` (`Outcome::Waiting`: saved to identify once online);
-  actions `start(source, mode)`, `stop()`, `cancel()`, `retryAsHum()`.
+  actions `start(source, mode)`, `stop()`, `cancel()`, `retryAsHum()`, `select(source)`
+  (a source toggle: chooses the method without listening and leaves a finished state).
+  On macOS the toggles stay on the stage in every state; recovery actions (Try again,
+  Hum it, Type a lyric, …) sit in their own row below them. Try again repeats the last
+  method, or analyzes the same link or file again.
 - `SessionModel` — for link/file/lyrics sessions and library detail: `source`,
   `phase`/`fraction`, `progress` (analyzed/total/ETA), ordered `segments` (upsert by id,
   removal), `candidates`, `items` (playlist entries), `outcome`, `error`; actions
   `cancel()`, `export(format)`, `correct(segment, track)`, `confirm(candidate)`.
 - `LibraryModel` — paged `LibraryEntry` list grouped by day, filter (All, Heard, Hummed,
-  Links, Mixes), search text, pin/delete; refreshes when sessions finish.
+  Links, Mixes, Pinned), search text, pin/delete; refreshes when sessions finish. Pinning
+  takes any number of sessions at once (`setPinned(ids, pinned:)`, `togglePinned(ids)`:
+  pins all unless all are pinned), updates the lists at once, writes to the store off
+  the main thread and registers Undo.
 - `SettingsModel` — default service, credentials, melody index status/install/remove,
   storage usage/clear cache, platform toggles.
 
@@ -48,6 +55,35 @@ Rules:
   `NoMatchReason`, `ErrorCode`) and maps them to localized copy.
 - Opening a service link prefers the user's default service; fall back to the first
   available link.
+
+## macOS window
+
+- One inspector, attached to the `NavigationSplitView`, owns its toggle in its own
+  toolbar, so the toolbar keeps every content item left of the inspector divider.
+  Below 1060 pt (832 pt without the sidebar) it folds away and comes back when the
+  window widens, without changing the preference.
+- The toolbar's Listen is a split button: listen again with the current method, or
+  choose another method, a link, a file or a lyric from its menu. Results on the Listen
+  pane have a back button (⌘[, Esc); the sidebar's Listen row also returns to the stage.
+- Pin is the only way to keep sessions (no separate favorites).
+
+## Screenshots and layout checks (macOS)
+
+- `apple/MusicFetchUITests` launches every demo state (`-MFDemoState`, with
+  `-MFWindowSize`, `-MFAppearance`, `-MFReduceMotion`, `-MFInspector`) and attaches
+  window screenshots and toolbar geometry checks (no toolbar item on a split divider,
+  Listen present, one center line). The Screenshots workflow runs it on macOS 26 and
+  macOS 15 runners and publishes a contact sheet (`screenshots` artifact, `index.html`),
+  built by `scripts/screenshot-sheet.py`. Never run the UI tests on a Mac someone is
+  using: they launch the app.
+- Debug builds also have an offscreen check, `apple/tools/render-offscreen.sh`: it lays
+  the main window out in windows that are never shown (`-MFRender`), at 900–1440 pt,
+  with and without the inspector, and fails on the same geometry rules. It runs a copy of
+  the Debug app under its own bundle identifier, so the installed app's preferences and
+  permissions are never touched. Liquid Glass doesn't draw offscreen; its PNGs only show
+  layout.
+- Demo states run on `FakeEngine` and keep everything they change (inspector, Settings
+  pane, provider, source) in memory.
 
 ## Permissions
 

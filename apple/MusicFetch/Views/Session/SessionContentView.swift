@@ -78,7 +78,14 @@ struct EmptySessionView: View {
             app.listenNow(.thisMac)
         case .lyrics:
             app.presentLyricSearch()
-        case .file, .listen:
+        case .file:
+            // The store keeps no path for files: choose the file again.
+            if let path = model.source?.url ?? model.entry?.sourceUrl, path.hasPrefix("/") {
+                app.identify(path, mode: model.mode)
+            } else {
+                app.openFile()
+            }
+        case .listen:
             app.listenNow(.microphone)
         }
     }

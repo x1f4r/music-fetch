@@ -283,6 +283,14 @@ final class SessionModel: Identifiable {
         return listedSegments.count >= 2
     }
 
+    /// A tracklist or a single answer to export (the Export menu).
+    var hasExport: Bool {
+        switch presentation {
+        case .result, .timeline, .collection: true
+        case .candidates, .running, .empty: false
+        }
+    }
+
     var presentation: Presentation {
         switch kind {
         case .hum, .lyrics:
