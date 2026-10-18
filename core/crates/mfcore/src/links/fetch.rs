@@ -267,6 +267,7 @@ pub(crate) async fn fetch_json(
 
 /// POST a JSON body to a fixed public host with the shared client (InnerTube),
 /// with the header rule `rule` and `headers`; the answer whatever the status.
+#[cfg(feature = "engine")]
 pub(crate) async fn post_json(
     http: &reqwest::Client,
     url: &str,

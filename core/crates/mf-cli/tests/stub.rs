@@ -77,7 +77,14 @@ fn mf(stub: &Stub, data: &Path, args: &[&str]) -> Vec<Value> {
         .arg(data.join("cache"))
         .output()
         .expect("run mf");
-    assert!(out.status.success(), "mf {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let tail: Vec<&str> = stdout.lines().rev().take(3).collect();
+    assert!(
+        out.status.success(),
+        "mf {args:?} failed ({}): {}\n{tail:?}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
 }
 
