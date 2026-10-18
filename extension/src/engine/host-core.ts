@@ -1,5 +1,5 @@
 import type { AudioSource, PcmChunk } from '../audio/types';
-import type { CaptureHost } from '../capture/types';
+import type { CaptureHost, Coverage } from '../capture/types';
 import { RpcError, serveRpc, type EventLike, type PortLike, type ServedPort } from '../messaging/bus';
 import {
   ENGINE_PORT,
@@ -422,7 +422,22 @@ export class EngineHost {
         facts: { ...(page?.facts ?? {}), ...(facts ?? {}), ...(directive ? { mockDirective: directive } : {}) },
       };
     }
-    return (await this.call('analyze', [input, mode, context])) as string;
+    const id = (await this.call('analyze', [input, mode, context])) as string;
+    if (context?.tab_id != null && this.worker.sessions.includes(id)) {
+      void this.options.registry.put({
+        id,
+        kind: 'Link',
+        source: null,
+        startedAt: Date.now(),
+        capture: { via: this.options.platform.target === 'chromium' ? 'tab' : 'element', tabId: context.tab_id, url: context.url },
+      });
+    }
+    return id;
+  }
+
+  /** The coordinator's coverage of an analysis, kept in the registry (throttled there). */
+  coverage(sessionId: string, coverage: Coverage): void {
+    this.options.registry.update(sessionId, { coverage });
   }
 
   // MARK: events and activity

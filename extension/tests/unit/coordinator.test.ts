@@ -49,11 +49,13 @@ function setup(agent = new FakeAgent(), via: 'element' | 'tab' = 'element') {
     tabs,
     pushPcm: (id, chunk) => host?.worker.pushPcm(id, chunk),
     captureEvent: (id, event) => void host?.worker.call('captureEvent', id, event),
+    onCoverage: (id, _tab, coverage) => host?.coverage(id, coverage),
   });
   const { runtime, connect } = fakeRuntime();
-  host = new EngineHost({ platform, runtime, capture: coordinator, registry: new SessionRegistry(Promise.resolve(memoryKv())), idleMs: 60_000 });
+  const registry = new SessionRegistry(Promise.resolve(memoryKv()), 0);
+  host = new EngineHost({ platform, runtime, capture: coordinator, registry, idleMs: 60_000 });
   const client = new RemoteEngineClient({ ensureHost: async () => undefined, connect: () => connect(ENGINE_PORT), timeoutMs: 10_000 });
-  return { host, client, coordinator, agent, injected };
+  return { host, client, coordinator, agent, injected, registry };
 }
 
 let cleanup: (() => Promise<void>)[] = [];
@@ -135,13 +137,17 @@ describe('the capture coordinator', () => {
 
   it('fails the analysis when the tab goes away mid-capture', async () => {
     const agent = new FakeAgent(undefined, 50);
-    const { host, client } = setup(agent);
+    const { host, client, registry } = setup(agent);
     cleanup.push(async () => {
       await host.worker.recycle('test');
       host.close();
     });
     const id = await client.analyze('http://127.0.0.1:8000/mix.html', 'Mix', { tab_id: 42, url: TAB.url, title: 'Fake mix', facts: null });
     await vi.waitFor(() => expect(agent.positionMs).toBeGreaterThan(5000), { timeout: 5000 });
+    // The registry knows where this analysis got to (a resumed one picks up there).
+    const entry = registry.get(id);
+    expect(entry?.capture).toMatchObject({ tabId: 42 });
+    expect(entry!.coverage.at(-1)![1]).toBeGreaterThan(3000);
     agent.served!.close();
     await vi.waitFor(async () => expect((await client.session(id))?.entry.status).toBe('Failed'), { timeout: 5000 });
   });

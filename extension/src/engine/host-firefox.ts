@@ -117,6 +117,7 @@ export function startFirefoxHost(): EngineHost {
     pushPcm: (sessionId, chunk) => host?.worker.pushPcm(sessionId, chunk),
     captureEvent: (sessionId, event) => void host?.worker.call('captureEvent', sessionId, event).catch(() => undefined),
     onStatus: (sessionId, status) => host?.captureStatus(sessionId, status),
+    onCoverage: (sessionId, _tabId, coverage) => host?.coverage(sessionId, coverage),
   });
   const platform: HostPlatform = {
     target: 'firefox',

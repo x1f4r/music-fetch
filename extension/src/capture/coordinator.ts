@@ -29,6 +29,8 @@ export interface CoordinatorOptions {
   captureEvent(sessionId: string, event: CaptureEvent): void;
   /** How the capture is going, for the pages (the `capture` topic: rate, ad, paused, tab closed). */
   onStatus?(sessionId: string, status: CaptureStatus): void;
+  /** What a session has captured so far (for the session registry: where a resumed analysis picks up). */
+  onCoverage?(sessionId: string, tabId: number, coverage: Coverage): void;
   /** Chromium: open a tab capture of `streamId` in this context (the offscreen document). */
   openTabCapture?(streamId: string, clock: MediaClock | null, listenAlong: boolean): Promise<AudioSource>;
   /** How long to wait for an injected agent. Default 10 s. */
@@ -329,6 +331,7 @@ export class CaptureCoordinator implements CaptureHost {
     if (a.released || chunk.mediaMs === null) return;
     const end = chunk.mediaMs + (chunk.samples.length / chunk.sampleRate) * 1000 * chunk.speed;
     a.coverage = addCoverage(a.coverage, [chunk.mediaMs, end]);
+    this.options.onCoverage?.(session, a.target.tabId, a.coverage);
     this.options.pushPcm(session, chunk);
   }
 
