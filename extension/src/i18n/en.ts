@@ -72,7 +72,7 @@ export const en = {
 
   'mic.allow': 'Allow the microphone',
   'mic.allowMessage':
-    'The browser asks once. Music Fetch only listens while a session runs, and nothing you record leaves this computer.',
+    'The browser asks once. Music Fetch only listens while a session runs, and nothing you record leaves this device.',
   'mic.allowButton': 'Allow',
   'mic.notNow': 'Not now',
   'mic.granted': 'Microphone allowed',
@@ -336,7 +336,7 @@ export const en = {
 
   'file.drop': 'Drop an audio or video file',
   'file.choose': 'Choose a file',
-  'file.hint': 'MP3, M4A, FLAC, OGG, WAV or video. It stays on this computer.',
+  'file.hint': 'MP3, M4A, FLAC, OGG, WAV or video. It stays on this device.',
 
   'settings.general': 'General',
   'settings.listening': 'Listening',
