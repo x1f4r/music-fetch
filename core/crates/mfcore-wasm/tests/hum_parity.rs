@@ -242,8 +242,6 @@ mod browser {
             SessionEvent::Finished { outcome: Outcome::Candidates { .. } | Outcome::NoMatch { .. } }
         ));
         engine.remove_melody_index().unwrap();
-            .await
-            .unwrap();
         assert_eq!(field(&engine.melody_index_status().unwrap(), "installed"), JsValue::FALSE);
         JsFuture::from(engine.close()).await.unwrap();
     }
