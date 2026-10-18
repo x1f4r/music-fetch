@@ -35,6 +35,12 @@
     licenses = list;
   });
 
+  /** "MIT License" from a license text's first line; the notice's prose then opens the full text. */
+  function licenseName(text: string): string | null {
+    const first = text.split('\n').find((line) => line.trim())?.trim() ?? '';
+    return first.length <= 60 && /licen[cs]e/i.test(first) ? first : null;
+  }
+
   const versionLine = $derived(coreVersion ? `${t('settings.version', version)} · ${t('settings.engine', coreVersion)}` : t('settings.version', version));
 </script>
 
@@ -49,7 +55,9 @@
       </div>
     {/if}
   </div>
-  {#if text && open === key}<pre class="license-text" id="lic-{key}" tabindex="-1">{text}</pre>{/if}
+  <!-- A scrolling region must take focus so the keyboard can scroll it (axe scrollable-region-focusable). -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  {#if text && open === key}<pre class="license-text" id="lic-{key}" tabindex="0" aria-label={t('settings.licenses.text', title)}>{text}</pre>{/if}
 {/snippet}
 
 <h2 class="sr-only">{t('settings.about')}</h2>
@@ -69,7 +77,7 @@
 {:else}
   <div class="group licenses">
     {#each licenses.notices as notice, i (notice.title)}
-      {@render entry(`n${i}`, notice.title, notice.summary, notice.text)}
+      {@render entry(`n${i}`, notice.title, licenseName(notice.text) ?? notice.summary, [notice.summary, notice.text].filter(Boolean).join('\n\n'))}
     {/each}
     {#each licenses.packages as pkg, i (pkg.name)}
       {@render entry(`p${i}`, `${pkg.name} ${pkg.version}`, pkg.license, pkg.text)}

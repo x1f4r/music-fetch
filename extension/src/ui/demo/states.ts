@@ -433,6 +433,7 @@ export const DEMO_STATES: DemoState[] = [
     route: '/settings/services',
     settings: DECIDED,
     actions: [
+      { click: '#svc-acrHumming-title ~ .group .add-keys' },
       { type: 'identify-eu-west-1.acrcloud.com', into: '#svc-acrHumming-host' },
       { type: 'demo-access-key-4f2a', into: '#svc-acrHumming-key' },
       { type: 'demo-access-secret', into: '#svc-acrHumming-secret' },
@@ -453,6 +454,7 @@ export const DEMO_STATES: DemoState[] = [
     route: '/settings/services',
     settings: DECIDED,
     actions: [
+      { click: '#svc-acrHumming-title ~ .group .add-keys' },
       { type: 'identify-eu-west-1.acrcloud.com', into: '#svc-acrHumming-host' },
       { type: 'demo-access-key-4f2a', into: '#svc-acrHumming-key' },
       { type: 'demo-access-secret', into: '#svc-acrHumming-secret' },

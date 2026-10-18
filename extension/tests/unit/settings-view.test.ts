@@ -49,6 +49,8 @@ describe('Settings', () => {
       const checkProvider = vi.fn(async () => ({ state: 'ok' as const }));
       open('app-settings-services', 'services', { requestHost, checkProvider });
       const group = (await screen.findByRole('heading', { name: 'ACRCloud humming' })).closest('section')!;
+      expect(within(group).getByText('Not set up')).toBeTruthy();
+      await fireEvent.click(within(group).getByRole('button', { name: 'Add keys' }));
       const save = within(group).getByRole('button', { name: 'Save and check' }) as HTMLButtonElement;
       expect(save.disabled).toBe(true);
       await fireEvent.input(within(group).getByLabelText('Host'), { target: { value: 'identify-eu-west-1.acrcloud.com' } });
@@ -75,6 +77,7 @@ describe('Settings', () => {
       });
       open('app-settings-services', 'services', { requestHost });
       const group = (await screen.findByRole('heading', { name: 'AudD' })).closest('section')!;
+      await fireEvent.click(within(group).getByRole('button', { name: 'Add keys' }));
       await fireEvent.input(within(group).getByLabelText('API token'), { target: { value: 'token-123' } });
       const click = within(group).getByRole('button', { name: 'Save and check' });
       click.click();
@@ -106,7 +109,7 @@ describe('Settings', () => {
       open('app-settings-services-set', 'services');
       const audd = (await screen.findByRole('heading', { name: 'AudD' })).closest('section')!;
       await fireEvent.click(await within(audd).findByRole('button', { name: 'Remove' }));
-      expect(await within(audd).findByLabelText('API token')).toBeTruthy();
+      expect(await within(audd).findByRole('button', { name: 'Add keys' })).toBeTruthy();
       expect((await loadProviderKeys()).audd).toBeUndefined();
       expect((await settings.providerChecks.getValue()).audd).toBeUndefined();
     });
@@ -115,6 +118,7 @@ describe('Settings', () => {
       const checkProvider = vi.fn(async () => ({ state: 'ok' as const }));
       open('app-settings-services', 'services', { checkProvider });
       const group = (await screen.findByRole('heading', { name: 'ACRCloud' })).closest('section')!;
+      await fireEvent.click(within(group).getByRole('button', { name: 'Add keys' }));
       await fireEvent.input(within(group).getByLabelText('Host'), { target: { value: 'http://not valid' } });
       expect(within(group).getByLabelText('Host').getAttribute('aria-invalid')).toBe('true');
       expect((within(group).getByRole('button', { name: 'Save and check' }) as HTMLButtonElement).disabled).toBe(true);
@@ -130,6 +134,7 @@ describe('Settings', () => {
         const platform = { ...demoPlatform(state, null), checkProvider: async () => ({ state: 'ok' as const }) };
         render(WithSurface, { props: { engine: new DemoEngine(state), platform, component: SettingsView, props: { pane: 'services', providers: null, narrow: false, onpane: vi.fn() } } });
         const group = (await screen.findByRole('heading', { name: 'AudD' })).closest('section')!;
+        await fireEvent.click(within(group).getByRole('button', { name: 'Add keys' }));
         await fireEvent.input(within(group).getByLabelText('API token'), { target: { value: 'Tk-vault-token-99' } });
         await fireEvent.click(within(group).getByRole('button', { name: 'Save and check' }));
         await within(group).findByText('Works. AudD accepted the keys.');
@@ -201,6 +206,7 @@ describe('Settings', () => {
       open('app-settings-storage-low', 'storage');
       expect(await screen.findByText(/little room left/)).toBeTruthy();
       expect(screen.getByText('1.9 GB')).toBeTruthy();
+      expect(screen.getByText(/· Other 1\.9 GB/)).toBeTruthy();
     });
 
     it('names paid services in the privacy pane only when they have keys', async () => {

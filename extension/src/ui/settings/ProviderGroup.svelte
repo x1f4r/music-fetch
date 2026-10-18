@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { t, type MessageKey } from '../../i18n';
   import { isCompleteAcr, normalizeAcrHost, type ProviderId } from '../../platform/secrets';
   import { useSurface } from '../context';
@@ -26,7 +27,9 @@
   };
   const HOST_EXAMPLE = 'identify-eu-west-1.acrcloud.com';
 
+  /** Changing stored keys, or adding the first ones. */
   let editing = $state(false);
+  let adding = $state(false);
   let host = $state('');
   let accessKey = $state('');
   let accessSecret = $state('');
@@ -36,7 +39,7 @@
   const company = $derived(acr ? 'ACRCloud' : 'AudD');
   const summary = $derived(services.summary[id]);
   const check = $derived(services.checks[id] ?? null);
-  const showFields = $derived(!summary.set || editing);
+  const showFields = $derived(editing || (adding && !summary.set));
   const complete = $derived(acr ? isCompleteAcr({ host, accessKey, accessSecret }) : token.trim().length > 0);
   const hostInvalid = $derived(acr && host.trim().length > 0 && normalizeAcrHost(host) === null);
   const fieldId = (name: string) => `svc-${id}-${name}`;
@@ -65,12 +68,20 @@
     }
   });
 
-  function startEditing() {
+  async function startEditing(first: boolean) {
     host = summary.host ?? '';
     accessKey = '';
     accessSecret = '';
     token = '';
-    editing = true;
+    if (first) adding = true;
+    else editing = true;
+    await tick();
+    document.getElementById(fieldId(acr ? (first ? 'host' : 'key') : 'token'))?.focus();
+  }
+
+  function cancel() {
+    editing = false;
+    adding = false;
   }
 
   function save(event: SubmitEvent) {
@@ -83,7 +94,7 @@
       accessKey = '';
       accessSecret = '';
       token = '';
-      editing = false;
+      if (services.summary[id].set) cancel();
     });
   }
 </script>
@@ -113,14 +124,28 @@
       {/if}
       <div class="frow svc-actions">
         <div class="k">
-          {#if status}<span class="sub svc-status {status.tone}" role="status">{status.text}</span>{/if}
+          {#if status && check?.state === 'host'}
+            <span class="sub svc-status problem" role="status">{status.text}</span>
+          {:else}
+            <button type="button" class="btn small text get-keys" onclick={() => void platform.openUrl(CONSOLES[id])}>{t('settings.services.getKeys')}<span class="ic ic-arrow-out s12"></span></button>
+          {/if}
         </div>
         <div class="v">
-          {#if editing}<button type="button" class="btn small text" onclick={() => (editing = false)}>{t('action.cancel')}</button>{:else}<button type="button" class="btn small text" onclick={() => void platform.openUrl(CONSOLES[id])}>{t('settings.services.getKeys')}<span class="ic ic-arrow-out s12"></span></button>{/if}
+          <button type="button" class="btn small text" onclick={cancel}>{t('action.cancel')}</button>
           <button type="submit" class="btn small filled" disabled={!complete}>{t('settings.services.save')}</button>
         </div>
       </div>
     </form>
+  {:else if !summary.set}
+    <div class="group">
+      <div class="frow svc-actions">
+        <div class="k"><span class="secondary">{t('settings.services.notSet')}</span></div>
+        <div class="v">
+          <button class="btn small text" onclick={() => void platform.openUrl(CONSOLES[id])}>{t('settings.services.getKeys')}<span class="ic ic-arrow-out s12"></span></button>
+          <button class="btn small add-keys" onclick={() => void startEditing(true)}>{t('settings.services.add')}</button>
+        </div>
+      </div>
+    </div>
   {:else}
     <div class="group">
       {#if acr}
@@ -144,7 +169,7 @@
           {:else}
             <button class="btn small" disabled={check?.state === 'checking'} onclick={() => void services.check(id)}>{t('settings.services.check')}</button>
           {/if}
-          <button class="btn small text" onclick={startEditing}>{t('settings.services.change')}</button>
+          <button class="btn small text" onclick={() => void startEditing(false)}>{t('settings.services.change')}</button>
           <button class="btn small text" onclick={() => void services.remove(id)}>{t('settings.services.remove')}</button>
         </div>
       </div>

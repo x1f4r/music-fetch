@@ -38,7 +38,11 @@
   <div class="frow">
     <div class="k">
       {t('settings.onDisk')}
-      {#if view}<span class="sub tnum">{t('settings.onDisk.detail', mb(view.library), mb(view.cache), mb(view.melody))}</span>{/if}
+      {#if view}
+        <span class="sub tnum">
+          {view.other ? t('settings.onDisk.detailOther', mb(view.library), mb(view.cache), mb(view.melody), mb(view.other)) : t('settings.onDisk.detail', mb(view.library), mb(view.cache), mb(view.melody))}
+        </span>
+      {/if}
     </div>
     <div class="v">
       <span class="tnum">{view ? mb(view.total) : ''}</span>

@@ -66,7 +66,8 @@ export class ServicesController {
   save<K extends ProviderId>(id: K, keys: ProviderKeys[K]): Promise<void> {
     const url = this.permissionUrl(id, keys);
     if (!url) {
-      this.setCheck(id, { state: 'host', at: this.now() });
+      // The form says so; nothing was stored, so nothing to remember.
+      this.checks = { ...this.checks, [id]: { state: 'host', at: this.now() } };
       return Promise.resolve();
     }
     const granted = this.deps.requestHost(url);

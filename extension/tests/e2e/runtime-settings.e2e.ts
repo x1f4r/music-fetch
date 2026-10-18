@@ -120,6 +120,8 @@ function settingsFlow(name: string, page: () => Page, go: (hash: string) => Prom
   it(`${name}: saves ACRCloud humming keys, checks them against the stub and keeps them encrypted`, async () => {
     const p = page();
     await go('#/settings/services');
+    await p.waitForSelector('#svc-acrHumming-title ~ .group .add-keys', { timeout: 20_000 });
+    await p.click('#svc-acrHumming-title ~ .group .add-keys');
     await fill(p, '#svc-acrHumming-host', stub().host);
     await fill(p, '#svc-acrHumming-key', ACCESS_KEY);
     await fill(p, '#svc-acrHumming-secret', SECRET);
@@ -149,7 +151,7 @@ function settingsFlow(name: string, page: () => Page, go: (hash: string) => Prom
     expect(stub().requests.at(-1)?.ok).toBe(false);
     expect((await storedText(p)).vault).not.toContain(WRONG);
     await p.evaluate(() => ([...document.querySelectorAll('#svc-acrHumming-title ~ .group .btn')].find((b) => b.textContent?.trim() === 'Remove') as HTMLElement).click());
-    await p.waitForSelector('#svc-acrHumming-secret', { timeout: 15_000 });
+    await p.waitForSelector('#svc-acrHumming-title ~ .group .add-keys', { timeout: 15_000 });
   });
 
   it(`${name}: walks the melody library through download, check and remove`, async () => {
