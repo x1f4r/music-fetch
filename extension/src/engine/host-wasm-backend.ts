@@ -2,6 +2,7 @@ import type { PcmChunk } from '../audio/types';
 import { addCoverage, coverageGaps, type CaptureEvent, type CaptureHost, type Coverage } from '../capture/types';
 import { engineFetch } from '../net/fetch';
 import type { SiteFacts } from '../page/site';
+import type { Credentials } from '../platform/secrets';
 import { EngineError, type ActiveSession, type EngineInfo, type EngineListener } from './client';
 import { isTerminal } from './events';
 import type { BackendEnv, EngineBackend, LiveInput, NetProbeResult } from './host-backend';
@@ -101,6 +102,7 @@ interface WasmEngine {
   fetchLyrics(track: Track): Promise<Lyrics | null>;
   setLowPower(enabled: boolean): void;
   isLowPower(): boolean;
+  setCredentials(credentials: Credentials): void;
   close(): Promise<void>;
 }
 
@@ -473,6 +475,11 @@ export class WasmBackend implements EngineBackend {
 
   async isLowPower(): Promise<boolean> {
     return this.core.isLowPower();
+  }
+
+  /** The paid providers' keys, from the encrypted store; the engine keeps them in memory only. */
+  async setCredentials(credentials: Credentials): Promise<void> {
+    this.core.setCredentials(credentials);
   }
 
   // MARK: host
