@@ -21,6 +21,9 @@ pub enum Command {
         /// Language for metadata.
         #[arg(long, default_value = "en-US")]
         language: String,
+        /// Ask the stub recognizer at this 127.0.0.1 URL (`mf dev stub-recognizer`) instead.
+        #[arg(long, value_name = "URL")]
+        stub: Option<String>,
     },
     /// Print the signature size and peak counts per band for a WAV clip.
     Sig {
@@ -48,7 +51,10 @@ pub struct Window {
 
 pub fn run(command: Command) -> anyhow::Result<()> {
     match command {
-        Command::Shazam { wav, window, country, language } => {
+        Command::Shazam { wav, window, country, language, stub } => {
+            if let Some(url) = stub {
+                mfcore::util::endpoints::install(Some(mfcore::util::endpoints::TestEndpoints::stub(&url)?));
+            }
             let samples = load_window(&wav, &window)?;
             let sig = signature::generate(&samples);
             let _ = rustls::crypto::ring::default_provider().install_default();

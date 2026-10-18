@@ -19,5 +19,8 @@ anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 # media
 ctrlc = "3.4"
-# shazam
+# shazam, stub recognizer
+base64 = "0.23"
+sha2 = "0.11"
+url = "2.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
