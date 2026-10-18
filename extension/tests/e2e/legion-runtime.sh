@@ -26,7 +26,8 @@ trap cleanup EXIT
 
 unset WAYLAND_DISPLAY WAYLAND_SOCKET
 export DISPLAY="$DISPLAY_NUM" XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 MOZ_ENABLE_WAYLAND=0 PULSE_SINK="$SINK" MF_RUNTIME_E2E=1
-npm run build:e2e >/dev/null || { echo "build failed"; exit 1; }
+# MF_E2E_BUILD=build runs the scaffold's smoke tests on the release build instead.
+npm run "${MF_E2E_BUILD:-build:e2e}" >/dev/null || { echo "build failed"; exit 1; }
 # $2: an optional test name filter (vitest -t)
 nice -n 10 npx vitest run --config vitest.e2e.config.ts "${1:-tests/e2e/runtime-}" ${2:+-t "$2"}
 code=$?
