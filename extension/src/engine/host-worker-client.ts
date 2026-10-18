@@ -20,7 +20,8 @@ export type WorkerState = 'down' | 'starting' | 'up' | 'recycling';
 
 export interface WorkerEngineOptions {
   spawn(): WorkerLike;
-  config(): BackendConfig;
+  /** Read for every Worker start. */
+  config(): BackendConfig | Promise<BackendConfig>;
   /** The host's capture side, served to the engine. */
   capture: CaptureHost;
   /** Recycle after this long without sessions, calls or holds (plan §3.1: 10 min, 2 in low power). */
@@ -172,7 +173,7 @@ export class WorkerEngine {
         else reject(new EngineError('Internal', message));
       });
     });
-    const init: WorkerInit = { type: 'mf:worker.init', config: this.options.config(), engine: engine.port2, capture: capture.port2 };
+    const init: WorkerInit = { type: 'mf:worker.init', config: await this.options.config(), engine: engine.port2, capture: capture.port2 };
     worker.postMessage(init, [engine.port2, capture.port2]);
     try {
       await withTimeout(ready, this.options.startTimeoutMs ?? 30_000, 'Starting the engine');

@@ -17,7 +17,7 @@
 pub mod segment;
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use self::segment::Label;
 use crate::audio::PcmFile;
@@ -31,6 +31,7 @@ use crate::pipeline::hints::{self, Tracklist};
 use crate::pipeline::recognize::{RecognitionHit, TIGHT_SKEW};
 use crate::pipeline::stitch::{self, Piece, UNVERIFIED_HINT, VERIFIED_HINT};
 use crate::shazam::Priority;
+use crate::util::rt::Instant;
 
 /// Length of one recognizer probe.
 pub const PROBE_MS: u64 = 12_000;
@@ -226,7 +227,7 @@ pub async fn run<S: Services>(
     emitter.phase(Phase::Segmenting, None);
     let cancel = services.cancel().clone();
     let pcm_for_features = pcm.clone();
-    let frames = tokio::task::spawn_blocking(move || features::compute(&pcm_for_features, 1000, &cancel))
+    let frames = crate::util::rt::spawn_blocking(move || features::compute(&pcm_for_features, 1000, &cancel))
         .await
         .map_err(|e| MfError::internal(format!("features: {e}")))??;
     let duration = pcm.duration_ms();
@@ -554,7 +555,7 @@ impl<S: Services> Mix<'_, S> {
         if !missing.is_empty() {
             let pcm = self.pcm.clone();
             let cancel = self.services.cancel().clone();
-            let computed = tokio::task::spawn_blocking(move || -> Result<Vec<(u64, Vec<Peak>)>> {
+            let computed = crate::util::rt::spawn_blocking(move || -> Result<Vec<(u64, Vec<Peak>)>> {
                 missing
                     .into_iter()
                     .map(|c| {
@@ -585,7 +586,7 @@ impl<S: Services> Mix<'_, S> {
     async fn locate(&mut self, preview: &[i16], from_ms: u64, to_ms: u64) -> Result<Option<LocalHit>> {
         let region = self.region_peaks(from_ms, to_ms).await?;
         let reference = fingerprint::peaks(preview);
-        let found = tokio::task::spawn_blocking(move || {
+        let found = crate::util::rt::spawn_blocking(move || {
             let mut index = Index::new();
             index.add(&reference);
             index.search(&region, &fingerprint::warps(MAX_SPEED_CHANGE, SPEED_STEP)).into_iter().next()
@@ -611,7 +612,7 @@ impl<S: Services> Mix<'_, S> {
     /// included), on a blocking thread.
     async fn search_bank(&self, region: Vec<Peak>) -> Result<Vec<fingerprint::Match>> {
         let index = self.bank.index.clone();
-        tokio::task::spawn_blocking(move || {
+        crate::util::rt::spawn_blocking(move || {
             index.read().search(&region, &fingerprint::warps(MAX_SPEED_CHANGE, SPEED_STEP))
         })
         .await

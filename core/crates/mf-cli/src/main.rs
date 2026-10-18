@@ -2,6 +2,7 @@
 
 use clap::{Parser, Subcommand};
 
+mod cloud;
 mod encoder;
 mod eval_mixes;
 mod library;
@@ -53,6 +54,7 @@ enum IndexCommand {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum EvalCommand {
     #[command(flatten)]
     Lyrics(lyrics::EvalCommand),

@@ -2,6 +2,7 @@
 //! its observer and persists its results.
 
 pub mod analyze;
+pub mod capture;
 pub mod ctx;
 pub mod emitter;
 pub mod hints;

@@ -13,6 +13,7 @@ path = "src/main.rs"
 mfcore = { path = "../mfcore" }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "process", "io-util", "fs", "net"] }
 serde_json.workspace = true
+sha2 = "0.11"
 serde.workspace = true
 parking_lot = "0.12"
 anyhow.workspace = true
@@ -21,6 +22,5 @@ clap = { version = "4", features = ["derive"] }
 ctrlc = "3.4"
 # shazam, stub recognizer
 base64 = "0.23"
-sha2 = "0.11"
 url = "2.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

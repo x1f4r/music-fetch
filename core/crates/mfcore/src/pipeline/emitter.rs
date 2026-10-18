@@ -13,7 +13,7 @@
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 
@@ -25,6 +25,7 @@ use crate::model::{
 use crate::platform::SessionObserver;
 use crate::store::{SessionUpdate, Store};
 use crate::util::cancel::CancelToken;
+use crate::util::rt::Instant;
 
 const LEVEL_INTERVAL: Duration = Duration::from_millis(33);
 const PITCH_INTERVAL: Duration = Duration::from_millis(100);

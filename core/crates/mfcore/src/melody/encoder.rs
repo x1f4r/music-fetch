@@ -117,6 +117,18 @@ impl EncoderBudget {
         }
     }
 
+    /// The app's budget on this device: phones get [`android`](Self::android),
+    /// computers [`mac`](Self::mac), low-power mode [`low_power`](Self::low_power).
+    pub fn for_device(low_power: bool) -> Self {
+        if low_power {
+            Self::low_power()
+        } else if cfg!(any(target_os = "android", target_os = "ios")) {
+            Self::android()
+        } else {
+            Self::mac()
+        }
+    }
+
     /// Low-power mode on any device.
     pub fn low_power() -> Self {
         Self {
@@ -145,13 +157,21 @@ pub struct EncoderHit {
     pub score: f32,
     /// Cosine similarity of the best window pair.
     pub best: f32,
+    /// Rank among the search's hits (1 = best).
+    pub rank: u32,
 }
 
 impl EncoderHit {
     /// The hit as a matcher hint: the centres of the two windows meet.
     pub fn hint(&self) -> Hint {
         let half = self.span as f32 / 2.0;
-        Hint { track: self.track, ref_frame: self.ref_start as f32 + half, query_frame: self.query_start as f32 + half }
+        Hint {
+            track: self.track,
+            ref_frame: self.ref_start as f32 + half,
+            query_frame: self.query_start as f32 + half,
+            best: self.best,
+            rank: self.rank,
+        }
     }
 }
 
@@ -478,11 +498,14 @@ impl EncoderIndex {
                     Pooling::Sum => a.sum,
                     Pooling::Max => a.best,
                 };
-                EncoderHit { song, track, ref_start, query_start: a.qw, span: a.qspan, score, best: a.best }
+                EncoderHit { song, track, ref_start, query_start: a.qw, span: a.qspan, score, best: a.best, rank: 0 }
             })
             .collect();
         hits.sort_by(|a, b| b.score.total_cmp(&a.score).then(b.best.total_cmp(&a.best)).then(a.song.cmp(&b.song)));
         hits.truncate(budget.songs);
+        for (i, h) in hits.iter_mut().enumerate() {
+            h.rank = i as u32 + 1;
+        }
         timing.scan_ms = started.elapsed().as_secs_f64() * 1e3;
         Ok((hits, timing))
     }

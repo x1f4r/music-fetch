@@ -1,9 +1,11 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { Page } from 'puppeteer-core';
-import { encodeWav, renderSong, SYNTHETIC_SONGS } from '../../src/engine/host-mock-audio';
+import { encodeWav, longVersion, renderSong, SYNTHETIC_SONGS } from '../../src/engine/host-mock-audio';
+import { handleRecognizer, SongIndex, type RecognizerQuery, type SignatureTools } from './stub-recognizer';
 
 /**
  * Shared by the runtime end-to-end tests (engine host, audio sources, header rules,
@@ -61,15 +63,53 @@ export function renderMedia(): Map<string, Uint8Array> {
   // The fake YouTube mix: A, B and C for 20 s each (truth: boundaries at 20 s and 40 s).
   const mix = concat([renderSong(A, SAMPLE_RATE, 20_000, 0), renderSong(B!, SAMPLE_RATE, 20_000, 3000), renderSong(C!, SAMPLE_RATE, 20_000, 9000)]);
   media.set('mix.wav', encodeWav(mix, SAMPLE_RATE));
+  // For the real engine, whose mix pipeline expects songs of minutes: 90 s each
+  // (boundaries at 1:30 and 3:00; youtube.html?src=/media/mix-long.wav&length=270&marks=0,90,180).
+  const long = (song: typeof A, from: number) => renderSong(longVersion(song, 120), SAMPLE_RATE, LONG_SONG_MS, from);
+  media.set('mix-long.wav', encodeWav(concat([long(A, 0), long(B!, 3000), long(C!, 9000)]), SAMPLE_RATE));
   media.set('ad.wav', encodeWav(noise(8000), SAMPLE_RATE));
   return media;
 }
+
+/** Song length of the long fake mix (`mix-long.wav`). */
+export const LONG_SONG_MS = 90_000;
+/** The fake YouTube page playing the long mix, with its tracklist at the song changes. */
+export const LONG_MIX_QUERY = `src=/media/mix-long.wav&length=${(3 * LONG_SONG_MS) / 1000}&marks=0,${LONG_SONG_MS / 1000},${(2 * LONG_SONG_MS) / 1000}`;
 
 export interface FixtureServer {
   origin: string;
   /** Requests the echo endpoints saw, newest last. */
   echoes: EchoRecord[];
+  /** What the stub recognizer was asked (only with the engine module built). */
+  recognizer: RecognizerQuery[];
   close(): Promise<void>;
+}
+
+/**
+ * The engine module's signature tools for the stub recognizer, when the module is built
+ * (`npm run build:engine`). The e2e builds then run the real engine, which sends its
+ * Shazam requests to the fixture server (`useStubRecognizer`).
+ */
+export async function signatureTools(): Promise<SignatureTools | null> {
+  const pkg = resolve('src/engine/wasm');
+  const binary = resolve('public/engine/mfcore.wasm');
+  if (!existsSync(binary) || !existsSync(join(pkg, 'mfcore_wasm.js'))) return null;
+  const module = (await import(pathToFileURL(join(pkg, 'mfcore_wasm.js')).href)) as { initSync(o: { module: BufferSource }): unknown; Engine: SignatureTools };
+  module.initSync({ module: readFileSync(binary) });
+  return module.Engine;
+}
+
+/**
+ * Point the engine at the fixture server's stub recognizer and restart its Worker so it
+ * takes the setting (e2e builds read it at every Worker start). Returns the engine kind.
+ */
+export async function useStubRecognizer(page: Page, origin: string): Promise<'wasm' | 'mock'> {
+  await page.evaluate((o) => {
+    const api = ((globalThis as unknown as { browser?: unknown }).browser ?? (globalThis as unknown as { chrome: unknown }).chrome) as { storage: { local: { set(v: unknown): Promise<void> } } };
+    return api.storage.local.set({ mfE2eRecognizer: o });
+  }, origin);
+  await rpc(page, 'mf-host', 'recycle');
+  return (await rpc<{ kind: 'wasm' | 'mock' }>(page, 'mf-engine', 'hello')).kind;
 }
 
 export interface EchoRecord {
@@ -96,7 +136,11 @@ export async function startFixtureServer(): Promise<FixtureServer> {
   const media = renderMedia();
   const pages = resolve('tests/fixtures/pages');
   const echoes: EchoRecord[] = [];
+  const tools = await signatureTools();
+  const songs = tools ? new SongIndex(tools) : null;
+  const recognizer: RecognizerQuery[] = [];
   const server: Server = createServer((req, res) => {
+    if (songs && handleRecognizer(songs, recognizer, req, res)) return;
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const path = url.pathname;
     if (path.startsWith('/media/')) {
@@ -141,6 +185,7 @@ export async function startFixtureServer(): Promise<FixtureServer> {
   return {
     origin: `http://127.0.0.1:${address.port}`,
     echoes,
+    recognizer,
     close: () =>
       new Promise((done) => {
         server.closeAllConnections?.();

@@ -37,10 +37,10 @@ function lcg(seed: number): () => number {
   };
 }
 
-function songNotes(seed: number): number[] {
+function songNotes(seed: number, count = NOTES_PER_SONG): number[] {
   const next = lcg(seed);
   const notes: number[] = [];
-  while (notes.length < NOTES_PER_SONG) {
+  while (notes.length < count) {
     const note = Math.floor(next() * TONE_HZ.length);
     if (note !== notes.at(-1)) notes.push(note);
   }
@@ -48,12 +48,28 @@ function songNotes(seed: number): number[] {
 }
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+/**
+ * Titles far enough apart that the engine never takes one for a misspelling of another
+ * (its tracklist matching forgives small differences between titles of one artist).
+ */
+const NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'];
+const seedOf = (i: number) => 7919 * (i + 1);
 
 export const SYNTHETIC_SONGS: readonly SyntheticSong[] = LETTERS.map((letter, i) => ({
   id: `synth-${letter.toLowerCase()}`,
-  title: `Test Signal ${letter}`,
-  notes: songNotes(7919 * (i + 1)),
+  title: `${NAMES[i]} Signal`,
+  notes: songNotes(seedOf(i)),
 }));
+
+/**
+ * `song` played on for `seconds` without repeating: its first 32 s are the song's, then
+ * the same random walk continues. The real engine's mix pipeline expects songs of
+ * minutes whose positions don't wrap (the stub recognizer knows these versions).
+ */
+export function longVersion(song: SyntheticSong, seconds: number): SyntheticSong {
+  const index = SYNTHETIC_SONGS.findIndex((s) => s.id === song.id);
+  return { id: `${song.id}-long`, title: song.title, notes: songNotes(seedOf(Math.max(0, index)), Math.ceil((seconds * 1000) / NOTE_MS)) };
+}
 
 export const SYNTHETIC_ARTIST = 'Music Fetch Test Signals';
 
@@ -82,7 +98,7 @@ export function renderSong(song: SyntheticSong, sampleRate: number, durationMs: 
   let phase = 0;
   for (let i = 0; i < n; i++) {
     const tMs = offsetMs + (i / sampleRate) * 1000;
-    const index = Math.floor(tMs / NOTE_MS) % NOTES_PER_SONG;
+    const index = Math.floor(tMs / NOTE_MS) % song.notes.length;
     const hz = TONE_HZ[song.notes[index]!]!;
     const inNote = ((tMs % NOTE_MS) / 1000) * sampleRate;
     const edge = Math.min(inNote, noteLen - inNote);
