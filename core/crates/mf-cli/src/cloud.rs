@@ -163,8 +163,6 @@ pub fn eval(
         let query = query_from_details(&frames);
         let melody = query.as_ref().map(|q| searcher.search(q)).unwrap_or_default();
         let expected_work = expected.map(|e| matcher::work_key(&index, e));
-        let local = expected_work
-            .and_then(|w| melody.iter().position(|m| matcher::work_key(&index, m.song.id) == w).map(|p| p + 1));
 
         // Cloud, from the cache or one paced request.
         let key = cache_key(&bytes);
@@ -243,11 +241,16 @@ pub fn eval(
 
         // Merged, as the session fuses them.
         let merged_list = hum::fuse_answers(Some(&index), query.clone(), melody.clone(), sung.clone(), acr.clone());
+        // Right: any recording of the expected work, as the matcher's answers count.
         let right = |c: &Candidate| {
-            expected.is_some_and(|e| c.track.ids.get("melody").is_some_and(|m| *m == e.to_string()))
+            let song: Option<u32> = c.track.ids.get("melody").and_then(|m| m.parse().ok());
+            song.zip(expected_work).is_some_and(|(s, w)| matcher::work_key(&index, s) == w)
                 || is_expected(&c.track.title, &c.track.artist)
         };
         let merged = merged_list.iter().position(&right).map(|p| p + 1);
+        // Local: what the app shows from the melody search alone.
+        let local_list = hum::fuse_answers(Some(&index), query.clone(), melody.clone(), Vec::new(), Vec::new());
+        let local = local_list.iter().position(&right).map(|p| p + 1);
         let top = merged_list.first().map(|c| (c.score, c.tier, right(c)));
         let row = Row {
             name: name.clone(),
