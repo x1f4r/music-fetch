@@ -17,6 +17,7 @@ import type {
   StorageUsage,
   Track,
 } from './types';
+import type { CaptureReason } from '../messaging/protocol';
 
 /**
  * What the UI can ask of the engine. It mirrors the core `Engine` (and the planned wasm
@@ -135,11 +136,16 @@ export interface ActiveSession {
   started_at_ms: number;
 }
 
-/** A rejected engine call. `code` follows the core's `ErrorCode`. */
+/**
+ * A rejected engine call. `code` follows the core's `ErrorCode`. `reason` is set when
+ * the engine host (not the engine) refused: why capture could not start (extension plan
+ * §5.3, §5.5); `code` is then `Platform`.
+ */
 export class EngineError extends Error {
   constructor(
     readonly code: ErrorCode | 'Disconnected' | 'Timeout' | 'Unknown',
     message: string,
+    readonly reason?: CaptureReason,
   ) {
     super(message);
     this.name = 'EngineError';

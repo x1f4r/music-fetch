@@ -1,5 +1,5 @@
 import { RpcClient, RpcError, type PortLike } from '../messaging/bus';
-import type { EngineTopics } from '../messaging/protocol';
+import type { CaptureReason, EngineTopics } from '../messaging/protocol';
 import { ENGINE_METHODS, EngineError, type EngineApi, type EngineClient, type EngineListener } from './client';
 
 export interface RemoteEngineOptions {
@@ -17,7 +17,7 @@ export interface RemoteEngineOptions {
 
 function toEngineError(error: unknown): EngineError {
   if (error instanceof EngineError) return error;
-  if (error instanceof RpcError) return new EngineError(error.code as EngineError['code'], error.message);
+  if (error instanceof RpcError) return new EngineError(error.code as EngineError['code'], error.message, error.reason as CaptureReason | undefined);
   return new EngineError('Unknown', error instanceof Error ? error.message : String(error));
 }
 

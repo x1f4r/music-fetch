@@ -30,6 +30,8 @@ type Wire =
 interface WireError {
   code: string;
   message: string;
+  /** A finer cause next to `code` (e.g. the engine host's `CaptureReason`). */
+  reason?: string;
 }
 
 /** A failed call. `code` is the remote error's code, or Disconnected / Timeout / Unknown. */
@@ -37,6 +39,7 @@ export class RpcError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    readonly reason?: string,
   ) {
     super(message);
     this.name = 'RpcError';
@@ -64,10 +67,11 @@ function safePost(port: PortLike, message: Wire): boolean {
 
 function toWireError(error: unknown): WireError {
   if (error && typeof error === 'object') {
-    const { code, message } = error as { code?: unknown; message?: unknown };
+    const { code, message, reason } = error as { code?: unknown; message?: unknown; reason?: unknown };
     return {
       code: typeof code === 'string' ? code : 'Internal',
       message: typeof message === 'string' ? message : String(error),
+      ...(typeof reason === 'string' ? { reason } : {}),
     };
   }
   return { code: 'Internal', message: String(error) };
@@ -156,7 +160,7 @@ export class RpcClient<M extends object, T extends object = Record<string, never
       const entry = this.settle(message.id);
       if (!entry) return;
       if (message.ok) entry.resolve(message.value);
-      else entry.reject(new RpcError(message.error.code, message.error.message));
+      else entry.reject(new RpcError(message.error.code, message.error.message, message.error.reason));
     } else if (message.t === 'evt') {
       for (const callback of this.topics.get(message.topic) ?? []) {
         try {
