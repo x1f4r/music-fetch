@@ -563,7 +563,7 @@ async fn download_direct(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<Path
     for _ in 0..=5 {
         links::ensure_public_url(current.as_str()).await?;
         let r = tokio::select! {
-            r = client.get(current.as_str()).send() => r?,
+            r = crate::util::http::prepare(client.get(current.as_str())).send() => r?,
             _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
         };
         if r.status().is_redirection()
