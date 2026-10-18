@@ -10,6 +10,8 @@ export const en = {
   'state.listening': 'Listening',
   'state.moveCloser': 'Move closer to the sound',
   'state.humStart': 'Hum, whistle or sing',
+  'state.inApp.hum': 'Hum in the Music Fetch app',
+  'state.inApp.mic': 'Listen in the Music Fetch app',
   'state.keepGoing': 'Keep going',
   'state.matching': 'Matching',
   'state.resolving': 'Resolving link',
@@ -338,6 +340,8 @@ export const en = {
 
   'settings.general': 'General',
   'settings.listening': 'Listening',
+  'settings.inApp': 'Microphone and humming',
+  'settings.inApp.sub': "Firefox for Android doesn't let extensions use the microphone, so these open the Music Fetch app.",
   'settings.melody': 'Melody',
   'settings.storage': 'Storage',
   'settings.privacy': 'Privacy',

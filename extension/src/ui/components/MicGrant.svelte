@@ -2,6 +2,7 @@
   import { t } from '../../i18n';
   import { settings, type MicGrant } from '../../settings/settings';
   import ListenButton from './ListenButton.svelte';
+  import StepDots from './StepDots.svelte';
 
   /**
    * The one-time microphone grant (extension plan §5.2 step 2, §5.5) and its outcomes:
@@ -67,6 +68,8 @@
     <div class="acts">
       <button class="btn filled" onclick={onsitesettings}><span class="ic ic-arrow-out s12"></span>{t('mic.openSiteSettings')}</button>
       <button class="btn text" onclick={() => void allow()}>{t('action.tryAgain')}</button>
+      <!-- In the welcome flow, a way on: the grant can be fixed later from Settings. -->
+      {#if step}<button class="btn text" onclick={() => ondone?.('denied')}>{t('mic.notNow')}</button>{/if}
     </div>
   {:else if state === 'session'}
     <h1>{t('mic.session')}</h1>
@@ -83,9 +86,5 @@
       <button class="btn filled" disabled={state === 'asking'} onclick={() => void allow()}>{t('mic.allowButton')}</button>
     </div>
   {/if}
-  {#if step}
-    <div class="dots" role="img" aria-label={t('welcome.step', step.index + 1, step.count)}>
-      {#each Array.from({ length: step.count }) as _, i (i)}<i class:on={i === step.index}></i>{/each}
-    </div>
-  {/if}
+  {#if step}<StepDots index={step.index} count={step.count} />{/if}
 </div>

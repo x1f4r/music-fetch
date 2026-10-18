@@ -83,6 +83,7 @@ const POPUP = { surface: 'popup', width: 380, height: 560 } as const;
 const PANEL = { surface: 'panel', width: 360, height: 800 } as const;
 const APP = { surface: 'app', width: 1280, height: 800 } as const;
 const MOBILE = { surface: 'popup', width: 412, height: 780, android: true, browser: 'firefox' } as const;
+const MOBILE_APP = { ...MOBILE, surface: 'app' } as const;
 
 export const DECIDED = {
   'sync:providerDecision': { provider: 'spotify', skipped: false },
@@ -395,15 +396,21 @@ export const DEMO_STATES: DemoState[] = [
   { ...APP, id: 'app-narrow-library', title: 'App tab, narrow · library', width: 390, height: 780, route: '/library', settings: DECIDED, prototype: 'app-narrow-library' },
   { ...APP, id: 'app-narrow-session', title: 'App tab, narrow · a song', width: 390, height: 780, route: '/session/demo-houdini', settings: DECIDED },
 
-  // Firefox for Android
+  // Firefox for Android: extension pages never get the microphone there (S2), so
+  // Microphone and Hum open the Music Fetch app; This tab and links work in the extension.
   { ...MOBILE, id: 'mobile-idle', title: 'Firefox for Android · idle', settings: DECIDED, tab: YOUTUBE_SONG, prototype: 'mobile-popup-idle' },
-  replay('mobile-hum', 'Firefox for Android · humming', { kind: 'Hum', source: 'Microphone', events: hum(7000), onFinish: humFinish }, { ...MOBILE, prototype: 'mobile-popup-hum', settings: { ...DECIDED, 'local:lastSource': 'Hum' } }),
+  { ...MOBILE, id: 'mobile-hum', title: 'Firefox for Android · Hum opens the app', settings: { ...DECIDED, 'local:lastSource': 'Hum' }, tab: YOUTUBE_PAUSED },
+  { ...MOBILE, id: 'mobile-mic', title: 'Firefox for Android · Microphone opens the app', settings: { ...DECIDED, 'local:lastSource': 'Microphone' }, tab: YOUTUBE_PAUSED },
+  replay('mobile-listening', 'Firefox for Android · listening to this tab', { kind: 'SystemAudio', source: 'Tab', events: captureUntil(houdiniMatch, 2600), onFinish: finishHoudini }, { ...MOBILE }),
   replay(
     'mobile-result',
     'Firefox for Android · matched',
-    { kind: 'Listen', source: 'Microphone', events: whole(matchScript(TRACKS.blinding)) },
-    { ...MOBILE, prototype: 'mobile-popup-result', settings: { ...DECIDED, 'local:lastSource': 'Microphone' } },
+    { kind: 'SystemAudio', source: 'Tab', events: whole(matchScript(TRACKS.blinding)) },
+    { ...MOBILE, prototype: 'mobile-popup-result' },
   ),
+  { ...MOBILE_APP, id: 'mobile-welcome', title: 'Firefox for Android · welcome: where do you listen?', route: '/welcome', settings: {}, sessions: 'none' },
+  { ...MOBILE_APP, id: 'mobile-welcome-find', title: 'Firefox for Android · welcome: where to find it', route: '/welcome', settings: { ...DECIDED, 'local:welcomeStep': 2 }, sessions: 'none' },
+  { ...MOBILE_APP, id: 'mobile-settings-listening', title: 'Firefox for Android · settings: listening', route: '/settings/listening', settings: DECIDED },
 ];
 
 export function demoState(id: string): DemoState | undefined {

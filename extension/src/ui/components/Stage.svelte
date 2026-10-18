@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { t, tm } from '../../i18n';
+  import { t, tm, type Message } from '../../i18n';
   import {
     isCapturing,
     isRunning,
@@ -55,7 +55,8 @@
     const timer = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(timer);
   });
-  const line = $derived(stageLine(stage, now));
+  // Microphone and Hum on Firefox for Android: Listen opens the app; the line says so.
+  const line = $derived<Message>(listen.inApp ? { key: listen.source === 'Hum' ? 'state.inApp.hum' : 'state.inApp.mic' } : stageLine(stage, now));
   const lineText = $derived(tm(line));
   const two = $derived(isTwoLine(line));
   const [first, second] = $derived.by(() => {
@@ -130,7 +131,7 @@
   onclick={() => void listen.toggle()}
 />
 <div class="state" class:active={stage.lineActive} class:two id="stage-state" role="status" aria-busy={stage.phase === 'working'}>
-  {#if stage.phase === 'working' && !stage.download && stage.retryAt === null}<span class="spinner" aria-hidden="true"></span>{/if}{first}{#if second}<br />{second}{/if}
+  {#if stage.phase === 'working' && !stage.download && stage.retryAt === null}<span class="spinner" aria-hidden="true"></span>{/if}{#if listen.inApp}<span class="ic ic-arrow-out s12 out" aria-hidden="true"></span>{/if}{first}{#if second}<br />{second}{/if}
 </div>
 {#if stage.download}
   <div

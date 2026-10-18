@@ -78,3 +78,52 @@ describe('the stage around the page', () => {
     expect(view.resultContext).toBe('From the page · open.spotify.com');
   });
 });
+
+describe('Firefox for Android', () => {
+  beforeEach(() => fakeBrowser.reset());
+
+  it('hands Hum and Microphone to the app and closes the popup', async () => {
+    const state = demoState('mobile-hum')!;
+    useMemorySettings(state.settings!);
+    const engine = new DemoEngine(state);
+    const platform = demoPlatform(state, null);
+    const open = vi.spyOn(platform, 'openUrl').mockResolvedValue();
+    const close = vi.spyOn(platform, 'close');
+    const start = vi.spyOn(engine, 'startListening');
+    const melody = vi.spyOn(engine, 'melodyIndexStatus');
+    const view = new ListenSurface(engine, platform, { closeOnHandOff: true });
+    await view.start();
+    expect(view.listen.source).toBe('Hum');
+    expect(view.listen.inApp).toBe(true);
+    await view.listen.toggle();
+    expect(open).toHaveBeenCalledWith(expect.stringMatching(/^intent:\/\/listen\?source=hum#Intent;scheme=musicfetch;/));
+    expect(close).toHaveBeenCalledTimes(1);
+    // Not the melody library prompt, not a session: the app does the listening.
+    expect(start).not.toHaveBeenCalled();
+    expect(melody).not.toHaveBeenCalled();
+    expect(view.listen.stage.phase).toBe('idle');
+    await view.listen.listenWith('Microphone');
+    expect(open).toHaveBeenLastCalledWith(expect.stringMatching(/^intent:\/\/listen\?source=mic#/));
+  });
+
+  it('keeps This tab in the extension', async () => {
+    const state = demoState('mobile-idle')!;
+    useMemorySettings(state.settings!);
+    const engine = new DemoEngine(state);
+    const platform = demoPlatform(state, null);
+    const open = vi.spyOn(platform, 'openUrl');
+    const view = new ListenSurface(engine, platform, { closeOnHandOff: true });
+    await view.start();
+    expect(view.listen.source).toBe('Tab');
+    expect(view.listen.inApp).toBe(false);
+    await view.listen.toggle();
+    expect(open).not.toHaveBeenCalled();
+    expect(view.listen.stage.sessionId).not.toBeNull();
+    await view.listen.cancel();
+  });
+
+  it('listens in the extension on desktop Firefox', async () => {
+    const { view } = await surface('popup-hum', { live: undefined });
+    expect(view.listen.inApp).toBe(false);
+  });
+});

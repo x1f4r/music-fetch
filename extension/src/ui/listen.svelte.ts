@@ -38,8 +38,21 @@ export class ListenController {
 
   constructor(
     private readonly engine: EngineClient,
-    private readonly options: { recentLimit?: number; tabCapture?: boolean } = {},
+    private readonly options: {
+      recentLimit?: number;
+      tabCapture?: boolean;
+      /**
+       * Microphone and Hum run in the Music Fetch app instead (Firefox for Android): the
+       * Listen button hands off to it rather than starting a session.
+       */
+      handOff?: (source: 'Microphone' | 'Hum') => Promise<void> | void;
+    } = {},
   ) {}
+
+  /** The idle stage's Listen button opens the app for the selected source. */
+  get inApp(): boolean {
+    return Boolean(this.options.handOff) && this.stage.phase === 'idle' && !this.stage.download && this.source !== 'Tab';
+  }
 
   /** Connect, restore a session that is still running (the popup was reopened) and load the library. */
   async start(defaultSource: ListenChoice | null): Promise<void> {
@@ -104,6 +117,11 @@ export class ListenController {
       return;
     }
     const source = this.source;
+    if (source !== 'Tab' && this.options.handOff) {
+      this.stage = idleStage(source);
+      await this.options.handOff(source);
+      return;
+    }
     if (source === 'Hum' && !(await this.melodyInstalled())) {
       // Humming needs the melody library: ask first (plan §5.5).
       this.stage = { ...idleStage('Hum'), melodyMissing: true };

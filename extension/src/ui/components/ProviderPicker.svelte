@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StepDots from './StepDots.svelte';
   import type { Service } from '../../engine/types';
   import { t } from '../../i18n';
   import {
@@ -22,11 +23,13 @@
     savedCustom?: CustomProvider | null;
     /** Popup and side panel: smaller title, no step dots. */
     compact?: boolean;
+    /** Steps in the welcome flow (the dots under the panel). */
+    steps?: number;
     /** Called after the decision is stored. */
     ondecided?: () => void;
   }
 
-  let { suggested = null, savedCustom = null, compact = false, ondecided }: Props = $props();
+  let { suggested = null, savedCustom = null, compact = false, steps = 3, ondecided }: Props = $props();
 
   // Seeded once from the props: the suggestion only pre-selects, the user's taps win.
   // svelte-ignore state_referenced_locally
@@ -176,5 +179,5 @@
   <button class="btn filled" onclick={choose} disabled={!selected || busy}>{chooseLabel}</button>
 </div>
 {#if !compact}
-  <div class="dots" role="img" aria-label={t('welcome.step', 1, 3)}><i class="on"></i><i></i><i></i></div>
+  <StepDots index={0} count={steps} />
 {/if}

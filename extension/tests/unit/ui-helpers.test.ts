@@ -4,6 +4,7 @@ import type { LibraryEntry, PitchFrame } from '@/src/engine/types';
 import { t } from '@/src/i18n';
 import { librarySections, matchesFilter } from '@/src/models/library';
 import { probeCapabilities } from '@/src/platform/capabilities';
+import { nativeListenUrl } from '@/src/platform/native-app';
 import { isAnalyzablePage } from '@/src/platform/surfaces';
 import { median, traceGeometry } from '@/src/ui/draw/trace';
 import { livePath } from '@/src/ui/draw/wave';
@@ -17,6 +18,22 @@ describe('capabilities', () => {
     expect(firefox).toMatchObject({ panel: 'sidebar', engineHost: 'background', tabCapture: false, menus: true });
     const android = probeCapabilities({ sidebarAction: {}, menus: {}, commands: {} }, 'Mozilla/5.0 (Android 15; Mobile; rv:158.0) Firefox/158.0', 'firefox');
     expect(android).toMatchObject({ panel: null, menus: false, shortcuts: false, android: true });
+  });
+
+  it('send the microphone to the app only on Firefox for Android', () => {
+    const desktop = probeCapabilities({ sidebarAction: {} }, 'Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Firefox/158.0', 'firefox');
+    const android = probeCapabilities({ sidebarAction: {} }, 'Mozilla/5.0 (Android 10; Mobile; rv:158.0) Firefox/158.0', 'firefox');
+    const chromium = probeCapabilities({ sidePanel: {} }, 'Mozilla/5.0 (X11; Linux x86_64) Chrome/155', 'chromium');
+    expect([desktop.microphone, android.microphone, chromium.microphone]).toEqual(['extension', 'app', 'extension']);
+  });
+
+  it('link into the app with a download page when it isn’t installed', () => {
+    expect(nativeListenUrl('hum')).toBe(
+      'intent://listen?source=hum#Intent;scheme=musicfetch;S.browser_fallback_url=https%3A%2F%2Fgithub.com%2Fx1f4r%2Fmusic-fetch%2Freleases%2Flatest;end',
+    );
+    expect(nativeListenUrl('mic', 'https://example.org/a?b=c#d')).toBe('intent://listen?source=mic#Intent;scheme=musicfetch;S.browser_fallback_url=https%3A%2F%2Fexample.org%2Fa%3Fb%3Dc%23d;end');
+    // No package: a missing app goes to the fallback, not to a store listing.
+    expect(nativeListenUrl('hum')).not.toContain('package=');
   });
 
   it('never analyze browser and store pages', () => {
