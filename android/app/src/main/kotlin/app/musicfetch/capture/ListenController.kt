@@ -231,7 +231,9 @@ class ListenController(
             fail(gen, ErrorCode.PLATFORM, message)
             return
         }
-        val options = ListenOptions(autoStop = settings.current().autoStop)
+        // Microphone listens may turn into humming: their progressive melody search shows its
+        // answer so far under the listening UI (ListenState.preview). Phone audio never hums.
+        val options = ListenOptions(autoStop = settings.current().autoStop, liveCandidates = source == CaptureSource.MICROPHONE)
         val live = try {
             engine.startListeningWith(source, mode, options, Observer(gen))
         } catch (e: MfException) {
@@ -330,15 +332,34 @@ class ListenController(
                 // Saved without a connection: identified once the phone is online again.
                 if (result is ListenResult.Waiting) app.appGraph.waitingRetry.onWaitingSaved()
             }
-            is SessionEvent.Candidates -> lastCandidates = event.candidates
+            is SessionEvent.Candidates -> onCandidates(event.candidates, event.isFinal)
             is SessionEvent.Failed -> end(gen, ListenResult.Failed(_state.value.sessionId, event.code, event.message))
             is SessionEvent.Canceled -> end(gen, null)
             else -> Unit
         }
     }
 
+    /** The final list, or until one arrives the latest interim list. */
     @Volatile
     private var lastCandidates: List<Candidate> = emptyList()
+
+    @Volatile
+    private var finalCandidates = false
+
+    /**
+     * Interim lists (`is_final = false`) preview the answer while the user hums and while the
+     * final pass runs; each replaces the previous one and an empty list clears it. The final
+     * list is the result (docs/CORE_API.md, "Humming, whistling, singing").
+     */
+    private fun onCandidates(candidates: List<Candidate>, isFinal: Boolean) {
+        if (isFinal) {
+            finalCandidates = true
+            lastCandidates = candidates
+            return
+        }
+        if (!finalCandidates) lastCandidates = candidates
+        _state.update { if (it.isActive) it.copy(preview = candidates) else it }
+    }
 
     private fun onNotice(notice: Notice) {
         when (notice) {
@@ -372,12 +393,13 @@ class ListenController(
         stopCapture()
         finishCapture()
         lastCandidates = emptyList()
+        finalCandidates = false
         val previous = _state.value
         if (result == null) {
             _state.value = ListenState(source = previous.source, mode = previous.mode)
             if (!canceledByUser) Log.i(TAG, "session canceled by the engine")
         } else {
-            _state.value = previous.copy(phase = ListenPhase.Done(result), notice = null)
+            _state.value = previous.copy(phase = ListenPhase.Done(result), notice = null, preview = emptyList())
             val elapsed = System.currentTimeMillis() - previous.startedAtWallMs
             Log.i(TAG, "${previous.mode} session ended (${result.javaClass.simpleName}) after $elapsed ms")
             onResult(previous, result)
