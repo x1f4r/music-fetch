@@ -60,7 +60,7 @@ describe('the engine’s fetch policy', () => {
   it('only fetches https on public hosts without credentials in the URL', () => {
     expect(checkUrl('https://lrclib.net/api/get').hostname).toBe('lrclib.net');
     expect(() => checkUrl('http://lrclib.net/')).toThrow(FetchPolicyError);
-    expect(() => checkUrl('https://user:pw@lrclib.net/')).toThrow(FetchPolicyError);
+    expect(() => checkUrl('https://user:secret@example.org/')).toThrow(FetchPolicyError);
     expect(() => checkUrl('https://192.168.1.1/')).toThrow(FetchPolicyError);
     expect(checkUrl('http://127.0.0.1:8000/echo', { allowHttp: true, allowPrivate: true }).port).toBe('8000');
   });
