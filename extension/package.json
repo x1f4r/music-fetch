@@ -19,7 +19,7 @@
     "lint:firefox": "web-ext lint --source-dir .output/firefox-mv3 --self-hosted",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "npm run build && vitest run --config vitest.e2e.config.ts",
+    "e2e": "WXT_MF_ENGINE=mock npm run build && vitest run --config vitest.e2e.config.ts",
     "postinstall": "wxt prepare",
     "screens": "vitest run --config vitest.screens.config.ts",
     "build:e2e": "wxt build -b chrome --mode e2e && wxt build -b firefox --mv3 --mode e2e",
