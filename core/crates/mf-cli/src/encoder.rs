@@ -150,6 +150,7 @@ fn bench(mfe: &Path, index: &Path, queries: usize, budget: &str, scalar: bool) -
         offsets: None,
         pooling: None,
         votes: false,
+        reserve: None,
         recall_only: true,
     };
     let mut eval = EncoderEval::open(&args, &index)?;
@@ -237,6 +238,8 @@ pub struct EncoderArgs {
     /// sum or max.
     pub pooling: Option<String>,
     pub votes: bool,
+    /// Hits that always reach the full rerank.
+    pub reserve: Option<usize>,
     pub recall_only: bool,
 }
 
@@ -263,6 +266,9 @@ impl EncoderEval {
                 .collect::<anyhow::Result<_>>()?;
         }
         budget.hints.votes |= args.votes;
+        if let Some(n) = args.reserve {
+            budget.hints.reserve = n;
+        }
         match args.pooling.as_deref() {
             None => {}
             Some("sum") => budget.pooling = Pooling::Sum,

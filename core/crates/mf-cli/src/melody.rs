@@ -141,6 +141,9 @@ pub enum EvalCommand {
         /// Also pool the index's votes for the encoder's tracks (a second, restricted retrieval).
         #[arg(long)]
         encoder_votes: bool,
+        /// The encoder's first N hits always reach the full rerank (overrides the budget).
+        #[arg(long)]
+        encoder_reserve: Option<usize>,
         /// Measure the encoder's recall without giving its hits to the rerank.
         #[arg(long)]
         encoder_recall_only: bool,
@@ -202,6 +205,7 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             encoder_offsets,
             encoder_pooling,
             encoder_votes,
+            encoder_reserve,
             encoder_recall_only,
         }) => {
             let mut options = MatchOptions { popularity_weight: popularity, ..MatchOptions::default() };
@@ -224,6 +228,7 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
                 offsets: encoder_offsets,
                 pooling: encoder_pooling,
                 votes: encoder_votes,
+                reserve: encoder_reserve,
                 recall_only: encoder_recall_only,
             });
             eval_qbsh(&index, &queries, out.as_deref(), threads, limit, &options, !no_trace, encoder)

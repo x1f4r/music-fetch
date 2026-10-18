@@ -262,6 +262,9 @@ pub struct HintOptions {
     /// pass restricted to them, so their placements carry evidence on the score
     /// model's scale.
     pub votes: bool,
+    /// The first this many hints always reach the full rerank (with their best
+    /// quick-check placement), even when the quick stage would cut them.
+    pub reserve: usize,
 }
 
 /// [`search_with`] plus hinted placements (see [`HintOptions`]). Hinted
@@ -279,7 +282,7 @@ pub fn search_with_hints(
     };
     let mut refs = References::new(index);
     let placements = hinted(index, &q, &mut refs, options, hints, how);
-    let ranked = rerank(&q, &mut refs, placements, options);
+    let ranked = rerank_reserved(&q, &mut refs, placements, options, hints, how);
     best_per_song(index, &q, &mut refs, ranked, k, options.popularity_weight)
 }
 
@@ -296,7 +299,38 @@ pub fn candidates_with_hints(
     };
     let mut refs = References::new(index);
     let placements = hinted(index, &q, &mut refs, options, hints, how);
-    rerank(&q, &mut refs, placements, options).into_iter().map(candidate).collect()
+    rerank_reserved(&q, &mut refs, placements, options, hints, how).into_iter().map(candidate).collect()
+}
+
+/// [`rerank`], plus the reserved hints' best quick-check placement when the
+/// quick stage dropped their track.
+fn rerank_reserved(
+    q: &Query,
+    refs: &mut References,
+    placements: Vec<Placement>,
+    options: &MatchOptions,
+    hints: &[Hint],
+    how: &HintOptions,
+) -> Vec<Scored> {
+    let mut quick = quick_stage(q, refs, placements, options.rerank);
+    if how.reserve > 0 {
+        let kept: HashSet<u32> = quick.iter().map(|(_, p)| p.track).collect();
+        for h in hints.iter().take(how.reserve).filter(|h| !kept.contains(&h.track)) {
+            let own: Vec<Placement> = how
+                .offsets
+                .iter()
+                .map(|&(tempo, shift)| Placement {
+                    track: h.track,
+                    tempo,
+                    anchor: h.ref_frame + shift - h.query_frame / tempo,
+                    votes: 0.0,
+                    note_votes: 0.0,
+                })
+                .collect();
+            quick.extend(quick_stage(q, refs, own, 1));
+        }
+    }
+    full_stage(q, refs, quick)
 }
 
 /// Retrieval's placements plus the hinted ones it has not already made (same
