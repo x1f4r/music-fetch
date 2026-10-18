@@ -32,6 +32,17 @@ import type {
   StorageUsage, Track, WebEngineConfig,
 } from '../types.gen';
 
+/** One header rule of the engine's requests (`util::http::HeaderRule`). */
+export interface HeaderRule {
+  id: 'shazam' | 'crawler' | 'youtube' | 'innertube' | 'ytmusic' | 'neutral';
+  /** URL prefixes the rule covers (anchored at the start). */
+  prefixes: string[];
+  /** Headers to set, lower case. */
+  set: Record<string, string>;
+  /** Headers to remove, lower case. */
+  remove: string[];
+}
+
 /** What the engine calls back into. */
 export interface JsHost {
   /** Every event of every session, in order per session. */
@@ -482,6 +493,14 @@ impl WasmEngine {
             "sample_count": decoded.sample_count,
             "bands": bands,
         }))
+    }
+
+    /// The header policy of the engine's requests (`util::http::header_rules`): the
+    /// rules the extension installs as declarativeNetRequest session rules. The Shazam
+    /// rule carries agent `shazam_agent` (of eight, wrapping).
+    #[wasm_bindgen(js_name = headerRules, unchecked_return_type = "HeaderRule[]")]
+    pub fn header_rules(app_version: String, shazam_agent: u32) -> Result<JsValue, JsValue> {
+        to_js(&mfcore::util::http::header_rules(&app_version, shazam_agent as usize))
     }
 
     /// Test tooling (stub recognizers): the Shazam signature the engine would

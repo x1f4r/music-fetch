@@ -92,6 +92,12 @@ async fn statics() {
     assert_eq!(code(WasmEngine::provider_links(partial).err().unwrap()), "InvalidInput");
     let links: Vec<JsValue> = js_sys::Array::from(&WasmEngine::provider_links(track.clone()).unwrap()).to_vec();
     assert!(links.len() > 3, "{links:?}");
+    let rules = js_sys::Array::from(&WasmEngine::header_rules("1.1.0".into(), 9).unwrap());
+    let shazam =
+        rules.to_vec().into_iter().find(|r| js_sys::Reflect::get(r, &"id".into()).unwrap() == "shazam").unwrap();
+    let set = js_sys::Reflect::get(&shazam, &"set".into()).unwrap();
+    let agent = js_sys::Reflect::get(&set, &"user-agent".into()).unwrap().as_string().unwrap();
+    assert!(agent.starts_with("Dalvik/2.1.0"), "{agent}");
     let custom = WasmEngine::custom_provider_link(track, "https://example.com/?q={query}".into()).unwrap();
     assert_eq!(custom.as_deref(), Some("https://example.com/?q=Artist%20Song"));
 }
