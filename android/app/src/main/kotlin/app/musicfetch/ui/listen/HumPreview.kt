@@ -89,13 +89,26 @@ internal fun HumPreviewChip(candidate: Candidate, onStop: () -> Unit, modifier: 
                     color = colors.onSurfaceVariant,
                     maxLines = 1,
                 )
-                Text(
-                    stringResource(R.string.hum_preview_track, track.title, track.artist),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = colors.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                // The title keeps its room; the artist takes what is left.
+                Row {
+                    Text(
+                        track.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (track.artist.isNotBlank()) {
+                        Text(
+                            stringResource(R.string.hum_preview_artist, track.artist),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                }
             }
             CandidateTierTag(candidate.tier)
         }
