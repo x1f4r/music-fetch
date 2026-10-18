@@ -257,8 +257,11 @@ describe('Settings models', () => {
   it('derives the melody row', () => {
     const base = { installed: true, version: '2026.10.1', song_count: 3, size_bytes: 10, available_version: null, download_bytes: null };
     expect(melodyView(base, { downloading: null, failed: false, check: 'idle' })).toMatchObject({ phase: 'installed', bytes: 10, encoder: false });
-    expect(melodyView({ ...base, encoder_installed: true, encoder_bytes: 5 }, { downloading: null, failed: false, check: 'idle' })).toMatchObject({ bytes: 15, encoder: true });
-    expect(melodyView({ ...base, installed: false, download_bytes: 20, encoder_bytes: 7 }, { downloading: null, failed: false, check: 'idle' })).toEqual({ phase: 'none', bytes: 27 });
+    // The core's sizes already count the encoder file.
+    expect(melodyView({ ...base, size_bytes: 15, encoder_installed: true }, { downloading: null, failed: false, check: 'idle' })).toMatchObject({ bytes: 15, encoder: true });
+    expect(melodyView({ ...base, installed: false, download_bytes: 27 }, { downloading: null, failed: false, check: 'idle' })).toEqual({ phase: 'none', bytes: 27 });
+    // Only the encoder is missing: the core offers the installed version again.
+    expect(melodyView({ ...base, available_version: '2026.10.1', download_bytes: 7 }, { downloading: null, failed: false, check: 'idle' })).toEqual({ phase: 'update', bytes: 7 });
     expect(melodyView(base, { downloading: 0.5, failed: false, check: 'idle' })).toMatchObject({ phase: 'downloading', fraction: 0.5 });
     expect(melodyView(null, { downloading: null, failed: true, check: 'idle' })).toEqual({ phase: 'failed' });
   });

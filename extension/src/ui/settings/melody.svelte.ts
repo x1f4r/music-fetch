@@ -19,16 +19,13 @@ export type MelodyView =
   | { phase: 'update'; bytes: number }
   | { phase: 'failed' };
 
-/** Bytes on disk: the index and, when installed, its encoder file. */
-export function installedBytes(status: MelodyIndexStatus): number {
-  return status.size_bytes + (status.encoder_installed ? (status.encoder_bytes ?? 0) : 0);
-}
-
-/** Bytes a download (or update) fetches: the index and the encoder file when the manifest names one. */
+/**
+ * Bytes a download (or update) fetches. The core counts the encoder file in both sizes:
+ * `size_bytes` includes it once installed, `download_bytes` when the manifest names one.
+ */
 export function downloadBytes(status: MelodyIndexStatus | null): number {
   if (!status) return MELODY_DOWNLOAD_BYTES;
-  const index = status.download_bytes ?? (status.installed ? status.size_bytes : MELODY_DOWNLOAD_BYTES);
-  return index + (status.encoder_bytes && !status.encoder_installed ? status.encoder_bytes : 0);
+  return status.download_bytes ?? (status.installed ? status.size_bytes : MELODY_DOWNLOAD_BYTES);
 }
 
 /**
@@ -54,7 +51,7 @@ export function melodyView(status: MelodyIndexStatus | null, extra: { downloadin
   return {
     phase: 'installed',
     songs: status.song_count,
-    bytes: installedBytes(status),
+    bytes: status.size_bytes,
     updated: indexDate(status.version),
     encoder: Boolean(status.encoder_installed),
     check: extra.check,
