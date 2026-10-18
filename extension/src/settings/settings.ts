@@ -35,25 +35,82 @@ export type ListenChoice = 'Microphone' | 'Tab' | 'Hum';
 /** What the browser said about the microphone, as last seen in an extension page. */
 export type MicGrant = 'unknown' | 'granted' | 'denied' | 'session';
 
+/** How to analyze a long video on a site, once the user said "Don't ask again". */
+export type AnalyzeChoice = 'whole' | 'quick';
+
+/** One stored preference. The same shape as WXT's storage items, so either backs it. */
+export interface Setting<T> {
+  readonly key: string;
+  getValue(): Promise<T>;
+  setValue(value: T): Promise<void>;
+  removeValue(): Promise<void>;
+  /** Called with the new value whenever it changes, in any extension context. */
+  watch(callback: (value: T) => void): () => void;
+}
+
+/**
+ * Demo states keep every setting in memory (like the apps' demo states), so trying a
+ * state never changes the user's real choices. Set once, before the first read.
+ */
+let memory: { values: Map<string, unknown>; listeners: Map<string, Set<(value: unknown) => void>> } | null = null;
+
+export function useMemorySettings(initial: Record<string, unknown> = {}): void {
+  memory = { values: new Map(Object.entries(initial).map(([k, v]) => [k, structuredClone(v)])), listeners: new Map() };
+}
+
+function defineSetting<T>(key: `sync:${string}` | `local:${string}`, fallback: T): Setting<T> {
+  const stored = storage.defineItem<T>(key, { fallback });
+  const notify = (value: T) => memory?.listeners.get(key)?.forEach((listener) => listener(value));
+  return {
+    key,
+    async getValue() {
+      if (!memory) return stored.getValue();
+      return memory.values.has(key) ? structuredClone(memory.values.get(key) as T) : fallback;
+    },
+    async setValue(value) {
+      if (!memory) return stored.setValue(value);
+      memory.values.set(key, structuredClone(value));
+      notify(value);
+    },
+    async removeValue() {
+      if (!memory) return stored.removeValue();
+      memory.values.delete(key);
+      notify(fallback);
+    },
+    watch(callback) {
+      if (!memory) return stored.watch((value) => callback(value ?? fallback));
+      const listeners = memory.listeners.get(key) ?? new Set();
+      memory.listeners.set(key, listeners);
+      const listener = (value: unknown) => callback(value as T);
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
 export const settings = {
-  providerDecision: storage.defineItem<ProviderDecision | null>('sync:providerDecision', { fallback: null }),
-  customProvider: storage.defineItem<CustomProvider | null>('sync:customProvider', { fallback: null }),
+  providerDecision: defineSetting<ProviderDecision | null>('sync:providerDecision', null),
+  customProvider: defineSetting<CustomProvider | null>('sync:customProvider', null),
   /** `spotify:` / `music://` / … instead of the website (the browser asks once). */
-  openInApp: storage.defineItem<boolean>('sync:openInApp', { fallback: false }),
-  autoStop: storage.defineItem<boolean>('sync:autoStop', { fallback: true }),
-  lowPower: storage.defineItem<LowPowerSetting>('sync:lowPower', { fallback: 'auto' }),
+  openInApp: defineSetting<boolean>('sync:openInApp', false),
+  autoStop: defineSetting<boolean>('sync:autoStop', true),
+  lowPower: defineSetting<LowPowerSetting>('sync:lowPower', 'auto'),
   /** Chromium: the toolbar button opens the side panel instead of the popup. */
-  sidePanelOnClick: storage.defineItem<boolean>('sync:sidePanelOnClick', { fallback: false }),
-  notifyInBackground: storage.defineItem<boolean>('sync:notifyInBackground', { fallback: true }),
+  sidePanelOnClick: defineSetting<boolean>('sync:sidePanelOnClick', false),
+  notifyInBackground: defineSetting<boolean>('sync:notifyInBackground', true),
   /** Chromium with on-device speech only. */
-  searchSungLyrics: storage.defineItem<boolean>('sync:searchSungLyrics', { fallback: false }),
+  searchSungLyrics: defineSetting<boolean>('sync:searchSungLyrics', false),
+  /** Settings › Storage: pinned sessions keep their audio. */
+  keepPinnedAudio: defineSetting<boolean>('sync:keepPinnedAudio', true),
+  /** "Don't ask again for ‹site›" on the analyze sheet: the remembered choice per site. */
+  analyzeChoice: defineSetting<Record<string, AnalyzeChoice>>('sync:analyzeChoice', {}),
 
   /** Microphone device ids, most preferred first. */
-  micPriority: storage.defineItem<string[]>('local:micPriority', { fallback: [] }),
-  micGrant: storage.defineItem<MicGrant>('local:micGrant', { fallback: 'unknown' }),
-  lastSource: storage.defineItem<ListenChoice | null>('local:lastSource', { fallback: null }),
+  micPriority: defineSetting<string[]>('local:micPriority', []),
+  micGrant: defineSetting<MicGrant>('local:micGrant', 'unknown'),
+  lastSource: defineSetting<ListenChoice | null>('local:lastSource', null),
   /** The welcome flow's next step (0 = provider, 1 = microphone, 2 = shortcut tip, 3 = done). */
-  welcomeStep: storage.defineItem<number>('local:welcomeStep', { fallback: 0 }),
+  welcomeStep: defineSetting<number>('local:welcomeStep', 0),
 };
 
 /** The provider Skip stores. */

@@ -82,6 +82,8 @@ export interface MockEngineOptions {
   /** Fill an empty library with a few finished sessions. */
   seed?: boolean;
   now?: () => number;
+  /** Mark sessions stored as Running as Failed on open, like the core after a crash (default). */
+  recoverInterrupted?: boolean;
 }
 
 export const MOCK_MELODY_INDEX = { version: '2026.10.1', songs: 58_006, bytes: 55_200_000 } as const;
@@ -160,7 +162,7 @@ export class MockEngine implements EngineClient {
     // Like the core: sessions a crash left running are failed on open.
     let recovered = false;
     for (const detail of this.snapshot.sessions) {
-      if (detail.entry.status === 'Running') {
+      if (detail.entry.status === 'Running' && options.recoverInterrupted !== false) {
         detail.entry.status = 'Failed';
         recovered = true;
       }
@@ -177,7 +179,7 @@ export class MockEngine implements EngineClient {
     return () => this.listeners.delete(listener);
   }
 
-  private notify(fn: (listener: EngineListener) => void) {
+  protected notify(fn: (listener: EngineListener) => void) {
     for (const listener of this.listeners) {
       try {
         fn(listener);

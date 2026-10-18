@@ -20,7 +20,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "npm run build && vitest run --config vitest.e2e.config.ts",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "screens": "vitest run --config vitest.screens.config.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",

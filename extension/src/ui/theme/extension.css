@@ -149,3 +149,15 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .app.bare { display: block; }
 .app.bare .content { height: 100%; }
 .frow > .progress { flex: 1; }
+
+/* ---------- Demo states (app.html?demo=…) ---------- */
+html.demo-still *, html.demo-still *::before, html.demo-still *::after { animation-play-state: paused !important; transition: none !important; caret-color: transparent; }
+body.surface-gallery { overflow: auto; height: auto; }
+.gallery { padding: 24px 32px 48px; }
+.gallery header { display: flex; align-items: center; gap: 16px; }
+.gallery h1 { font-size: var(--fs-display); line-height: var(--lh-display); margin: 0; flex: 1; }
+.gallery h2 { font-size: var(--fs-title); margin: 28px 0 12px; color: var(--on-surface-variant); }
+.gallery .cards { display: flex; flex-wrap: wrap; gap: 20px; }
+.gallery .card { display: flex; flex-direction: column; gap: 4px; width: 300px; color: var(--on-surface); }
+.gallery .frame { display: block; overflow: hidden; border-radius: var(--r-m); box-shadow: 0 0 0 .5px var(--hairline), var(--shadow-menu); background: var(--surface); }
+.gallery iframe { border: 0; transform-origin: 0 0; pointer-events: none; display: block; }

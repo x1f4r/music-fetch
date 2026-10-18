@@ -9,6 +9,12 @@ type SurfaceProps = { engine: EngineClient; platform: Platform };
 
 /** Mount a surface (popup, side panel or sidebar, app tab) with the real engine client and browser. */
 export function boot(component: Component<SurfaceProps>, surface: 'popup' | 'panel' | 'app'): void {
+  // Demo states (`?demo=<id>`, the gallery at app.html?demo=gallery) load on demand.
+  const demo = new URLSearchParams(location.search).get('demo');
+  if (demo) {
+    void import('./demo/boot').then(({ bootDemo }) => bootDemo(component, surface, demo));
+    return;
+  }
   const platform = browserPlatform();
   const engine = engineClient();
   document.body.classList.add(`surface-${surface}`);
