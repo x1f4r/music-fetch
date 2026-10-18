@@ -86,7 +86,7 @@
       <div class="brand"><span class="mini" aria-hidden="true"><span class="ic ic-mark"></span></span>{t('app.name')}</div>
       <div class="nav-list">
         {@render nav({ name: 'listen' }, 'ic-hum', t('nav.listen'), is('listen'))}
-        {@render nav({ name: 'library', pinned: false }, 'ic-stack', t('nav.library'), is('library'))}
+        {@render nav({ name: 'library', pinned: false }, 'ic-stack', t('nav.library'), is('library') || (route.name === 'session' && !pinned.some((e) => e.id === route.id)))}
         {#if pinned.length > 0}
           <div class="nav-sec" id="nav-pinned">{t('nav.pinned')}</div>
           {#each pinned.slice(0, PINNED_IN_SIDEBAR) as entry (entry.id)}
@@ -110,7 +110,7 @@
       <GrantMicRoute initial={route.state} />
     {:else if route.name === 'library'}
       {#key route.pinned}
-        <LibraryRoute {narrow} pinnedOnly={route.pinned} onopen={(id) => go({ name: 'session', id })} onlisten={() => go({ name: 'listen' })} onsettings={() => go({ name: 'settings', pane: 'general' })} ondetails={(subject) => (details = subject)} />
+        <LibraryRoute {narrow} columns={withDetails} pinnedOnly={route.pinned} onopen={(id) => go({ name: 'session', id })} onlisten={() => go({ name: 'listen' })} onsettings={() => go({ name: 'settings', pane: 'general' })} ondetails={(subject) => (details = subject)} />
       {/key}
     {:else if route.name === 'session'}
       {#key route.id}

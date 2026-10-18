@@ -22,6 +22,13 @@
 h1, h2, h3 { margin: 0; font: inherit; }
 kbd { font: inherit; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 6px; background: var(--fill-2); box-shadow: inset 0 -1px 0 var(--hairline); }
 
+/* Small tertiary text (ruler labels, captions, "No selection"): the outline role measures
+   4.3:1 on the light surface, under AA for small text; a step darker in light only. */
+:root { --outline-text: #646e6a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --outline-text: var(--outline); } }
+html[data-theme="dark"] { --outline-text: var(--outline); }
+.tertiary, .ruler, .details-col .no-selection, .grant-states .cap { color: var(--outline-text); }
+
 /* The tokens declare the default after the media query, which wins; restore the high-contrast value. */
 @media (prefers-contrast: more) {
   :root { --likely-opacity: .75; }
@@ -109,9 +116,12 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 
 /* ---------- Popup (popup-*.html): absolute slots ---------- */
 .popup .state.two { top: 302px; }
-.popup .dl-bar { position: absolute; left: 60px; right: 60px; top: 338px; margin: 0; max-width: none; }
+.popup .dl-bar { position: absolute; left: 60px; right: 60px; top: 338px; width: auto; margin: 0; max-width: none; }
 .popup .scroll { overflow-y: auto; scrollbar-width: thin; }
 .popup .scroll .hero { padding-top: 14px; }
+/* The provider menu centres on the result's actions, above the button (popup-result-menu). */
+.popup .hero .actions { position: relative; }
+.popup .hero .split-wrap { position: static; }
 .popup .scroll .details { margin-top: 6px; padding-bottom: 12px; }
 .popup .top .back + .field { flex: 1; }
 .popup .hint { position: absolute; left: 12px; right: 12px; top: 452px; height: 56px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--on-surface-variant); font-size: var(--fs-callout); }
@@ -127,6 +137,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 
 /* ---------- Results ---------- */
 .hero h1.ttl { margin-bottom: 0; }
+.hero > .sr-only { position: absolute; }
 .hero .artist { color: var(--on-surface); }
 .details .dhead { width: 100%; }
 .details .dhead:focus-visible { box-shadow: var(--focus-ring); border-radius: var(--r-s); }
@@ -153,14 +164,18 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .panel .session-pane { padding-top: 8px; }
 .panel.narrow .footer .btn.text { padding: 0 8px; }
 .panel.narrow .stage { padding: 0 12px; }
-.track.prov { opacity: .7; }
+/* Provisional rows (from the tracklist, not heard yet): dimmed artwork and title, text kept
+   at AA contrast; "from the tracklist" and the Possible tag say it in words too. */
+.track.prov .art { opacity: .7; }
+.track.prov .ttl { color: var(--on-surface-variant); }
 .track.pending .ttl { color: var(--on-surface-variant); }
 .track .art.placeholder { background: var(--fill); box-shadow: inset 0 0 0 1px var(--hairline); }
 .mix-status .small-bar { width: 88px; flex: none; }
 .muted-line { display: flex; align-items: center; gap: 6px; }
 
 /* ---------- Welcome: "Where do you listen?" (app-welcome.html) ---------- */
-.welcome { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow-y: auto; padding: 24px 0; }
+.welcome { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 24px 0; }
+.welcome .col { margin: auto 0; }
 .welcome .col { width: 420px; max-width: calc(100% - 32px); display: flex; flex-direction: column; align-items: stretch; }
 .mini-disc { width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(180deg, var(--ink-2), var(--ink)); display: flex; align-items: center; justify-content: center; align-self: center; box-shadow: var(--shadow-button); flex: none; }
 .mini-disc .ic-mark { width: 26px; height: 11px; color: var(--mint); filter: drop-shadow(0 0 4px rgba(91,228,199,.45)); }
@@ -229,7 +244,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .details-col .dsec { margin-top: 16px; }
 .details-col .acts { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .details-col .acts > .btn { width: 100%; }
-.details-col .no-selection { margin: auto; color: var(--outline); font-size: var(--fs-title); }
+.details-col .no-selection { margin: auto; color: var(--outline-text); font-size: var(--fs-title); }
 .details-col .many { margin: auto 0; display: flex; flex-direction: column; align-items: stretch; text-align: center; gap: 4px; }
 
 /* Library: toolbar, context bar, list, toast (app-library.html) */
@@ -242,8 +257,9 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .toast-wrap .toast { pointer-events: auto; }
 .row .kind { vertical-align: -2px; margin-right: 4px; }
 .row .trail .pin { color: var(--primary); }
-.row .text > .truncate:first-child { font-weight: var(--fw-regular); }
 .search input::-webkit-search-cancel-button { display: none; }
+.app .toolbar .field.search { flex: 0 1 200px; min-width: 120px; }
+.app .toolbar .seg { flex: none; }
 
 /* Session (app-session-*.html) */
 .session-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
@@ -330,7 +346,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .mobile .hint .btn { height: 36px; }
 
 /* ---------- Demo states (app.html?demo=…) ---------- */
-html.demo-still *, html.demo-still *::before, html.demo-still *::after { animation-play-state: paused !important; transition: none !important; caret-color: transparent; }
+html.demo-still *, html.demo-still *::before, html.demo-still *::after { animation: none !important; transition: none !important; caret-color: transparent; }
 body.surface-gallery { overflow: auto; height: auto; }
 .gallery { padding: 24px 32px 48px; }
 .gallery header { display: flex; align-items: center; gap: 16px; }

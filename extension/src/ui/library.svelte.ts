@@ -44,11 +44,11 @@ export class LibraryController {
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private stop: (() => void) | null = null;
   /** Deleted rows are hidden at once and removed from the engine when the toast ends. */
-  private pendingDelete: { ids: string[]; timer: ReturnType<typeof setTimeout> } | null = $state(null);
+  private pendingDelete: { ids: string[]; timer: ReturnType<typeof setTimeout> } | null = $state.raw(null);
 
   constructor(
     private readonly engine: EngineClient,
-    private readonly options: { limit?: number; now?: () => number } = {},
+    private readonly options: { limit?: number; now?: () => number; pinnedSection?: boolean } = {},
   ) {}
 
   get visible(): LibraryEntry[] {
@@ -57,7 +57,7 @@ export class LibraryController {
   }
 
   get sections(): LibrarySection[] {
-    return librarySections(this.visible, this.options.now?.() ?? Date.now(), { pinnedSection: this.filter !== 'pinned' });
+    return librarySections(this.visible, this.options.now?.() ?? Date.now(), { pinnedSection: (this.options.pinnedSection ?? true) && this.filter !== 'pinned' });
   }
 
   get order(): LibraryEntry[] {

@@ -18,11 +18,16 @@
     /** Show the Pinned section (off in the side panel's recent list). */
     art?: 40 | 44;
     label?: string;
+    /**
+     * A click focuses the row (the details column shows it) and a double click opens it;
+     * without a details column (side panel, narrow windows) a click opens.
+     */
+    clickOpens?: boolean;
     onopen: (entry: LibraryEntry) => void;
     oncopy?: (text: string) => void;
   }
 
-  let { library, selectable = false, chevrons = false, art = 40, label = t('library.title'), onopen, oncopy }: Props = $props();
+  let { library, selectable = false, chevrons = false, art = 40, label = t('library.title'), clickOpens = true, onopen, oncopy }: Props = $props();
   const sections = $derived(library.sections);
   const order = $derived(library.order);
   const cursor = $derived(library.focusedId && order.some((e) => e.id === library.focusedId) ? library.focusedId : (order[0]?.id ?? null));
@@ -36,7 +41,7 @@
       onopen(entry);
       return;
     }
-    if (library.click(entry, { shift: event.shiftKey, mod }) === 'open') onopen(entry);
+    if (library.click(entry, { shift: event.shiftKey, mod }) === 'open' && (clickOpens || event.detail > 1)) onopen(entry);
   }
 
   function move(step: number, extend: boolean) {

@@ -64,9 +64,13 @@
     return selected !== null && providerKey(selected) === providerKey(provider);
   }
 
+  let nameField = $state<HTMLInputElement | undefined>();
+
   function select(provider: Provider) {
     selected = provider;
     showProblem = false;
+    // The custom form opens under the list: start typing its name.
+    if (provider.kind === 'custom') queueMicrotask(() => nameField?.focus());
   }
 
   /** One tab stop for the radio group: the selected option, else the first. */
@@ -139,7 +143,7 @@
     </button>
     {#if isCustom}
       <div class="custom-form">
-        <label class="field small"><input bind:value={customName} placeholder={t('provider.customName')} aria-label={t('provider.customName')} /></label>
+        <label class="field small"><input bind:this={nameField} bind:value={customName} placeholder={t('provider.customName')} aria-label={t('provider.customName')} /></label>
         <label class="field small">
           <input
             bind:value={customTemplate}

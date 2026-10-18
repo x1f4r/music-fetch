@@ -13,6 +13,7 @@ import type {
   Track,
 } from '../../engine/types';
 import { emptyTrack } from '../../engine/types';
+import { contour, MELODY_SECONDS } from '../../engine/mock/melody';
 import { searchLinks } from '../../providers/search';
 import { COVERS, type CoverName } from './covers';
 
@@ -154,27 +155,12 @@ function heard(id: string, kind: SessionKind, track: Track, created: number, opt
 
 // MARK: hums
 
-/** A hummed phrase (MIDI) and the song's version of it, as the overlay draws them. */
+/** The hum (with a voice's wander) and the song's line, as the overlay draws them. */
 export function alignment(seed: number, drift = 0.6): MelodyAlignment {
-  const notes: [number, number][] = [
-    [62, 380], [64, 380], [67, 380], [64, 380], [71, 700], [71, 380], [69, 900], [67, 380], [66, 380], [64, 760],
-  ];
-  const query: number[] = [];
-  const reference: number[] = [];
-  let t = 0;
-  for (const [midi, length] of notes) {
-    for (let i = 0; i < length; i += 40) {
-      const wobble = 0.25 * Math.sin((t + seed * 97) / 60) + 0.15 * Math.sin((t + seed * 31) / 23);
-      query.push(midi - 66 + wobble);
-      reference.push(midi - 66 + drift * Math.sin((t + seed * 50) / 400));
-      t += 40;
-    }
-    for (let i = 0; i < 2; i++) {
-      query.push(Number.NaN);
-      reference.push(midi - 66 + drift * 0.5);
-      t += 40;
-    }
-  }
+  const query = contour({ from: 0, to: MELODY_SECONDS, stepMs: 40, seed: 11 + seed, jitter: 0.5, vibrato: 0.15 });
+  const reference = contour({ from: 0, to: MELODY_SECONDS, stepMs: 40, seed: 1, jitter: 0, vibrato: 0, slide: 0.02 }).map((v, i) =>
+    Number.isFinite(v) ? v + drift * Math.sin((i + seed * 17) / 14) : v,
+  );
   return { frame_ms: 40, query, reference };
 }
 

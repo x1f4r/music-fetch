@@ -40,7 +40,6 @@
   {#if shape === 'mix'}
     <Artwork url={detail.entry.artwork_url} size={large ? 'video-l' : 'video'} />
     <div class="text">
-      {#if !large}<div class="headline truncate">{detail.entry.title}</div>{/if}
       <div class="callout secondary truncate">{[site, length ? clock(length) : null, large ? host : null].filter(Boolean).join(' · ')}</div>
       {#if view.running && view.capture?.rate}
         <div class="callout secondary muted-line"><span class="ic ic-mute s12"></span>{t('mix.mutedAt', String(view.capture.rate))}</div>

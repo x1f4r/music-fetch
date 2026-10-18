@@ -117,21 +117,44 @@ function host(url: string | null): string | null {
   }
 }
 
+const SITES: [RegExp, string][] = [
+  [/(^|\.)open\.spotify\.com$/, 'Spotify'],
+  [/(^|\.)music\.apple\.com$/, 'Apple Music'],
+  [/(^|\.)music\.youtube\.com$/, 'YouTube Music'],
+  [/(^|\.)(youtube\.com|youtu\.be)$/, 'YouTube'],
+  [/(^|\.)soundcloud\.com$/, 'SoundCloud'],
+  [/(^|\.)mixcloud\.com$/, 'Mixcloud'],
+  [/(^|\.)deezer\.com$/, 'Deezer'],
+  [/(^|\.)tidal\.com$/, 'Tidal'],
+  [/(^|\.)bandcamp\.com$/, 'Bandcamp'],
+  [/(^|\.)twitch\.tv$/, 'Twitch'],
+  [/(^|\.)tiktok\.com$/, 'TikTok'],
+  [/(^|\.)music\.amazon\.[a-z.]+$/, 'Amazon Music'],
+];
+
+/** "Spotify", "YouTube", else the host. */
+export function siteOf(url: string | null): string | null {
+  const name = host(url);
+  if (!name) return null;
+  return SITES.find(([re]) => re.test(name))?.[1] ?? name;
+}
+
 /**
- * A row's subtitle, like the macOS library (LibraryView `subtitle`): the artist, the
- * candidate count for hums, "‹n› tracks so far" while a mix runs, the source's site.
+ * A row's subtitle parts, joined with " · " (like the macOS library, LibraryView
+ * `subtitle`): the artist, the candidate count for hums, "‹n› tracks so far" while a mix
+ * runs, the track count and the source's site.
  */
-export function rowSubtitle(entry: LibraryEntry, candidateCount: number | null = null): Message | string {
+export function rowSubtitle(entry: LibraryEntry, candidateCount: number | null = null): (Message | string)[] {
   const artist = entry.track?.artist ?? entry.subtitle;
   switch (entry.status) {
     case 'Waiting':
-      return { key: 'library.waiting' };
+      return [{ key: 'library.waiting' }];
     case 'Failed':
-      return { key: 'library.failed' };
+      return [{ key: 'library.failed' }];
     case 'NoMatch':
-      return { key: 'state.noMatch' };
+      return [{ key: 'state.noMatch' }];
     case 'Canceled':
-      if (entry.track_count === 0) return { key: 'library.stopped' };
+      if (entry.track_count === 0) return [{ key: 'library.stopped' }];
       break;
     default:
       break;
@@ -139,17 +162,18 @@ export function rowSubtitle(entry: LibraryEntry, candidateCount: number | null =
   switch (entry.kind) {
     case 'Hum':
     case 'Lyrics':
-      if (!entry.track && candidateCount) return { key: 'library.candidates', args: [artist ?? '', candidateCount] };
-      return artist ?? '';
+      if (!entry.track && candidateCount) return [{ key: 'library.candidates', args: [artist ?? '', candidateCount] }];
+      return artist ? [artist] : [];
     case 'Link':
     case 'File': {
-      const site = entry.subtitle && entry.subtitle !== artist ? entry.subtitle : host(entry.source_url);
-      if (entry.status === 'Running') return entry.track_count > 0 ? { key: 'mix.tracksSoFar', args: [entry.track_count] } : (site ?? { key: 'library.running' });
-      if (isMixEntry(entry)) return [artist !== site ? artist : null, `${entry.track_count} tracks`, site].filter(Boolean).join(' · ');
-      return [entry.track?.artist ?? null, site].filter(Boolean).join(' · ');
+      const site = siteOf(entry.source_url);
+      const by = artist && artist !== site ? artist : null;
+      if (entry.status === 'Running') return [entry.track_count > 0 ? { key: 'mix.tracksSoFar', args: [entry.track_count] } : (site ?? { key: 'library.running' })];
+      if (isMixEntry(entry)) return [by, { key: 'collection.tracks', args: [entry.track_count] } as Message, site].filter((p): p is Message | string => p !== null);
+      return [entry.track?.artist ?? by, site].filter((p): p is string => Boolean(p));
     }
     default:
-      return artist ?? '';
+      return artist ? [artist] : [];
   }
 }
 

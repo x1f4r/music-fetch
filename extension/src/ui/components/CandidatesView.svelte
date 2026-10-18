@@ -122,6 +122,9 @@
     </div>
   {/each}
 </div>
+{#if candidates[0]}
+  <p class="sr-only" aria-live="polite">{t('cand.announce', candidates.length, candidates[0].track.title, TAGS[candidates[0].tier].label)}</p>
+{/if}
 {#if ontypelyric}
   <div class="cand-foot">{t('cand.notHere')} <button class="btn small" onclick={ontypelyric}><span class="ic ic-text s12"></span>{t('action.typeLyric')}</button></div>
 {/if}

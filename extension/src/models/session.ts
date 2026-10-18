@@ -306,7 +306,7 @@ export function statusRow(view: SessionView, shape: SessionShape = sessionShape(
   if (capture?.state === 'tabClosed') return { message: { key: 'mix.tabClosed' }, spinner: false, action: 'resume', progress: null };
   if (shape === 'playlist') {
     const count = view.detail.source?.item_count ?? total;
-    return { message: { key: 'mix.resolving', args: [identified, count] }, spinner: true, action: 'stop', progress: count ? identified / count : null };
+    return { message: { key: 'mix.resolving', args: [identified, count] }, spinner: true, action: null, progress: count ? identified / count : null };
   }
   if (view.progress && view.progress.total_ms > 0) {
     const done = minutes(view.progress.analyzed_ms);

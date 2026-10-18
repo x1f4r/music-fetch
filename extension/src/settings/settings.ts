@@ -60,8 +60,8 @@ export interface Setting<T> {
  */
 let memory: { values: Map<string, unknown>; listeners: Map<string, Set<(value: unknown) => void>> } | null = null;
 
-export function useMemorySettings(initial: Record<string, unknown> = {}): void {
-  memory = { values: new Map(Object.entries(initial).map(([k, v]) => [k, structuredClone(v)])), listeners: new Map() };
+export function useMemorySettings(initial: Record<string, unknown> | null = {}): void {
+  memory = initial === null ? null : { values: new Map(Object.entries(initial).map(([k, v]) => [k, structuredClone(v)])), listeners: new Map() };
 }
 
 function defineSetting<T>(key: `sync:${string}` | `local:${string}`, fallback: T): Setting<T> {

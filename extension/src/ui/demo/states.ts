@@ -43,7 +43,8 @@ export type DemoAction =
   | { click: string; within?: string }
   | { key: string; on?: string; shift?: boolean; mod?: boolean }
   | { type: string; into: string }
-  | { wait: number };
+  | { wait: number }
+  | { waitFor: string };
 
 export interface DemoState {
   id: string;
@@ -66,6 +67,8 @@ export interface DemoState {
   running?: Record<string, DemoRunning>;
   /** The mock directive for the next live session (e.g. `busy`). */
   directive?: string;
+  /** The melody library download stops at this fraction (a still picture of it). */
+  holdDownload?: number;
   /** Clicks and keys after the page is up (menus open, rows selected, …). */
   actions?: DemoAction[];
   /** The design prototype to compare with (`ext-design/png/<name>.png`). */
@@ -116,6 +119,9 @@ const YOUTUBE_MIX: DemoTab = {
   },
 };
 
+/** The same page, paused: "This tab" isn't preselected, the last used source is. */
+const YOUTUBE_PAUSED: DemoTab = { ...YOUTUBE_SONG, audible: false };
+
 const BLANK_TAB: DemoTab = { url: 'chrome://newtab/', title: 'New Tab', audible: false, facts: null };
 
 /** The events of a script up to `untilMs` of capture (frozen mid-session). */
@@ -147,7 +153,7 @@ function rejected(id: string, title: string, directive: string, source: 'Tab' | 
     id,
     title,
     settings: { ...DECIDED, 'local:lastSource': source },
-    tab: YOUTUBE_SONG,
+    tab: source === 'Tab' ? YOUTUBE_SONG : YOUTUBE_PAUSED,
     directive,
     actions: [{ click: '.listen .disc' }, { wait: 150 }],
     prototype: 'popup-states',
@@ -185,7 +191,7 @@ export const DEMO_STATES: DemoState[] = [
     id: 'popup-melody',
     title: 'Popup · melody library prompt',
     settings: { ...DECIDED, 'local:lastSource': 'Hum' },
-    tab: YOUTUBE_SONG,
+    tab: YOUTUBE_PAUSED,
     melody: 'none',
     actions: [{ click: '.listen .disc' }],
     prototype: 'popup-melody',
@@ -195,9 +201,10 @@ export const DEMO_STATES: DemoState[] = [
     id: 'popup-downloading',
     title: 'Popup · melody library downloading',
     settings: { ...DECIDED, 'local:lastSource': 'Hum' },
-    tab: YOUTUBE_SONG,
+    tab: YOUTUBE_PAUSED,
     melody: 'none',
-    actions: [{ click: '.listen .disc' }, { click: '.sheet .btn.filled' }, { wait: 1300 }],
+    holdDownload: 0.42,
+    actions: [{ click: '.listen .disc' }, { click: '.sheet .btn.filled' }, { waitFor: '.dl-bar' }],
     prototype: 'popup-states',
   },
   {
@@ -255,7 +262,7 @@ export const DEMO_STATES: DemoState[] = [
     tab: YOUTUBE_MIX,
     sessions: () => [mixSession({ running: true, pinned: true })],
     running: { 'demo-mix-running': { events: [{ Progress: { analyzed_ms: 23 * 60_000, total_ms: MIX_LENGTH, eta_ms: 17 * 60_000 } }], capture: { state: 'capturing', rate: 4, muted: true } } },
-    actions: [{ click: '.list .row' }, { wait: 50 }, { click: '.tracks .track:nth-child(6)' }],
+    actions: [{ click: '.list .row' }, { wait: 50 }, { click: '.tracks .track:nth-child(6) .track-main' }],
     prototype: 'panel-mix',
   },
   {
@@ -311,7 +318,7 @@ export const DEMO_STATES: DemoState[] = [
     actions: [{ click: '.list .row[data-id="demo-mix"] .cb' }, { click: '.ctx .delete' }],
   },
   { ...APP, id: 'app-library-empty', title: 'App tab · empty library', route: '/library', settings: DECIDED, sessions: 'none' },
-  { ...APP, id: 'app-session-mix', title: 'App tab · mix with segment details', route: '/session/demo-mix', settings: DECIDED, actions: [{ click: '.tracks .track[data-id="mix-14"]' }], prototype: 'app-session-mix' },
+  { ...APP, id: 'app-session-mix', title: 'App tab · mix with segment details', route: '/session/demo-mix', settings: DECIDED, actions: [{ click: '.tracks .track[data-id="mix-14"] .track-main' }], prototype: 'app-session-mix' },
   {
     ...APP,
     id: 'app-session-mix-running',
@@ -322,7 +329,7 @@ export const DEMO_STATES: DemoState[] = [
     running: { 'demo-mix-running': { events: [{ Progress: { analyzed_ms: 23 * 60_000, total_ms: MIX_LENGTH, eta_ms: 17 * 60_000 } }], capture: { state: 'ad', rate: 4, muted: true } } },
   },
   { ...APP, id: 'app-export', title: 'App tab · export menu', route: '/session/demo-mix', settings: DECIDED, actions: [{ click: '.toolbar .export' }] },
-  { ...APP, id: 'app-session-playlist', title: 'App tab · playlist with track details', route: '/session/demo-playlist', settings: DECIDED, actions: [{ click: '.tracks .track[data-id="item-7"]' }], prototype: 'app-session-playlist' },
+  { ...APP, id: 'app-session-playlist', title: 'App tab · playlist with track details', route: '/session/demo-playlist', settings: DECIDED, actions: [{ click: '.tracks .track[data-id="item-7"] .track-main' }], prototype: 'app-session-playlist' },
   { ...APP, id: 'app-session-song', title: 'App tab · a song', route: '/session/demo-houdini', settings: DECIDED },
   { ...APP, id: 'app-session-hum', title: 'App tab · hum candidates and the overlay', route: '/session/demo-hum', settings: DECIDED },
   { ...APP, id: 'app-settings-general', title: 'Settings · general', route: '/settings/general', settings: { ...DECIDED, 'sync:openInApp': true, 'sync:customProvider': { name: 'Plex', template: 'https://plex.example/search?q={query}' } }, prototype: 'app-settings-general' },
@@ -336,7 +343,8 @@ export const DEMO_STATES: DemoState[] = [
     route: '/settings/melody',
     settings: DECIDED,
     melody: 'none',
-    actions: [{ click: '.melody-row .btn.filled' }, { wait: 1300 }],
+    holdDownload: 0.42,
+    actions: [{ click: '.melody-row .btn.filled' }, { waitFor: '.melody-bar' }],
     prototype: 'app-settings-melody',
   },
   { ...APP, id: 'app-settings-melody-update', title: 'Settings · melody, update available', route: '/settings/melody', settings: DECIDED, melody: 'update', prototype: 'app-settings-melody' },
