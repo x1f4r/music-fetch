@@ -641,8 +641,7 @@ impl Live {
             return;
         }
         let voiced = self.voiced_ms();
-        if voiced >= IMPRESSION_LONG_PAUSE_VOICED_MS
-            && voiced < KEEP_GOING_MS
+        if (IMPRESSION_LONG_PAUSE_VOICED_MS..KEEP_GOING_MS).contains(&voiced)
             && self.pause_ms().is_some_and(|p| p >= IMPRESSION_PAUSE_MS)
         {
             self.keep_going_noticed = true;
