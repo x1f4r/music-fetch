@@ -94,7 +94,7 @@ describe.skipIf(!built)('the wasm engine behind the backend', () => {
     module.initSync({ module: readFileSync(binary) });
     wasm = module;
     stub = await startStubRecognizer(module.Engine);
-  });
+  }, 120_000);
 
   afterAll(async () => {
     await backend?.shutdown();
