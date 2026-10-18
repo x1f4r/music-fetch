@@ -522,6 +522,13 @@ impl WasmEngine {
     }
 }
 
+impl WasmEngine {
+    /// `Engine.create` for Rust callers (the browser test suites).
+    pub async fn open_with(config: JsValue, host: JsValue) -> Result<WasmEngine, JsValue> {
+        Self::open(config, host).await
+    }
+}
+
 /// A safe last path segment for a work-file name.
 fn file_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or("");
