@@ -92,6 +92,22 @@
   }
 
   function onkeydown(event: KeyboardEvent) {
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && stage.phase === 'matched' && stage.track && !(event.target as HTMLElement | null)?.closest('input')) {
+      if (event.key === 'Enter') {
+        const link = surface.openInFor(stage.track);
+        if (link) {
+          event.preventDefault();
+          void platform.openUrl(link.url);
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'c' && !window.getSelection()?.toString()) {
+        event.preventDefault();
+        void platform.copyText(`${stage.track.artist} – ${stage.track.title}`);
+        return;
+      }
+    }
     if (event.key !== 'Escape' || event.defaultPrevented) return;
     if (showsResult(stage)) {
       event.preventDefault();

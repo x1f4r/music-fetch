@@ -57,6 +57,15 @@ export class DemoEngine extends MockEngine {
     return detail;
   }
 
+  override async installMelodyIndex(): Promise<string> {
+    const hold = this.state.holdDownload;
+    if (hold === undefined) return super.installMelodyIndex();
+    // A still picture of the download: it stops part-way until cancelled.
+    const id = 'demo-melody-download';
+    setTimeout(() => this.replay(id, [{ Started: { session_id: id, kind: 'Hum' } }, { Phase: { phase: 'Downloading', fraction: hold } }]), 0);
+    return id;
+  }
+
   override async finishSession(sessionId: string): Promise<void> {
     if (sessionId !== DEMO_LIVE_ID) return super.finishSession(sessionId);
     this.liveDone = true;
@@ -64,6 +73,10 @@ export class DemoEngine extends MockEngine {
   }
 
   override async cancelSession(sessionId: string): Promise<void> {
+    if (sessionId === 'demo-melody-download') {
+      this.replay(sessionId, ['Canceled']);
+      return;
+    }
     if (sessionId !== DEMO_LIVE_ID) return super.cancelSession(sessionId);
     this.liveDone = true;
     this.replay(DEMO_LIVE_ID, ['Canceled']);
@@ -174,6 +187,9 @@ export async function direct(actions: readonly DemoAction[]): Promise<string[]> 
   for (const action of actions) {
     if ('wait' in action) {
       await sleep(action.wait);
+    } else if ('waitFor' in action) {
+      if (!(await find(action.waitFor, 6000))) problems.push(`no ${action.waitFor}`);
+      await sleep(30);
     } else if ('click' in action) {
       const element = await find(action.click, 4000);
       if (!element) problems.push(`no ${action.click}`);

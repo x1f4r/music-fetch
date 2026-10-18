@@ -164,7 +164,8 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .muted-line { display: flex; align-items: center; gap: 6px; }
 
 /* ---------- Welcome: "Where do you listen?" (app-welcome.html) ---------- */
-.welcome { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow-y: auto; padding: 24px 0; }
+.welcome { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 24px 0; }
+.welcome .col { margin: auto 0; }
 .welcome .col { width: 420px; max-width: calc(100% - 32px); display: flex; flex-direction: column; align-items: stretch; }
 .mini-disc { width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(180deg, var(--ink-2), var(--ink)); display: flex; align-items: center; justify-content: center; align-self: center; box-shadow: var(--shadow-button); flex: none; }
 .mini-disc .ic-mark { width: 26px; height: 11px; color: var(--mint); filter: drop-shadow(0 0 4px rgba(91,228,199,.45)); }

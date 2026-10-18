@@ -52,16 +52,17 @@ describe.skipIf(!existsSync(CHROMIUM) || !existsSync(OUTPUT.chromium))('demo sta
       for (const theme of THEMES) {
         // A fresh page per shot: nothing (open menus, timers) carries over between states.
         const page = await browser.newPage();
-        page.setDefaultTimeout(20_000);
+        page.setDefaultTimeout(60_000);
         try {
           await page.setViewport({ width: state.width, height: state.height, deviceScaleFactor: SCALE });
           await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }]);
-          await page.goto(`chrome-extension://${id}/${demoUrl(state, { theme, still: true })}`);
-          try {
-            await page.waitForSelector('html[data-demo-ready]', { timeout: 15_000 });
-          } catch {
-            failures.push(`${state.id}/${theme}: never ready`);
-          }
+          // The test machine is shared: a slow navigation gets one more try.
+          const url = `chrome-extension://${id}/${demoUrl(state, { theme, still: true })}`;
+          const ready = async () => {
+            await page.goto(url);
+            await page.waitForSelector('html[data-demo-ready]', { timeout: 45_000 });
+          };
+          await ready().catch(ready);
           const problems = await page.$eval('html', (html) => html.dataset.demoProblems ?? null);
           if (problems) failures.push(`${state.id}/${theme}: ${problems}`);
           const file = `${state.id}-${theme}.png`;

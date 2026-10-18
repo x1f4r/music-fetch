@@ -89,6 +89,20 @@
   }
 
   onMount(async () => {
+    stops.push(
+      engine.subscribe({
+        sessionEvent: (id, event) => {
+          if (id !== installId || typeof event !== 'object') return;
+          if ('Phase' in event && event.Phase.phase === 'Downloading') downloading = event.Phase.fraction ?? 0;
+          if ('Failed' in event) melodyFailed = true;
+          if ('Finished' in event || 'Failed' in event) {
+            downloading = null;
+            installId = null;
+            void engine.melodyIndexStatus().then((status) => (melody = status));
+          }
+        },
+      }),
+    );
     [openInApp, sidePanelOnClick, notify, autoStop, lowPower, micGrant, sungLyrics, keepPinnedAudio, priority] = await Promise.all([
       settings.openInApp.getValue(),
       settings.sidePanelOnClick.getValue(),
@@ -108,20 +122,6 @@
     melody = await engine.melodyIndexStatus().catch(() => null);
     usage = await engine.storageUsage().catch(() => null);
     coreVersion = (await engine.hello().catch(() => null))?.coreVersion ?? null;
-    stops.push(
-      engine.subscribe({
-        sessionEvent: (id, event) => {
-          if (id !== installId || typeof event !== 'object') return;
-          if ('Phase' in event && event.Phase.phase === 'Downloading') downloading = event.Phase.fraction ?? 0;
-          if ('Failed' in event) melodyFailed = true;
-          if ('Finished' in event || 'Failed' in event) {
-            downloading = null;
-            installId = null;
-            void engine.melodyIndexStatus().then((status) => (melody = status));
-          }
-        },
-      }),
-    );
   });
   onDestroy(() => stops.forEach((stop) => stop()));
 

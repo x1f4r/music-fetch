@@ -43,7 +43,8 @@ export type DemoAction =
   | { click: string; within?: string }
   | { key: string; on?: string; shift?: boolean; mod?: boolean }
   | { type: string; into: string }
-  | { wait: number };
+  | { wait: number }
+  | { waitFor: string };
 
 export interface DemoState {
   id: string;
@@ -66,6 +67,8 @@ export interface DemoState {
   running?: Record<string, DemoRunning>;
   /** The mock directive for the next live session (e.g. `busy`). */
   directive?: string;
+  /** The melody library download stops at this fraction (a still picture of it). */
+  holdDownload?: number;
   /** Clicks and keys after the page is up (menus open, rows selected, …). */
   actions?: DemoAction[];
   /** The design prototype to compare with (`ext-design/png/<name>.png`). */
@@ -200,7 +203,8 @@ export const DEMO_STATES: DemoState[] = [
     settings: { ...DECIDED, 'local:lastSource': 'Hum' },
     tab: YOUTUBE_PAUSED,
     melody: 'none',
-    actions: [{ click: '.listen .disc' }, { click: '.sheet .btn.filled' }, { wait: 1300 }],
+    holdDownload: 0.42,
+    actions: [{ click: '.listen .disc' }, { click: '.sheet .btn.filled' }, { waitFor: '.dl-bar' }],
     prototype: 'popup-states',
   },
   {
@@ -339,7 +343,8 @@ export const DEMO_STATES: DemoState[] = [
     route: '/settings/melody',
     settings: DECIDED,
     melody: 'none',
-    actions: [{ click: '.melody-row .btn.filled' }, { wait: 1300 }],
+    holdDownload: 0.42,
+    actions: [{ click: '.melody-row .btn.filled' }, { waitFor: '.melody-bar' }],
     prototype: 'app-settings-melody',
   },
   { ...APP, id: 'app-settings-melody-update', title: 'Settings · melody, update available', route: '/settings/melody', settings: DECIDED, melody: 'update', prototype: 'app-settings-melody' },
