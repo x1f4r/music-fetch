@@ -18,7 +18,8 @@ import { startStubRecognizer, type SignatureTools, type StubRecognizer } from '.
  * synthetic test songs as audio. Skipped when the module has not been built.
  */
 const pkg = resolve('src/engine/wasm');
-const built = existsSync(resolve(pkg, 'mfcore_wasm_bg.wasm'));
+const binary = resolve('public/engine/mfcore.wasm');
+const built = existsSync(binary) && existsSync(resolve(pkg, 'mfcore_wasm.js'));
 const RATE = 48_000;
 const [A, B, C] = SYNTHETIC_SONGS;
 
@@ -90,7 +91,7 @@ describe.skipIf(!built)('the wasm engine behind the backend', () => {
 
   beforeAll(async () => {
     const module = (await import(/* @vite-ignore */ resolve(pkg, 'mfcore_wasm.js'))) as typeof wasm;
-    module.initSync({ module: readFileSync(resolve(pkg, 'mfcore_wasm_bg.wasm')) });
+    module.initSync({ module: readFileSync(binary) });
     wasm = module;
     stub = await startStubRecognizer(module.Engine);
   });

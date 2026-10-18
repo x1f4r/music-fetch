@@ -92,9 +92,10 @@ export interface FixtureServer {
  */
 export async function signatureTools(): Promise<SignatureTools | null> {
   const pkg = resolve('src/engine/wasm');
-  if (!existsSync(join(pkg, 'mfcore_wasm_bg.wasm'))) return null;
+  const binary = resolve('public/engine/mfcore.wasm');
+  if (!existsSync(binary) || !existsSync(join(pkg, 'mfcore_wasm.js'))) return null;
   const module = (await import(pathToFileURL(join(pkg, 'mfcore_wasm.js')).href)) as { initSync(o: { module: BufferSource }): unknown; Engine: SignatureTools };
-  module.initSync({ module: readFileSync(join(pkg, 'mfcore_wasm_bg.wasm')) });
+  module.initSync({ module: readFileSync(binary) });
   return module.Engine;
 }
 

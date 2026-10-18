@@ -6,5 +6,6 @@ stats.html
 *.log
 .e2e-artifacts/
 .screens/
-# The engine module, built by core/crates/mfcore-wasm/build.sh
+# The engine, built by core/crates/mfcore-wasm/build.sh
 src/engine/wasm/
+public/engine/

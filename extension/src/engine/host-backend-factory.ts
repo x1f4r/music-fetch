@@ -4,24 +4,24 @@ import { kvPersistence, MockBackend } from './host-mock-backend';
 import { WasmBackend, type WasmModule } from './host-wasm-backend';
 
 /**
- * The engine the engine Worker runs: the wasm engine (`core/crates/mfcore-wasm`, built
- * into `./wasm/` by `npm run build:engine`) over SQLite on OPFS. Builds without that
- * module, or with `WXT_MF_ENGINE=mock`, run the mock engine instead (UI work, demos,
- * screenshots).
+ * The engine the engine Worker runs: the wasm engine (`core/crates/mfcore-wasm`, built by
+ * `npm run build:engine`: its glue into `./wasm/`, the module into `public/engine/`) over
+ * SQLite on OPFS. Builds without it, or with `WXT_MF_ENGINE=mock`, run the mock engine
+ * instead (UI work, demos, screenshots).
  */
 const engineModule = import.meta.glob<WasmModule>('./wasm/mfcore_wasm.js');
-const engineBinary = import.meta.glob<string>('./wasm/mfcore_wasm_bg.wasm', { query: '?url', import: 'default', eager: true });
+/** Copied as is from `public/` (an asset import would inline it in some bundles). */
+export const ENGINE_WASM_PATH = '/engine/mfcore.wasm';
 
 export const createBackend: BackendFactory = async (env) => {
   const load = engineModule['./wasm/mfcore_wasm.js'];
-  const binary = engineBinary['./wasm/mfcore_wasm_bg.wasm'];
-  if (import.meta.env.WXT_MF_ENGINE === 'mock' || !load || !binary) {
+  if (import.meta.env.WXT_MF_ENGINE === 'mock' || !load) {
     if (import.meta.env.MODE === 'production' && import.meta.env.WXT_MF_ENGINE !== 'mock') console.warn('Music Fetch: no engine module in this build; running the mock engine');
     const kv = await openKv('mf-mock-engine');
     return new MockBackend(env, await kvPersistence(kv));
   }
   const wasm = await load();
-  await wasm.default({ module_or_path: binary });
+  await wasm.default({ module_or_path: new URL(ENGINE_WASM_PATH, self.location.origin) });
   return WasmBackend.create(wasm, env, {
     // e2e builds: the test's stub recognizer (until the test names it, an address where
     // nothing listens: tests never reach the real service), paced for tests, and no
