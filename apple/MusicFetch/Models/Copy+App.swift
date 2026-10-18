@@ -388,6 +388,12 @@ extension Copy {
     static let acrFooter = String(localized: "Optional. Used for recordings.")
     static let acrHummingFooter = String(localized: "Optional. A second opinion when you hum.")
     static let melodyLibrary = String(localized: "Melody library")
+    /// The index's learned encoder file.
+    static let melodyModel = String(localized: "Melody model")
+    static let melodyModelNote = String(localized: "Helps recognize more hums.")
+    static let downloadMelodyModel = String(localized: "Download the melody model")
+    static let updateMelodyModel = String(localized: "Update the melody model")
+    static let installed = String(localized: "Installed")
     static let updated = String(localized: "Updated")
     static let checkForUpdates = String(localized: "Check for Updates")
     static let remove = String(localized: "Remove")
@@ -397,6 +403,19 @@ extension Copy {
     static let whileHumming = String(localized: "While humming")
     static let alsoSearchLyrics = String(localized: "Also search lyrics you sing")
     static let autoStopAfterPause = String(localized: "Stop automatically")
+
+    /// Under "Also search lyrics you sing": where words are recognized, or why they can't be.
+    static func speechNote(_ status: SpeechAccess.Status?, language: String) -> String {
+        switch status {
+        case .denied:
+            return String(localized: "Speech recognition is off for Music Fetch in System Settings.")
+        case .unsupported:
+            let name = Locale.current.localizedString(forIdentifier: language) ?? language
+            return String(localized: "This Mac can't recognize \(name) speech on its own.")
+        default:
+            return String(localized: "Words are recognized on this Mac.")
+        }
+    }
     static let autoStopFooter = String(localized: "After a pause, or as soon as the song is clear.")
     static let onDisk = String(localized: "On disk")
     static let cachedAudio = String(localized: "Cached audio")

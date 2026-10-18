@@ -4,10 +4,11 @@ import MusicFetchCore
 /// Builds the engine configuration, owns the platform services and creates the engine
 /// off the main thread.
 actor EngineHost {
-    /// Melody-index manifest for the index format this core reads (format 2 since 1.1).
-    /// Each format has its own release tag; 1.0.x keeps reading `melody-index-1`.
+    /// Melody-index manifest for the index format this core reads (format 2 since 1.1),
+    /// the Mac tier (the large index and its encoder file). Each format has its own
+    /// release tag; 1.0.x keeps reading `melody-index-1`.
     nonisolated static let melodyIndexManifestURL =
-        "https://github.com/x1f4r/music-fetch/releases/download/melody-index-2/manifest.json"
+        "https://github.com/x1f4r/music-fetch/releases/download/melody-index-2/manifest-mac.json"
 
     private var engine: (any MusicEngine)?
 
@@ -21,7 +22,7 @@ actor EngineHost {
             decoder: AVFoundationDecoder(),
             speech: SpeechTranscriberService(isEnabled: { Preferences.searchSungLyrics })
         )
-        let engine = CoreEngine(engine: core)
+        let engine = CoreEngine(engine: core, dataDir: URL(filePath: config.dataDir, directoryHint: .isDirectory))
         engine.setCredentials(credentials)
         self.engine = engine
         return engine

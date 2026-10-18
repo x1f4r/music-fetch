@@ -8,8 +8,9 @@ import MusicFetchCore
 ///
 /// States: idle, listening, hum, hum-answers, matching, result, candidates, candidates-unsure, mix, collection, library,
 /// library-selection, library-pinned, session, noMatch, captureSilent, downloading,
-/// prePrompt, micDenied, melodyPrompt, lyrics, failed, providers, providers-custom,
-/// settings-general, settings-general-custom, settings-services, settings-melody,
+/// prePrompt, speechPrePrompt, micDenied, melodyPrompt, lyrics, failed, providers, providers-custom,
+/// settings-general, settings-general-custom, settings-services, settings-melody, settings-melody-model,
+/// settings-melody-speech-off,
 /// settings-melody-downloading, settings-storage, settings-about.
 ///
 /// Options for the screenshot tests (apple/MusicFetchUITests):
@@ -151,6 +152,9 @@ nonisolated struct DemoState: Sendable {
             app.listen.showForDemo(.systemAudioPrePrompt)
         case "micDenied":
             app.listen.showForDemo(.microphoneDenied)
+        case "speechPrePrompt":
+            // The first hum on macOS 15 explains speech recognition before macOS asks.
+            app.listen.start(.hum)
         case "failed":
             app.listen.showForDemo(.failed(.mediaUnavailable, nil))
         case "melodyPrompt":
@@ -174,6 +178,10 @@ nonisolated struct DemoState: Sendable {
             try? await Task.sleep(for: .milliseconds(300))
             NSApp.activate()
             app.openSettingsAction?()
+            if name == "settings-melody-model" {
+                (app.engine as? FakeEngine)?.setMelodyStatus(DemoFixtures.melodyStatusWithoutEncoder)
+                app.settings.refreshMelody()
+            }
             if name == "settings-melody-downloading" {
                 try? await Task.sleep(for: .milliseconds(200))
                 app.settings.downloadMelody()

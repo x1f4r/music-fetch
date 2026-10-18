@@ -56,6 +56,8 @@ nonisolated protocol MusicEngine: AnyObject, Sendable {
     /// Blocking.
     func clearCache() throws
     func melodyIndexStatus() -> MelodyIndexStatus
+    /// Size of the installed index's encoder file, when there is one.
+    func melodyEncoderBytes() -> UInt64?
     /// Blocking (network).
     func checkMelodyIndex() throws -> MelodyIndexStatus
     func installMelodyIndex(observer: SessionObserver) throws -> AnalysisSessionHandle
@@ -82,12 +84,14 @@ nonisolated func offMain<T: Sendable>(_ body: @Sendable () -> T) async -> T {
 /// `MusicEngine` backed by the Rust engine.
 nonisolated final class CoreEngine: MusicEngine {
     private let engine: Engine
+    private let dataDir: URL?
 
-    init(engine: Engine) {
+    init(engine: Engine, dataDir: URL? = nil) {
         self.engine = engine
+        self.dataDir = dataDir
     }
 
-    var acceptsTranscripts: Bool { false }
+    var acceptsTranscripts: Bool { true }
 
     func setCredentials(_ credentials: Credentials) {
         engine.setCredentials(credentials: credentials)
@@ -163,6 +167,13 @@ nonisolated final class CoreEngine: MusicEngine {
         try engine.checkMelodyIndex()
     }
 
+    /// `data_dir/melody/melody-encoder.mfe` (docs/CORE_API.md, "Melody index").
+    func melodyEncoderBytes() -> UInt64? {
+        guard let dataDir else { return nil }
+        let url = dataDir.appending(path: "melody", directoryHint: .isDirectory).appending(path: "melody-encoder.mfe")
+        return (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value
+    }
+
     func installMelodyIndex(observer: SessionObserver) throws -> AnalysisSessionHandle {
         CoreAnalysisSession(try engine.installMelodyIndex(observer: observer))
     }
@@ -201,7 +212,12 @@ nonisolated private final class CoreLiveSession: LiveSessionHandle {
         session.cancel()
     }
 
-    func pushTranscript(_ words: HeardWords) {}
+    func pushTranscript(_ words: HeardWords) {
+        session.pushTranscript(
+            transcript: SpeechTranscript(
+                text: words.text, alternatives: words.alternatives, language: words.language, confidence: words.confidence,
+                isFinal: words.isFinal))
+    }
 }
 
 nonisolated private final class CoreAnalysisSession: AnalysisSessionHandle {

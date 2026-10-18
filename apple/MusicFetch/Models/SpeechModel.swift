@@ -34,6 +34,12 @@ final class SpeechModel {
         if status != self.status { self.status = status }
     }
 
+    /// Puts the model in a fixed state (demo states and tests only).
+    func showForDemo(_ status: SpeechAccess.Status) {
+        guard isDemo else { return }
+        self.status = status
+    }
+
     /// Lyric search is on and the recognizer can run live during capture.
     var transcribesLive: Bool {
         defaults.bool(forKey: PreferenceKey.searchSungLyrics) && status == .ready

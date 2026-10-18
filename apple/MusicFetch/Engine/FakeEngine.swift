@@ -33,6 +33,12 @@ nonisolated final class FakeEngine: MusicEngine {
     private let pinned = Mutex<Set<String>>([DemoFixtures.mixID, DemoFixtures.nightsID])
     private let deleted = Mutex<Set<String>>([])
     private let live = Mutex<FakeSession?>(nil)
+    private let melody = Mutex(DemoFixtures.melodyStatus)
+
+    /// What Settings › Melody shows (demo states).
+    func setMelodyStatus(_ status: MelodyIndexStatus) {
+        melody.withLock { $0 = status }
+    }
 
     /// The newest live session (unit tests emit its events with the `manual` scenario).
     var lastLiveSession: FakeSession? { live.withLock { $0 } }
@@ -247,17 +253,21 @@ nonisolated final class FakeEngine: MusicEngine {
     }
 
     func storageUsage() -> StorageUsage {
-        StorageUsage(databaseBytes: 2_400_000, cacheBytes: 1_150_000_000, melodyIndexBytes: 48_000_000)
+        StorageUsage(databaseBytes: 2_400_000, cacheBytes: 1_150_000_000, melodyIndexBytes: 61_000_000)
     }
 
     func clearCache() throws {}
 
     func melodyIndexStatus() -> MelodyIndexStatus {
-        DemoFixtures.melodyStatus
+        melody.withLock { $0 }
+    }
+
+    func melodyEncoderBytes() -> UInt64? {
+        melody.withLock { $0.encoderInstalled } ? DemoFixtures.encoderBytes : nil
     }
 
     func checkMelodyIndex() throws -> MelodyIndexStatus {
-        DemoFixtures.melodyStatus
+        melody.withLock { $0 }
     }
 
     func installMelodyIndex(observer: SessionObserver) throws -> AnalysisSessionHandle {
@@ -269,6 +279,13 @@ nonisolated final class FakeEngine: MusicEngine {
                 session.emit(.phase(phase: .downloading, fraction: fraction))
                 fraction += 0.005
                 session.sleep(0.1)
+            }
+            if !session.wasCanceled {
+                self.melody.withLock { status in
+                    status.encoderInstalled = true
+                    status.availableVersion = nil
+                    status.downloadBytes = nil
+                }
             }
             session.emit(session.wasCanceled ? .canceled : .finished(outcome: .completed(identified: 1, total: 1)))
         }

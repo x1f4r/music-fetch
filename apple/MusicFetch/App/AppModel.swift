@@ -24,7 +24,7 @@ final class AppModel {
     }
 
     enum PrivacyPane {
-        case microphone, systemAudio
+        case microphone, systemAudio, speechRecognition
     }
 
     var route: Route? = .listen
@@ -695,7 +695,12 @@ final class AppModel {
     }
 
     func openPrivacySettings(_ pane: PrivacyPane) {
-        let anchor = pane == .microphone ? "Privacy_Microphone" : "Privacy_AudioCapture"
+        let anchor =
+            switch pane {
+            case .microphone: "Privacy_Microphone"
+            case .systemAudio: "Privacy_AudioCapture"
+            case .speechRecognition: "Privacy_SpeechRecognition"
+            }
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
             NSWorkspace.shared.open(url)
         }

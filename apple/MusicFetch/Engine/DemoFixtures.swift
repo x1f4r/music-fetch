@@ -287,6 +287,15 @@ nonisolated enum DemoFixtures {
             """,
         synced: [])
 
+    static let encoderBytes: UInt64 = 13_000_000
+
+    /// The index and its encoder file installed.
     static let melodyStatus = MelodyIndexStatus(
-        installed: true, version: "2026.10.1", songCount: 41_234, sizeBytes: 48_000_000, availableVersion: nil, downloadBytes: nil)
+        installed: true, version: "2026.10.1", songCount: 41_234, sizeBytes: 61_000_000, availableVersion: nil, downloadBytes: nil,
+        encoderInstalled: true)
+
+    /// The index is current; its encoder file is not downloaded yet.
+    static let melodyStatusWithoutEncoder = MelodyIndexStatus(
+        installed: true, version: "2026.10.1", songCount: 41_234, sizeBytes: 48_000_000, availableVersion: "2026.10.1",
+        downloadBytes: encoderBytes, encoderInstalled: false)
 }

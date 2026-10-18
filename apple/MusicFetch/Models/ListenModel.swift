@@ -76,6 +76,9 @@ final class ListenModel {
     @ObservationIgnored private var capture: AudioCapture?
     /// On-device recognition of sung words for the running session, when it reads them.
     @ObservationIgnored private var words: SungWordsTranscriber?
+    /// Makes the recognizer for a session (tests substitute a scripted one).
+    @ObservationIgnored var makeTranscriber: (_ language: String, _ lowPower: Bool, _ handler: @escaping SungWordsTranscriber.Handler)
+        -> SungWordsTranscriber = { SungWordsTranscriber(language: $0, lowPower: $1, handler: $2) }
     @ObservationIgnored private var consumer: Task<Void, Never>?
     @ObservationIgnored private var lastInput: (input: String, mode: AnalyzeMode)?
     @ObservationIgnored private var lastAnnouncedSegments = 0
@@ -302,7 +305,7 @@ final class ListenModel {
         let readsWords = source != .thisMac && engine.acceptsTranscripts && app.speech.transcribesLive
         if source == .hum, !readsWords { app.speech.installModelIfNeeded() }
         var options = Preferences.listenOptions()
-        options.setTranscripts(readsWords)
+        options.transcripts = readsWords
         let handle: LiveSessionHandle
         do {
             handle = try engine.startListening(source: source.capture, mode: source.mode, options: options, observer: bridge)
@@ -340,9 +343,7 @@ final class ListenModel {
         words?.cancel()
         let words: SungWordsTranscriber? =
             readsWords
-            ? SungWordsTranscriber(language: app.speech.language, lowPower: app.isLowPower) { [weak handle] heard in
-                handle?.pushTranscript(heard)
-            }
+            ? makeTranscriber(app.speech.language, app.isLowPower) { [weak handle] heard in handle?.pushTranscript(heard) }
             : nil
         // A hum reads words from the start; a microphone session once it turns out to be
         // humming (the transcriber keeps the last seconds until then).
@@ -710,9 +711,4 @@ final class ListenModel {
 nonisolated final class NullCapture: AudioCapture {
     func start(handler: @escaping PCMHandler) throws {}
     func stop() {}
-}
-
-extension ListenOptions {
-    /// Placeholder until the engine's transcript input lands (hum-fusion).
-    nonisolated mutating func setTranscripts(_ enabled: Bool) {}
 }
