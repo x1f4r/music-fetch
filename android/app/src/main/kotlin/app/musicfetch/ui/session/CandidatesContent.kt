@@ -47,6 +47,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -187,10 +188,16 @@ private fun CandidateCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Artwork(track.artworkUrl, 56.dp, corner = 8.dp)
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                    Text(track.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // Titles keep their own direction ("99 Luftballons" in a right-to-left UI).
+                    Text(
+                        track.title,
+                        style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     Text(
                         track.artist,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content),
                         color = colors.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,

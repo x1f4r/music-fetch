@@ -104,7 +104,6 @@
 
     <!-- While humming: the progressive search's answer so far -->
     <string name="hum_sounds_like">Sounds like</string>
-    <string name="hum_preview_artist">" · %1$s"</string>
     <string name="hum_preview_description">Sounds like %1$s by %2$s, %3$s</string>
     <string name="hum_preview_stop">Stop listening</string>
     <string name="lyrics_prompt">Type a lyric you remember</string>

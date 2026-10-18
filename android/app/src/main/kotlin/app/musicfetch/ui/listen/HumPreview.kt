@@ -26,6 +26,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -91,17 +92,20 @@ internal fun HumPreviewChip(candidate: Candidate, onStop: () -> Unit, modifier: 
                 )
                 // The title keeps its room; the artist takes what is left.
                 Row {
+                    // Titles keep their own direction ("99 Luftballons" in a right-to-left UI).
                     Text(
                         track.title,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleSmall.copy(textDirection = TextDirection.Content),
                         color = colors.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (track.artist.isNotBlank()) {
+                        // The separator follows the layout, the name its own direction.
+                        Text(" · ", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1)
                         Text(
-                            stringResource(R.string.hum_preview_artist, track.artist),
-                            style = MaterialTheme.typography.bodyMedium,
+                            track.artist,
+                            style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content),
                             color = colors.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
