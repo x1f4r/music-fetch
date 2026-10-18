@@ -1,6 +1,7 @@
 import type { AudioSourceKind, PcmChunk } from '../audio/types';
 import type { CaptureEvent, CaptureHost } from '../capture/types';
 import { ENGINE_METHODS, type EngineClient } from './client';
+import type { Credentials } from '../platform/secrets';
 import type { CaptureSource, ListenMode, ListenOptions } from './types';
 
 /**
@@ -27,6 +28,12 @@ export interface EngineBackend extends EngineClient {
   captureEvent(sessionId: string, event: CaptureEvent): Promise<void>;
   /** Close cleanly before the Worker is terminated: finish writes, close the database. */
   shutdown(): Promise<void>;
+  /**
+   * Keys for the optional paid providers (core `Engine::set_credentials`). The Worker
+   * reads them from the encrypted store itself (`applyStoredCredentials`) and calls this
+   * at start and after every change; they never travel over the ports.
+   */
+  setCredentials?(credentials: Credentials): Promise<void>;
   /**
    * e2e builds only: fetch `url` the way the engine does (from the Worker, with the fetch
    * policy) and return what came back, so tests can see the header rules on the wire.

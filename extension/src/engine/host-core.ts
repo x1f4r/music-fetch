@@ -17,6 +17,7 @@ import type { BackendConfig, EngineBackend, NetProbeResult } from './host-backen
 import type { SessionRegistry, RegistryEntry } from './host-registry';
 import { WorkerEngine, type WorkerLike, type WorkerState } from './host-worker-client';
 import type { AnalyzeMode, CaptureSource, ListenMode, ListenOptions, PageContext, SessionDetail, SessionEvent, SessionKind } from './types';
+import { resolveLowPower } from '../platform/low-power';
 
 /** A port as the host receives it; `sender` is set by the browser. */
 export interface IncomingPort extends PortLike {
@@ -312,6 +313,11 @@ export class EngineHost {
       finishSession: (id) => this.finish(id),
       cancelSession: (id) => this.cancel(id),
       analyze: (input, mode, page) => this.analyze(input, mode, page),
+      setLowPower: async (enabled) => {
+        // Settings changed it: the idle recycle and the next Worker follow too.
+        this.lowPower = enabled;
+        await this.call('setLowPower', [enabled]);
+      },
     };
   }
 
@@ -524,15 +530,4 @@ export class EngineHost {
   }
 }
 
-/**
- * Low power (extension plan §2.7): the setting, or on "auto" the a05-1 thresholds
- * (≤ 4 CPUs or < 4 GiB). Firefox has no `deviceMemory`, so Firefox for Android counts
- * as low-end at ≤ 8 CPUs.
- */
-export function resolveLowPower(setting: HostSettings['lowPower'], android: boolean, cpus: number, memoryGiB: number | null): boolean {
-  if (setting === 'on') return true;
-  if (setting === 'off') return false;
-  if (cpus <= 4) return true;
-  if (memoryGiB !== null && memoryGiB < 4) return true;
-  return android && memoryGiB === null && cpus <= 8;
-}
+export { resolveLowPower } from '../platform/low-power';

@@ -1,6 +1,7 @@
 import type { Plugin } from 'vite';
 import { defineConfig } from 'wxt';
 import { buildManifest } from './src/platform/manifest';
+import { collectLicenses, writeLicenses } from './tools/licenses';
 
 /**
  * Unminified bundles keep `//#region` comments naming each module, and WXT's virtual
@@ -24,6 +25,14 @@ export default defineConfig({
   // Explicit imports everywhere: easier to read, and the same code runs under Vitest.
   imports: false,
   manifest: ({ browser, mode }) => buildManifest({ browser, mode }),
+  hooks: {
+    // Settings › About lists what each build bundles (tools/licenses.ts).
+    'build:done': (wxt, output) => {
+      const moduleIds = output.steps.flatMap((step) => step.chunks.flatMap((chunk) => (chunk.type === 'chunk' ? chunk.moduleIds : [])));
+      writeLicenses(wxt.config.outDir, collectLicenses(wxt.config.root, moduleIds));
+      (output.publicAssets as { type: 'asset'; fileName: string }[]).push({ type: 'asset', fileName: 'licenses.json' });
+    },
+  },
   zip: {
     artifactTemplate: 'MusicFetch-{{version}}-{{browser}}.zip',
     sourcesTemplate: 'MusicFetch-{{version}}-sources.zip',

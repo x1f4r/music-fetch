@@ -161,8 +161,13 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     await trackEvents(app);
     const [newest] = await rpc<{ id: string; title: string; status: string }[]>(app, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
     expect(newest).toMatchObject({ title: 'Charlie Signal', status: 'Matched' });
-    const notifications = await app.evaluate(() => (globalThis as unknown as { chrome: { notifications: { getAll(): Promise<Record<string, unknown>> } } }).chrome.notifications.getAll());
-    expect(Object.keys(notifications)).toContain(`mf-${newest!.id}`);
+    // What the background posted (e2e builds record it): CI runners have no notification
+    // daemon, so the browser's own list (notifications.getAll) may already be empty there.
+    const posted = await app.evaluate(async () => {
+      const stored = await (globalThis as unknown as { chrome: { storage: { session: { get(k: string): Promise<Record<string, unknown>> } } } }).chrome.storage.session.get('mfE2eNotifications');
+      return ((stored.mfE2eNotifications as { id: string }[] | undefined) ?? []).map((n) => n.id);
+    });
+    expect(posted).toContain(`mf-${newest!.id}`);
     await page.close();
   });
 

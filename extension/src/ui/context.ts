@@ -2,6 +2,8 @@ import { getContext, setContext } from 'svelte';
 import type { EngineClient } from '../engine/client';
 import type { PageFacts } from '../page/facts';
 import type { Capabilities } from '../platform/capabilities';
+import type { ProviderId, ProviderKeys } from '../platform/secrets';
+import type { CheckResult } from './settings/services-check';
 import type { ActiveTab, AppRoute } from '../platform/surfaces';
 
 /**
@@ -45,6 +47,16 @@ export interface Platform {
   microphones(): Promise<{ id: string; label: string; inUse: boolean }[]>;
   /** Close this surface (the popup after handing off to another one; the grant tab). */
   close(): void;
+  /**
+   * What the browser counts for the extension (`navigator.storage.estimate()`); demo
+   * states give fixed numbers. Absent: Settings asks the browser itself.
+   */
+  storageEstimate?(): Promise<{ usage?: number; quota?: number } | null>;
+  /**
+   * Settings › Services "Check": demo states answer from the state; absent, the extension
+   * sends the one signed request itself (`ui/settings/services-check.ts`).
+   */
+  checkProvider?(id: ProviderId, keys: ProviderKeys[ProviderId]): Promise<CheckResult>;
 }
 
 export interface SurfaceContext {

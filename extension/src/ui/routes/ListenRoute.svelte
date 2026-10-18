@@ -9,6 +9,7 @@
   import ResultView from '../components/ResultView.svelte';
   import Stage from '../components/Stage.svelte';
   import { useSurface } from '../context';
+  import { followPendingStart, isDemo, startFromShortcut } from '../../triggers/pending';
   import { ListenSurface } from '../surface.svelte';
 
   /**
@@ -35,11 +36,18 @@
   const stage = $derived(listen.stage);
   const recent = $derived(surface.recentRow);
 
+  let stopPending: (() => void) | null = null;
+
   onMount(async () => {
     await surface.start();
     if (listen.source === 'Tab') await listen.chooseSource('Microphone');
+    // The Hum shortcut where no side panel or sidebar exists opens this route to hum.
+    if (!isDemo()) stopPending = followPendingStart((source) => startFromShortcut(listen, source));
   });
-  onDestroy(() => surface.stop());
+  onDestroy(() => {
+    stopPending?.();
+    surface.stop();
+  });
 
   // Links and files finish as sessions: show them in full.
   $effect(() => {
