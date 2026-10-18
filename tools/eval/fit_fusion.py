@@ -26,6 +26,10 @@ Options:
     --cand / --query     feature subsets (default: all)
     --prefixes           also fit on prefix rows (`--prefix-ms`) and report them
     --prefix-weight W    weight of a prefix row relative to a full one (0: report only)
+    --prefix-min-voiced MS  ignore prefix rows with less voiced audio (default 4000, as
+                         the live session searches only from there)
+    --calibrate-prefixes calibrate on the prefix rows of the --calibrate inputs too (the
+                         live session stops early on scores of partial hums)
     --dump FILE          cross-validated per-query predictions (JSONL)
 Only candidates in the results can be re-ranked: queries whose song is missing
 there stay misses.
@@ -68,11 +72,11 @@ def query_x(r, use):
     return out
 
 
-def load(name, path, cuse, quse, groups, prefixes):
+def load(name, path, cuse, quse, groups, prefixes, prefix_min_voiced=0):
     items = []
     for line in open(path):
         r = json.loads(line)
-        if r.get("prefix_ms") is not None and not prefixes:
+        if r.get("prefix_ms") is not None and (not prefixes or (r.get("voiced_ms") or 0) < prefix_min_voiced):
             continue
         if not r.get("voiced_ms"):
             continue
@@ -195,6 +199,8 @@ def main():
     ap.add_argument("--query", default=",".join(QUERY))
     ap.add_argument("--prefixes", action="store_true")
     ap.add_argument("--prefix-weight", type=float, default=1.0, help="weight of prefix rows relative to full ones")
+    ap.add_argument("--prefix-min-voiced", type=int, default=4000)
+    ap.add_argument("--calibrate-prefixes", action="store_true")
     ap.add_argument("--l2", type=float, default=0.05)
     ap.add_argument("--dump")
     a = ap.parse_args()
@@ -207,7 +213,7 @@ def main():
     for inp in a.inputs:
         name, path = inp.split("=", 1)
         names.append(name)
-        items += load(name, path, cuse, quse, groups, a.prefixes)
+        items += load(name, path, cuse, quse, groups, a.prefixes, a.prefix_min_voiced)
     calibrate = (a.calibrate or names[0]).split(",")
     counts = {n: sum(1 for it in items if it["set"] == n) for n in names}
     mean = np.mean(list(counts.values()))
@@ -234,7 +240,7 @@ def main():
                 it["ok"] = bool(o[0] == it["y"])
             else:
                 it["rank"], it["p1"], it["p2"], it["top"], it["ok"] = None, 0.0, 0.0, None, False
-    cal = [it for it in items if it["set"] in calibrate and it["prefix"] is None]
+    cal = [it for it in items if it["set"] in calibrate and (it["prefix"] is None or a.calibrate_prefixes)]
     ab = {f: platt([it["p1"] for it in cal if it["fold"] != f], [it["ok"] for it in cal if it["fold"] != f])
           for f in (0, 1)}
     for it in items:
