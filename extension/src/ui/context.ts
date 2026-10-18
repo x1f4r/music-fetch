@@ -17,6 +17,13 @@ export interface Platform {
    * sheet. Null when unknown; the capture coordinator (X4) provides it.
    */
   pageFacts(tab: ActiveTab): Promise<PageFacts | null>;
+  /**
+   * Whether the engine may read `url`'s site (its host permission): granted for the sites
+   * the manifest lists, else it needs the optional permission (plan §5.4 step 4).
+   */
+  hostAccess(url: string): Promise<'granted' | 'needed'>;
+  /** Ask for the optional host permission; call straight from a click handler. */
+  requestHost(url: string): Promise<boolean>;
   /** Open (or focus) the app tab at `route`. */
   openApp(route?: AppRoute): Promise<void>;
   /** Open the side panel or sidebar; call straight from a click handler. */

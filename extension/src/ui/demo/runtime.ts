@@ -116,9 +116,17 @@ export function demoPlatform(state: DemoState, base: Platform | null): Platform 
     ? { id: 7, windowId: 1, url: state.tab.url, title: state.tab.title, audible: state.tab.audible }
     : null;
   const toast = (text: string) => console.info(`[demo] ${text}`);
+  const granted = new Set<string>();
   return {
     capabilities,
     activeTab: async () => tab,
+    async hostAccess(url) {
+      return state.needsHost?.includes(new URL(url).hostname) && !granted.has(new URL(url).hostname) ? 'needed' : 'granted';
+    },
+    async requestHost(url) {
+      granted.add(new URL(url).hostname);
+      return true;
+    },
     pageFacts: async () => state.tab?.facts ?? null,
     async openApp(route = '/listen') {
       const app = demoState('app-library')!;

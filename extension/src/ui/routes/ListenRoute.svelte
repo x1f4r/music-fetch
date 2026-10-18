@@ -117,7 +117,7 @@
     </div>
   {:else}
     <div class="stage app-stage">
-      <Stage {listen} {sources} ontypelyric={() => field?.focus()} onopensession={onopen} onallowmic={() => (location.hash = '#/grant-mic')} onsitesettings={() => void platform.openSiteSettings()} />
+      <Stage {listen} {sources} ontypelyric={() => field?.focus()} onopensession={onopen} onallowmic={() => (location.hash = '#/grant-mic')} onsitesettings={() => void platform.openSiteSettings()} onopenlink={(url) => void surface.openAndAnalyze(url)} />
     </div>
     <p class="drop-hint callout secondary" class:problem={fileError}>{fileError ?? (dragging ? t('state.drop') : t('file.hint'))}</p>
     {#if recent}

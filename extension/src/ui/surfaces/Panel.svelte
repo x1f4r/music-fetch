@@ -203,6 +203,8 @@
           }}
           onallowmic={() => void platform.openApp('/grant-mic')}
           onsitesettings={() => void platform.openSiteSettings()}
+          onopenlink={(url) => void surface.openAndAnalyze(url)}
+          onallowhost={(url) => void surface.allowHost(url)}
         />
       </div>
       <div class="list">
@@ -218,6 +220,7 @@
   {/if}
   {#if surface.ask}
     <AskSheet
+      kind={surface.ask.kind}
       title={surface.ask.title}
       site={surface.ask.site}
       durationMs={surface.ask.durationMs}

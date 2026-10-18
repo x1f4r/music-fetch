@@ -120,6 +120,7 @@ export const en = {
   'result.moreProviders': 'Open in another service',
   'result.fromTab': 'From this tab · %@',
   'result.fromPage': 'From the page · %@',
+  'result.listenInstead': 'Listen instead',
   'result.copy': 'Copy',
   'result.copyArtistTitle': 'Copy artist and title',
   'result.copied': 'Copied',
@@ -232,6 +233,11 @@ export const en = {
   'ask.check.go': 'Check',
   'ask.check.listen': 'Just listen instead',
 
+  'page.playsOnPage': 'This link plays on its page.',
+  'page.openAndAnalyze': 'Open and analyze',
+  'page.allowHost': 'Allow Music Fetch to read %@?',
+  'page.allow': 'Allow',
+
   'export.menu': 'Export',
   'export.copyTracklist': 'Copy tracklist',
   'export.copied': 'Tracklist copied',
@@ -320,7 +326,6 @@ export const en = {
   'session.deleteConfirm.message': 'The tracklist and its saved audio will be removed.',
   'session.deleteConfirm.pinned': 'Pinned sessions keep their audio until you delete them.',
   'session.notFound': 'This session is no longer in the library.',
-  'session.sessions': '%d sessions',
   'session.details': 'Session details',
   'session.segmentDetails': 'Segment details',
   'session.trackDetails': 'Track details',

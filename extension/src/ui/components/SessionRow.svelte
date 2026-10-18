@@ -45,6 +45,30 @@
   const subtitle = $derived(text(rowSubtitle(entry, candidateCount)));
   const time = $derived(text(rowTime(entry, now, inDaySection)));
   const failed = $derived(entry.status === 'NoMatch' || entry.status === 'Failed');
+
+  // Touch: a long press selects (extension plan §5.7); the click that follows is swallowed.
+  let pressTimer: ReturnType<typeof setTimeout> | null = null;
+  let pressed = false;
+  function onpointerdown(event: PointerEvent) {
+    if (!selectable || event.pointerType !== 'touch') return;
+    pressed = false;
+    pressTimer = setTimeout(() => {
+      pressed = true;
+      ontoggle?.();
+    }, 500);
+  }
+  function endPress() {
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = null;
+  }
+  function click(event: MouseEvent) {
+    if (pressed) {
+      pressed = false;
+      event.preventDefault();
+      return;
+    }
+    onclick(event);
+  }
   const title = $derived(entry.status === 'NoMatch' ? t('library.noMatch') : entry.title);
 </script>
 
@@ -59,7 +83,11 @@
   aria-selected={selectable ? checked : current}
   aria-describedby={headingId}
   tabindex="-1"
-  {onclick}
+  onclick={click}
+  {onpointerdown}
+  onpointerup={endPress}
+  onpointercancel={endPress}
+  onpointerleave={endPress}
 >
   {#if selectable}
     <!-- The row's aria-selected carries the state; the box is for the pointer. -->

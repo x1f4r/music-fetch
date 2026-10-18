@@ -35,6 +35,8 @@
     oncopy: (text: string) => void;
     onshare?: () => void;
     onpin?: (pinned: boolean) => void;
+    /** The answer came from the page's metadata: offer to listen to the tab instead. */
+    onlisteninstead?: () => void;
   }
 
   let {
@@ -54,6 +56,7 @@
     oncopy,
     onshare,
     onpin,
+    onlisteninstead,
   }: Props = $props();
   let copied = $state(false);
   let open = $state(false);
@@ -90,6 +93,7 @@
       </button>
     {/if}
   </div>
+  {#if onlisteninstead}<button class="btn text listen-instead" onclick={onlisteninstead}><span class="ic ic-tab s14"></span>{t('result.listenInstead')}</button>{/if}
   <p class="sr-only" aria-live="polite">{t('result.found', track.title, track.artist)}</p>
 </section>
 {#if details && (facts.length > 0 || heard.length > 0)}

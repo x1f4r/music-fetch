@@ -20,6 +20,7 @@ import {
   type SessionKind,
   type StorageUsage,
   type Track,
+  emptyTrack,
 } from '../types';
 import { searchLinks } from '../../providers/search';
 import { DEMO_TRACKS, demoTrack } from './catalog';
@@ -310,8 +311,20 @@ export class MockEngine implements EngineClient {
     const n = this.listenCount++;
     const pageTitle = page?.title ?? null;
     let script: MockScript;
+    const nowPlaying = (page?.facts as { nowPlaying?: { title?: string; artist?: string; album?: string } | null } | null)?.nowPlaying;
     if (directive === 'fail') {
       script = failedScript('MediaUnavailable', 'This video is unavailable.', 700);
+    } else if (nowPlaying?.title && nowPlaying.artist && url.href === page?.url) {
+      // A streaming page names what it plays: answer from the page (plan §5.3 step 1).
+      const track = emptyTrack({
+        title: nowPlaying.title,
+        artist: nowPlaying.artist,
+        artists: [nowPlaying.artist],
+        album: nowPlaying.album || null,
+        links: searchLinks({ title: nowPlaying.title, artist: nowPlaying.artist, artists: [nowPlaying.artist] }),
+        identity_key: `page:${nowPlaying.artist.toLowerCase()}|${nowPlaying.title.toLowerCase()}`,
+      });
+      script = trackLinkScript(track, url.href, route.service, route.site);
     } else if (shape === 'track') {
       script = trackLinkScript(demoTrack(n), url.href, route.service, route.site);
     } else if (shape === 'collection') {
