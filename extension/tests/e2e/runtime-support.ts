@@ -101,7 +101,9 @@ export async function signatureTools(): Promise<SignatureTools | null> {
 
 /**
  * Point the engine at the fixture server's stub recognizer and restart its Worker so it
- * takes the setting (e2e builds read it at every Worker start). Returns the engine kind.
+ * takes the setting (e2e builds read it at every Worker start). Returns the engine kind:
+ * e2e builds run the real engine (when built) only once a stub recognizer is named, the
+ * mock before that.
  */
 export async function useStubRecognizer(page: Page, origin: string): Promise<'wasm' | 'mock'> {
   await page.evaluate((o) => {

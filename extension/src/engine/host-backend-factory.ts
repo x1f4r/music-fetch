@@ -15,7 +15,11 @@ export const ENGINE_WASM_PATH = '/engine/mfcore.wasm';
 
 export const createBackend: BackendFactory = async (env) => {
   const load = engineModule['./wasm/mfcore_wasm.js'];
-  if (import.meta.env.WXT_MF_ENGINE === 'mock' || !load) {
+  // e2e builds run the real engine only against a test's stub recognizer
+  // (`useStubRecognizer`); suites that never name one keep the mock, so no test reaches
+  // a real service.
+  const e2eMock = import.meta.env.MODE === 'e2e' && !env.recognizerUrl;
+  if (import.meta.env.WXT_MF_ENGINE === 'mock' || !load || e2eMock) {
     if (import.meta.env.MODE === 'production' && import.meta.env.WXT_MF_ENGINE !== 'mock') console.warn('Music Fetch: no engine module in this build; running the mock engine');
     const kv = await openKv('mf-mock-engine');
     return new MockBackend(env, await kvPersistence(kv));
@@ -23,11 +27,9 @@ export const createBackend: BackendFactory = async (env) => {
   const wasm = await load();
   await wasm.default({ module_or_path: new URL(ENGINE_WASM_PATH, self.location.origin) });
   return WasmBackend.create(wasm, env, {
-    // e2e builds: the test's stub recognizer (until the test names it, an address where
-    // nothing listens: tests never reach the real service), paced for tests, and no
-    // catalog lookups.
-    ...(import.meta.env.MODE === 'e2e'
-      ? { shazam_base_url: env.recognizerUrl ?? 'http://127.0.0.1:9', test_pacing_ms: 300, offline_catalog: true, log_level: 'info' }
+    // e2e builds: the test's stub recognizer, paced for tests, and no catalog lookups.
+    ...(import.meta.env.MODE === 'e2e' && env.recognizerUrl
+      ? { shazam_base_url: env.recognizerUrl, test_pacing_ms: 300, offline_catalog: true, log_level: 'info' }
       : {}),
   });
 };
