@@ -7,15 +7,17 @@ import { SessionRegistry } from '@/src/engine/host-registry';
 import { RemoteEngineClient } from '@/src/engine/remote';
 import { createPortPair } from '@/src/messaging/memory-port';
 import { ENGINE_PORT, type TabInfo } from '@/src/messaging/protocol';
-import { FakeAgent } from './support/fake-agent';
+import type { MediaClock } from '@/src/audio/media-clock';
+import { FakeAgent, FakeTabSource } from './support/fake-agent';
 import { fakePlatform, fakeRuntime, mockFactory } from './support/host-fakes';
 
 const TAB: TabInfo = { id: 42, windowId: 1, url: 'http://127.0.0.1:8000/mix.html', title: 'Fake mix', audible: false, capture: 'ok' };
 
-function setup(agent = new FakeAgent()) {
+function setup(agent = new FakeAgent(), via: 'element' | 'tab' = 'element') {
   let coordinator: CaptureCoordinator;
   const injected: number[] = [];
   const tabs: TabsBridge = {
+    ...(via === 'tab' ? { streamId: async () => 'fake-stream' } : {}),
     resolve: async (tabId) => ({ ...TAB, id: tabId ?? TAB.id }),
     inject: async (tabId) => {
       injected.push(tabId);
@@ -24,10 +26,18 @@ function setup(agent = new FakeAgent()) {
       coordinator.acceptAgent(Object.assign(hostSide, { sender: { tab: { id: tabId } } }));
     },
   };
-  const platform = fakePlatform(mockFactory(memoryKv()), { target: 'firefox' });
+  const platform = fakePlatform(mockFactory(memoryKv()), { target: via === 'tab' ? 'chromium' : 'firefox' });
   let host: EngineHost | null = null;
   coordinator = new CaptureCoordinator({
-    target: 'firefox',
+    target: via === 'tab' ? 'chromium' : 'firefox',
+    ...(via === 'tab'
+      ? {
+          openTabCapture: async (_id: string, clock: MediaClock | null) => {
+            agent.tab = new FakeTabSource(clock);
+            return agent.tab;
+          },
+        }
+      : {}),
     android: false,
     tabs,
     pushPcm: (id, chunk) => host?.worker.pushPcm(id, chunk),
@@ -80,6 +90,26 @@ describe('the capture coordinator', () => {
     expect(agent.restored).toBeGreaterThan(0);
     expect(agent.rate).toBe(1);
     expect(agent.muted).toBe(false);
+  });
+
+  it('stamps Chromium tab capture by the page clock, with jittery blocks, within 2 s', async () => {
+    const agent = new FakeAgent();
+    agent.jitterMs = 60;
+    const { host, client } = setup(agent, 'tab');
+    cleanup.push(async () => {
+      await host.worker.recycle('test');
+      host.close();
+    });
+    const id = await client.analyze('http://127.0.0.1:8000/mix.html', 'Mix', { tab_id: 42, url: TAB.url, title: 'Fake mix', facts: null });
+    await vi.waitFor(async () => expect((await client.session(id))?.entry.status).toBe('Completed'), { timeout: 10_000 });
+    const detail = (await client.session(id))!;
+    const where = JSON.stringify(detail.segments.map((s) => [s.track?.title, s.start_ms, s.end_ms]));
+    expect(detail.segments.map((s) => s.track?.title), where).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
+    expect(Math.abs(detail.segments[0]!.end_ms - 20_000), where).toBeLessThanOrEqual(2000);
+    expect(Math.abs(detail.segments[1]!.end_ms - 40_000), where).toBeLessThanOrEqual(2000);
+    // Tab capture keeps the element unmuted: the capture follows its volume (S1).
+    expect(agent.prepared).toBeNull();
+    expect(agent.tab?.stopped).toBe(true);
   });
 
   it('checks a short video with three survey windows', async () => {

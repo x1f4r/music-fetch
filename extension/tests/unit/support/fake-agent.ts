@@ -1,4 +1,6 @@
-import type { MediaSample } from '@/src/audio/media-clock';
+import { PcmFramer } from '@/src/audio/framer';
+import type { MediaClock, MediaSample } from '@/src/audio/media-clock';
+import { Emitter, type AudioSource, type AudioSourceEvent, type PcmChunk } from '@/src/audio/types';
 import type { AgentApi, AgentHello, AgentTopics, PlayerInfo, PrepareOptions } from '@/src/capture/agent-protocol';
 import { AGENT_METHODS } from '@/src/capture/agent-protocol';
 import type { CaptureEvent } from '@/src/capture/types';
@@ -16,7 +18,7 @@ export const THREE_SONG_MIX: Mix = [
 ];
 
 /** Render `[fromMs, toMs)` of the mix at `sampleRate`. */
-function renderMix(mix: Mix, fromMs: number, toMs: number, sampleRate: number): Float32Array {
+export function renderMix(mix: Mix, fromMs: number, toMs: number, sampleRate: number): Float32Array {
   const out = new Float32Array(Math.round(((toMs - fromMs) / 1000) * sampleRate));
   let start = 0;
   for (const [song, length] of mix) {
@@ -33,7 +35,45 @@ function renderMix(mix: Mix, fromMs: number, toMs: number, sampleRate: number): 
  * a synthetic mix in fast simulated time and streams PCM stamped with media time, as the
  * real agent's element capture does.
  */
+/**
+ * Chromium's tab capture as the host sees it: blocks stamped by the host's media clock
+ * from their (virtual) capture time, as `TabCaptureSource` does.
+ */
+export class FakeTabSource implements AudioSource {
+  readonly kind = 'tab' as const;
+  private readonly pcm = new Emitter<PcmChunk>();
+  private readonly events = new Emitter<AudioSourceEvent>();
+  private readonly framer: PcmFramer;
+  stopped = false;
+
+  constructor(clock: MediaClock | null) {
+    this.framer = new PcmFramer((chunk) => this.pcm.emit(chunk), { clock });
+  }
+  async start() {}
+  stop() {
+    this.stopped = true;
+  }
+  onPcm(callback: (chunk: PcmChunk) => void) {
+    return this.pcm.on(callback);
+  }
+  onEvent(callback: (event: AudioSourceEvent) => void) {
+    return this.events.on(callback);
+  }
+  /** Audio the tab played, captured with its first sample at `firstWallMs`. */
+  capture(samples: Float32Array, firstWallMs: number) {
+    if (!this.stopped) this.framer.push(samples, 48_000, firstWallMs);
+  }
+}
+
 export class FakeAgent implements AgentApi {
+  /** Chromium tab capture: the PCM goes through this source instead of the agent's `pcm` topic. */
+  tab: FakeTabSource | null = null;
+  /** Virtual wall clock: real time at start plus simulated playback time. */
+  private wall = performance.timeOrigin + performance.now();
+  /** ± jitter in ms of the clock samples' delivery and of block stamps. */
+  jitterMs = 0;
+  /** Captured audio trails currentTime by this much wall time (tab capture: ~35 ms). */
+  lagMs = 35;
   served: ServedPort<AgentTopics> | null = null;
   positionMs = 0;
   rate = 1;
@@ -140,14 +180,23 @@ export class FakeAgent implements AgentApi {
         this.ads = this.ads.filter(([a]) => a !== end - (end - from) && !(from >= a && from < end));
         this.emit('event', { type: 'ad', showing: false } satisfies CaptureEvent);
       } else {
-        if (this.capturing) {
+        const wallStart = this.wall;
+        this.wall += (to - from) / this.rate;
+        if (this.tab) {
+          // 2048-frame blocks, stamped when the audio thread processed them (plus jitter).
+          const samples = renderMix(this.mix, from, to, 48_000 / this.rate);
+          for (let i = 0; i < samples.length; i += 2048) {
+            const jitter = (Math.random() * 2 - 1) * this.jitterMs;
+            this.tab.capture(samples.slice(i, i + 2048), wallStart + this.lagMs + (i / 48_000) * 1000 + jitter);
+          }
+        } else if (this.capturing) {
           // The capture runs at 48 kHz; at `rate` the media's audio arrives sped up.
           const samples = renderMix(this.mix, from, to, 48_000 / this.rate);
-          this.emit('pcm', { samples, sampleRate: 48_000, speed: this.rate, mediaMs: from, wallMs: Date.now(), continuous: this.seq > 0, seq: this.seq++ });
+          this.emit('pcm', { samples, sampleRate: 48_000, speed: this.rate, mediaMs: from, wallMs: wallStart, continuous: this.seq > 0, seq: this.seq++ });
         }
         this.positionMs = to;
       }
-      const sample: MediaSample = { wallMs: performance.timeOrigin + performance.now(), mediaMs: this.positionMs, rate: this.rate, advancing: this.positionMs < this.durationMs };
+      const sample: MediaSample = { wallMs: this.wall, mediaMs: this.positionMs, rate: this.rate, advancing: this.positionMs < this.durationMs };
       this.emit('clock', sample);
       if (this.positionMs >= this.durationMs) {
         this.paused = true;

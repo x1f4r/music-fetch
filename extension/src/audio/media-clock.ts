@@ -41,6 +41,12 @@ export interface MediaClockOptions {
   anchorOnly?: boolean;
   /** Default 1500 ms of media. */
   driftLimitMs?: number;
+  /**
+   * Disagreements beyond the tolerance are taken for jitter (the frame count wins) until
+   * this many blocks in a row agree that the media jumped. Real seeks, ads and stalls
+   * come with `restart()`; this catches the jumps nobody reported. Default 3.
+   */
+  confirmBlocks?: number;
 }
 
 export interface Stamp {
@@ -66,6 +72,9 @@ export class MediaClock {
   dropped = 0;
   /** Runs started (the first block and every discontinuity). */
   runs = 0;
+  /** Recent disagreements between the frame count and the page's clock (signed, media ms). */
+  private outliers: number[] = [];
+  private readonly confirmBlocks: number;
 
   constructor(options: MediaClockOptions) {
     this.lagMs = options.lagMs;
@@ -73,12 +82,16 @@ export class MediaClock {
     this.tolerancePerRateMs = options.tolerancePerRateMs ?? 5;
     this.anchorOnly = options.anchorOnly ?? false;
     this.driftLimitMs = options.driftLimitMs ?? 1500;
+    this.confirmBlocks = options.confirmBlocks ?? 3;
   }
 
   /** A `currentTime` sample from the page. Samples older than the latest are ignored. */
   observe(sample: MediaSample): void {
     if (this.latest && sample.wallMs < this.latest.wallMs) return;
-    if (!sample.advancing || (this.latest && sample.rate !== this.latest.rate)) this.nextMs = null;
+    if (!sample.advancing || (this.latest && sample.rate !== this.latest.rate)) {
+      this.nextMs = null;
+      this.outliers = [];
+    }
     this.latest = sample;
   }
 
@@ -88,6 +101,7 @@ export class MediaClock {
    */
   restart(wallMs: number): void {
     this.nextMs = null;
+    this.outliers = [];
     this.restartedAt = wallMs;
   }
 
@@ -114,7 +128,26 @@ export class MediaClock {
     let continuous = false;
     if (this.nextMs !== null) {
       const limit = this.anchorOnly ? this.driftLimitMs : this.toleranceMs + this.tolerancePerRateMs * rate;
-      if (Math.abs(observed - this.nextMs) <= limit) {
+      const error = observed - this.nextMs;
+      const errors = this.outliers;
+      errors.push(error);
+      if (errors.length > WINDOW) errors.shift();
+      const recent = errors.slice(-this.confirmBlocks);
+      if (Math.abs(error) <= limit && Math.abs(median(errors)) <= limit) {
+        mediaMs = this.nextMs;
+        continuous = true;
+      } else if (recent.length === this.confirmBlocks && recent.every((e) => Math.abs(e) > BIG_JUMP_MS) && Math.max(...recent) - Math.min(...recent) <= BIG_JUMP_MS / 4) {
+        // The media jumped by seconds and nobody said so (a seek, a skipped ad): follow it now.
+        mediaMs = this.nextMs + median(recent);
+        this.outliers = [];
+      } else if (errors.length >= MIN_WINDOW && Math.abs(median(errors)) > limit) {
+        // The frames drifted from the page's clock: re-anchor by the median disagreement,
+        // which jitter from a busy page can't move far (a single sample can't either).
+        const shift = median(errors);
+        mediaMs = this.nextMs + shift;
+        this.outliers = errors.map((e) => e - shift);
+      } else {
+        // Late or early samples are jitter, not a jump: keep counting frames.
         mediaMs = this.nextMs;
         continuous = true;
       }
@@ -124,4 +157,18 @@ export class MediaClock {
     this.nextMs = mediaMs + (frames / sampleRate) * 1000 * rate;
     return { mediaMs, rate, continuous };
   }
+}
+
+
+/** Blocks of history for the drift estimate (about 0.6 s at 2048 frames, 48 kHz). */
+const WINDOW = 15;
+const MIN_WINDOW = 7;
+/** Media ms beyond which three agreeing blocks re-anchor at once. */
+const BIG_JUMP_MS = 2000;
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
