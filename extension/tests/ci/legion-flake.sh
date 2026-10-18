@@ -6,6 +6,9 @@
 #
 #   tests/ci/legion-flake.sh [runs] [stage ...]      default stages: e2e runtime
 #
+# MF_FLAKE_FIRST=<n> continues a measurement at run n (the summary keeps earlier runs);
+# MF_FLAKE_MAX_LOAD (default 20) is the 1-minute load above which a run waits (up to 30 min).
+#
 # Logs: ~/mf/logs/ext-ui-flake/run-<n>.log; one line per run in summary.tsv
 # (run, exit code, seconds, load at start, failed tests). Run it as a user unit:
 #   systemd-run --user --collect --unit=mf-ext-ui-flake -p StandardOutput=file:$HOME/mf/logs/ext-ui-flake.log \
@@ -16,6 +19,8 @@ export PATH="$HOME/mf/tools/node-24/bin:$PATH"
 cd "$(dirname "$0")/../.."
 
 runs="${1:-20}"
+first="${MF_FLAKE_FIRST:-1}"
+max_load="${MF_FLAKE_MAX_LOAD:-20}"
 shift || true
 stages=("$@")
 [[ ${#stages[@]} -gt 0 ]] || stages=(e2e runtime)
@@ -49,7 +54,7 @@ wait_for_room() {
   for _ in $(seq 1 30); do
     load=$(cut -d' ' -f1 /proc/loadavg)
     free=$(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo)
-    if awk -v l="$load" 'BEGIN { exit !(l <= 20) }' && (( free >= 6 )); then return 0; fi
+    if awk -v l="$load" -v m="$max_load" 'BEGIN { exit !(l <= m) }' && (( free >= 6 )); then return 0; fi
     echo "busy (load $load, $free GB free): waiting"
     sleep 60
   done
@@ -57,7 +62,7 @@ wait_for_room() {
 
 nice -n 10 tests/ci/run.sh build >"$logs/build.log" 2>&1 || { echo "build failed"; exit 1; }
 [[ -f "$logs/summary.tsv" ]] || printf 'run\texit\tseconds\tload\tfailed\n' >"$logs/summary.tsv"
-for n in $(seq 1 "$runs"); do
+for n in $(seq "$first" "$runs"); do
   wait_for_room
   load=$(cut -d' ' -f1 /proc/loadavg)
   start=$(date +%s)
