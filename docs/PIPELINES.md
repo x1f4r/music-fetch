@@ -471,10 +471,18 @@ matcher, which still searches every song.
 5. Songs: each query window's best similarity per song, summed over query windows (or
    the best one, `Pooling::Max`); the top `songs` become `EncoderHit`s with their best
    window pair.
-6. `EncoderHit::hint` → `matcher::search_with_hints` / `candidates_with_hints`: one
-   placement per (tempo, shift) of the budget, where the two windows' centres meet, unless
-   retrieval already placed the track there. Hinted placements skip the pool cut, carry
-   no votes and compete in the quick stage like any other placement.
+6. `EncoderHit::hint` → `matcher::search_with_hints` / `candidates_with_hints` with the
+   budget's `HintOptions`: one placement per (tempo, shift) of `offsets`, where the two
+   windows' centres meet, unless retrieval already placed the track there. Hinted
+   placements skip the pool cut, carry no votes and compete in the quick stage like any
+   other placement. `votes` adds a retrieval pass restricted to the hinted tracks so
+   their placements carry index votes (about +110 ms per search on an M4 core; off in
+   every budget until retrieval can do it in its first pass); `reserve` sends the first
+   N hits to the full rerank even when the quick stage cuts them (off).
+
+Measured on the held-out CHAD half with the c2k model (popularity prior off): top-1
+15.3 → 17.1 %, top-10 19.1 → 22.2 % with the Android budget; the encoder stage itself
+takes about 4 ms per search on an M4 core and the extra rerank about 11 ms.
 
 Budgets (`EncoderBudget`):
 
