@@ -8,6 +8,7 @@ import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ListenMode
 import app.musicfetch.core.NoMatchReason
 import app.musicfetch.core.Track
+import app.musicfetch.platform.GoogleSongSearch
 import app.musicfetch.platform.ListenSource
 import app.musicfetch.ui.listen.Suggestion.HumAgain
 import app.musicfetch.ui.listen.Suggestion.HumIt
@@ -38,11 +39,29 @@ class HumRulesTest {
     }
 
     @Test
+    fun `only long shots say not sure yet`() {
+        assertTrue(onlyLongShots(listOf(candidate("Believe", 0.04f, CandidateTier.LONG_SHOT))))
+        assertFalse(onlyLongShots(listOf(candidate("Africa", 0.5f, CandidateTier.POSSIBLE))))
+        // Before the first search there is nothing to be unsure about.
+        assertFalse(onlyLongShots(emptyList()))
+    }
+
+    @Test
     fun `Google is offered unless the answer is Strong`() {
         assertFalse(offersGoogle(listOf(candidate("Billie Jean", 0.9f, CandidateTier.STRONG))))
         assertTrue(offersGoogle(listOf(candidate("Africa", 0.5f, CandidateTier.POSSIBLE))))
         assertTrue(offersGoogle(listOf(candidate("Believe", 0.04f, CandidateTier.LONG_SHOT))))
         assertTrue(offersGoogle(emptyList()))
+    }
+
+    @Test
+    fun `only a Google app with hum to search is offered`() {
+        assertTrue(GoogleSongSearch.hasHumToSearch("16.9.50.ve.x86_64"))
+        assertTrue(GoogleSongSearch.hasHumToSearch("12.0.17.21.arm64"))
+        // The 2019 app on the Android 10 emulator image opens the old Sound Search.
+        assertFalse(GoogleSongSearch.hasHumToSearch("9.91.13.21.x86"))
+        assertFalse(GoogleSongSearch.hasHumToSearch(null))
+        assertFalse(GoogleSongSearch.hasHumToSearch("beta"))
     }
 
     @Test
