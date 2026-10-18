@@ -18,8 +18,9 @@ out="dist/melody-index"
 mkdir -p "$out"
 cp "$index" "$out/melody-index.mfi"
 size() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1"; }
+sha256() { if command -v shasum >/dev/null; then shasum -a 256 "$1"; else sha256sum "$1"; fi | cut -d' ' -f1; }
 bytes=$(size "$out/melody-index.mfi")
-sha=$(shasum -a 256 "$out/melody-index.mfi" | cut -d' ' -f1)
+sha=$(sha256 "$out/melody-index.mfi")
 mf="${MF:-core/target/release/mf}"
 info="$("$mf" index info "$out/melody-index.mfi")"
 songs=$(awk '/^songs/{print $2}' <<<"$info")
@@ -45,7 +46,7 @@ if [[ -n "$encoder" ]]; then
   esac
   ename=$(basename "$encoder")
   cp "$encoder" "$out/$ename"
-  extra=", \"encoder\": {\"url\": \"$base/$ename\", \"sha256\": \"$(shasum -a 256 "$out/$ename" | cut -d' ' -f1)\", \"bytes\": $(size "$out/$ename"), \"format\": $eformat, \"min_core\": \"$emin\"}"
+  extra=", \"encoder\": {\"url\": \"$base/$ename\", \"sha256\": \"$(sha256 "$out/$ename")\", \"bytes\": $(size "$out/$ename"), \"format\": $eformat, \"min_core\": \"$emin\"}"
 fi
 cat > "$out/manifest.json" <<JSON
 {"version": "$version", "url": "$base/melody-index.mfi", "sha256": "$sha", "bytes": $bytes, "songs": $songs, "min_core": "$min_core", "format": $format$extra}
