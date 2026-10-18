@@ -6,7 +6,9 @@
 //! input length), so the front end runs here and the graph is cut at its
 //! log-spectrogram features. The CNN then accepts any number of frames, and since
 //! its output for a frame does not depend on where the frame sits in the input,
-//! chunked, parallel and streaming runs all produce bit-identical frames.
+//! chunked, parallel and streaming runs all produce the same frames: bit-identical
+//! on arm64 and AVX2, within float rounding with AVX-512, where tract picks its
+//! matmul kernels by tensor shape and so by the number of frames in a run.
 //!
 //! Frame `f` is centered on sample `256 f`. Its features need samples up to
 //! `256 f + 1024`; the CNN looks 7 frames to either side, so a frame is final once
