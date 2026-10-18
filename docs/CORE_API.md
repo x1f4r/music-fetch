@@ -60,7 +60,7 @@ This document describes the behaviour the types cannot express.
 - While the user hums (`ListenMode::Hum`, or `Auto` after `Notice::ImpressionDetected`)
   the core searches the melody index every 2 s (4 s in low-power mode) once 4 s are
   voiced. With `auto_stop` the session stops by itself as soon as an answer is clear (a
-  top score ≥ 0.9 that two searches agree on), after a phrase (≥ 8 s voiced, then a
+  top score ≥ 0.8 that two searches in a row agree on), after a phrase (≥ 8 s voiced, then a
   1.5 s pause), after a 5 s pause, or at 30 s. Without it, only `finish()` and the 30 s
   limit stop it.
 - `live_candidates: true` makes each search's melody candidates arrive as
@@ -71,8 +71,10 @@ This document describes the behaviour the types cannot express.
 - `Notice::KeepGoing` means the hum is too short to answer from: the core sends it once
   during a pause before 4 s are voiced, and when capture ends with less than 4 s voiced
   (then the outcome is `NoMatch(TooShort)` rather than a guess).
-- Candidate tiers: `Strong` (score ≥ 0.75) melody answers are right about 9 times in
-  10 on real hums; `Possible` (≥ 0.35) about two in three; `LongShot` below that.
+- Candidate tiers: melody scores read as the chance the answer is right. On real hums
+  (CHAD, 58k songs) `Strong` (≥ 0.75) answers are right about 19 times in 20, `Possible`
+  (0.35–0.75) about 6 in 10, `LongShot` rarely; interim lists while humming are
+  calibrated the same way.
 
 What the apps need to adopt progressive results (until then they keep today's flow; the
 early confident stop already shortens their sessions):

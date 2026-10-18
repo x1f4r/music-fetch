@@ -133,12 +133,13 @@ pub struct Trace {
 /// [`utility`]); a "none of these" option has utility MODEL_NONE + MODEL_NONE_QUERY ·
 /// [`QueryTraits::model_inputs`], so short, narrow or simple hums are less
 /// conclusive; the softmax probability goes through Platt scaling σ(a + b·logit p)
-/// with CALIBRATION = (a, b), fitted on real hums.
+/// with CALIBRATION = (a, b), fitted on real hums, whole and cut short as the
+/// progressive search sees them.
 const MODEL_WEIGHTS: [f32; 10] =
-    [17.2829, -7.6651, -9.5203, -5.8884, -3.3172, -21.2018, -2.8179, 0.1214, -0.2713, 0.6837];
-const MODEL_NONE: f32 = -24.4657;
-const MODEL_NONE_QUERY: [f32; 3] = [1.5891, -6.0278, -7.7223];
-const CALIBRATION: (f32, f32) = (-0.6438, 0.9107);
+    [13.5952, -9.2749, -8.8543, -5.5415, -4.2559, -16.3023, -2.3667, 0.1322, -0.0354, 1.2386];
+const MODEL_NONE: f32 = -24.0149;
+const MODEL_NONE_QUERY: [f32; 3] = [0.7509, -6.0958, -8.1592];
+const CALIBRATION: (f32, f32) = (-0.7345, 0.9035);
 
 /// Retrieval tempos (query duration over reference duration), log-spaced.
 const TEMPOS: usize = 11;
