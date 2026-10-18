@@ -11,6 +11,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -25,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +57,7 @@ import androidx.navigation3.runtime.rememberDecoratedNavEntries
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
+import androidx.window.core.layout.WindowSizeClass
 import app.musicfetch.R
 import app.musicfetch.appGraph
 import app.musicfetch.ui.common.AppSnackbar
@@ -181,8 +184,19 @@ fun AppNavigation(navigator: Navigator, listenStack: NavBackStack<NavKey>, libra
     val snackbar = remember { AppSnackbar(SnackbarHostState(), scope) }
     DeletionUndo(snackbar)
 
-    // Short navigation bar on phones, wide rail from 600 dp (docs/design/DESIGN.md §3.2).
-    val suiteType = NavigationSuiteScaffoldDefaults.navigationSuiteType(currentWindowAdaptiveInfoV2())
+    // Short navigation bar on phones, wide rail from 600 dp (docs/design/DESIGN.md §3.2). Phones
+    // in landscape get the rail too: height is what they lack, and a bar takes 88 dp of it.
+    val adaptiveInfo = currentWindowAdaptiveInfoV2()
+    val sizeClass = adaptiveInfo.windowSizeClass
+    val suiteType = if (
+        sizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND) &&
+        !sizeClass.isHeightAtLeastBreakpoint(WindowSizeClass.HEIGHT_DP_MEDIUM_LOWER_BOUND) &&
+        !adaptiveInfo.windowPosture.isTabletop
+    ) {
+        NavigationSuiteType.WideNavigationRailCollapsed
+    } else {
+        NavigationSuiteScaffoldDefaults.navigationSuiteType(adaptiveInfo)
+    }
     CompositionLocalProvider(LocalAppSnackbar provides snackbar) {
         NavigationSuiteScaffold(
             layoutType = suiteType,
@@ -213,7 +227,15 @@ fun AppNavigation(navigator: Navigator, listenStack: NavBackStack<NavKey>, libra
                 )
             },
         ) {
-            Box(Modifier.fillMaxSize()) {
+            // A rail already keeps clear of a cutout on its side; screens pad only the other one.
+            val rail = suiteType == NavigationSuiteType.WideNavigationRailCollapsed ||
+                suiteType == NavigationSuiteType.WideNavigationRailExpanded ||
+                suiteType == NavigationSuiteType.NavigationRail
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .then(if (rail) Modifier.consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Start)) else Modifier),
+            ) {
                 val entries: List<NavEntry<NavKey>> = if (tab == Tab.Listen) listenEntries else libraryEntries
                 NavDisplay(
                     entries = entries,

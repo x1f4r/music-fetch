@@ -12,6 +12,8 @@ import app.musicfetch.ui.listen.Suggestion.TryAgain
 import app.musicfetch.ui.listen.Suggestion.TypeLyric
 import app.musicfetch.ui.listen.Suggestion.UseMicrophone
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -89,5 +91,30 @@ class StageRulesTest {
             assertTrue(slots.actionTop + 40.dp <= height.dp)
             assertTrue(slots.buttonScale in 0.7f..1f)
         }
+    }
+
+    @Test
+    fun `wide short stages put the button beside a column`() {
+        // Phones in landscape beside the navigation rail, with the recent card shown.
+        for ((width, height) in listOf(496 to 184, 600 to 240, 818 to 211)) {
+            val slots = stageSlots(height.dp, width.dp)
+            val side = slots.side
+            assertNotNull("side by side at $width × $height", side)
+            side!!
+            val radius = 80.dp * slots.buttonScale
+            assertTrue("button fits at $height", slots.buttonCenter - radius >= 8.dp && slots.buttonCenter + radius <= height.dp - 8.dp)
+            assertTrue("button clear of the column at $width", side.buttonCenter + radius <= side.columnStart)
+            assertTrue(side.columnStart + side.columnWidth <= width.dp)
+            assertTrue(slots.bandTop >= 8.dp && slots.bandHeight >= 48.dp)
+            assertTrue(slots.bandTop + slots.bandHeight <= slots.stateTop)
+            assertTrue(slots.stateTop + 24.dp <= slots.actionTop)
+            assertTrue(slots.actionTop + 40.dp <= height.dp)
+        }
+    }
+
+    @Test
+    fun `narrow and tall stages stay stacked`() {
+        assertNull(stageSlots(352.dp, 360.dp).side)
+        assertNull(stageSlots(600.dp, 1200.dp).side)
     }
 }

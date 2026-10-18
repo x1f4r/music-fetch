@@ -34,12 +34,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -313,7 +315,15 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
         )
     }
 
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+    // Beside a navigation rail (landscape, wide screens) nothing else keeps the recent card
+    // clear of the gesture handle; a navigation bar consumes that inset. The keyboard still
+    // covers the stage rather than squeezing it.
+    Column(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+            .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom)),
+    ) {
         LinkField(
             enabled = !state.isActive,
             onSubmit = { text ->
@@ -328,16 +338,19 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
             onFocus = viewModel::prepareForLink,
             modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp),
         )
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val slots = stageSlots(maxHeight, maxWidth)
             ClipboardSuggestion(
                 visible = fieldEmpty && !state.isActive && link !is LinkStage.Running,
                 onIdentify = { url ->
                     askNotificationsOnce()
                     viewModel.analyze(url)
                 },
-                modifier = Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 4.dp),
+                // Beside the button on wide stages, above the (idle) band.
+                modifier = Modifier.align(Alignment.TopStart).padding(start = slots.side?.columnStart ?: 16.dp, top = 4.dp),
             )
             Stage(
+                slots = slots,
                 state = state,
                 viewModel = viewModel,
                 activeSource = activeSource,
@@ -421,6 +434,7 @@ private const val TILE_OFFER_IDLE_MS = 1_000L
 
 @Composable
 private fun Stage(
+    slots: StageSlots,
     state: ListenState,
     viewModel: ListenViewModel,
     activeSource: ListenSource,
@@ -478,23 +492,24 @@ private fun Stage(
     val stateLine = stateLine(state, activeSource, link, linkState, linkActive, micOff, phonePrePrompt)
     val stateActive = state.isActive || linkActive
 
-    BoxWithConstraints(modifier) {
-        val slots = stageSlots(maxHeight)
+    val side = slots.side
+    Box(modifier) {
         val pitchLabel = stringResource(R.string.your_pitch)
         val pitchValue = pluralStringResource(R.plurals.seconds_hummed, voicedWhole, voicedWhole)
-        // Trace band: (width − 48) × 96 above the button; shorter on short stages.
+        // Trace band: (width − 48) × 96 above the button; shorter on short stages, in the column
+        // beside the button on wide ones.
         AnimatedVisibility(
             visible = humming,
             enter = fadeIn(tween(150)),
             exit = fadeOut(tween(150)),
-            modifier = Modifier.align(Alignment.TopCenter).offset(y = slots.bandTop),
+            modifier = Modifier.align(Alignment.TopStart).stageSlot(slots, slots.bandTop),
         ) {
             PitchTrace(
                 ring = viewModel.signal.pitch,
                 color = MaterialTheme.colorScheme.primary,
                 active = state.isCapturing,
                 modifier = Modifier
-                    .padding(horizontal = 24.dp)
+                    .padding(horizontal = if (side == null) 24.dp else 0.dp)
                     .fillMaxWidth()
                     .height(slots.bandHeight)
                     .semantics {
@@ -523,11 +538,16 @@ private fun Stage(
             size = buttonSize,
             lineAmplitude = if (state.impression) 0.5f else 1f,
             backProgress = backProgress,
-            // The button's box includes its halo (1.56 × the button).
-            modifier = Modifier.align(Alignment.TopCenter).offset(y = slots.buttonCenter - buttonSize * 0.78f).tag("listen.button"),
+            // The button's box includes its halo (1.56 × the button), which may be taller than a
+            // short stage: measured unbounded so the button stays centred on its slot.
+            modifier = if (side == null) {
+                Modifier.align(Alignment.TopCenter).offset(y = slots.buttonCenter - buttonSize * 0.78f)
+            } else {
+                Modifier.align(Alignment.TopStart).offset(x = side.buttonCenter - buttonSize * 0.78f, y = slots.buttonCenter - buttonSize * 0.78f)
+            }.wrapContentSize(Alignment.TopCenter, unbounded = true).tag("listen.button"),
         )
         // State line: 24 dp tall (two lines at most).
-        Box(Modifier.align(Alignment.TopCenter).offset(y = slots.stateTop).fillMaxWidth().padding(horizontal = 24.dp)) {
+        Box(Modifier.align(Alignment.TopStart).stageSlot(slots, slots.stateTop).padding(horizontal = if (side == null) 24.dp else 0.dp)) {
             AnimatedContent(
                 targetState = stateLine,
                 transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
@@ -548,7 +568,7 @@ private fun Stage(
         // (docs/design/DESIGN.md §5.4): finished, failed and offline listens keep the toggles,
         // so switching how to listen is one tap; the button repeats the selected source.
         Box(
-            Modifier.align(Alignment.TopCenter).offset(y = slots.actionTop).fillMaxWidth().heightIn(min = 40.dp),
+            Modifier.align(Alignment.TopStart).stageSlot(slots, slots.actionTop).heightIn(min = 40.dp),
             contentAlignment = Alignment.Center,
         ) {
             when {
@@ -593,6 +613,10 @@ private fun Stage(
         }
     }
 }
+
+/** A slot [top] below the stage's top edge: across the stage, or in the column beside the button. */
+private fun Modifier.stageSlot(slots: StageSlots, top: Dp): Modifier =
+    slots.side?.let { offset(x = it.columnStart, y = top).width(it.columnWidth) } ?: offset(y = top).fillMaxWidth()
 
 @Composable
 private fun produceVoicedSeconds(viewModel: ListenViewModel, active: Boolean): androidx.compose.runtime.State<Float> {

@@ -55,6 +55,8 @@ fun sourceOf(kind: SessionKind): ListenSource? = when (kind) {
  * top of a stage [height] tall. Tall stages use the spec positions around the centre. Short ones
  * (budget phones with three-button navigation, 360 × 640 dp) anchor the action row near the
  * bottom and shrink the button and the trace band so the band never reaches the link field.
+ * Short and wide ones (phones in landscape) put the button on the start side and the band, the
+ * state line and the actions in a column beside it ([side]).
  */
 data class StageSlots(
     val bandTop: Dp,
@@ -64,6 +66,16 @@ data class StageSlots(
     val buttonScale: Float,
     val stateTop: Dp,
     val actionTop: Dp,
+    val side: SideSlots? = null,
+)
+
+/** Horizontal slots of a side-by-side stage, from its start edge. */
+data class SideSlots(
+    /** Centre of the listen button. */
+    val buttonCenter: Dp,
+    /** The column holding the band, the state line and the actions. */
+    val columnStart: Dp,
+    val columnWidth: Dp,
 )
 
 private val BUTTON = 160.dp
@@ -71,12 +83,13 @@ private val BAND = 96.dp
 private val MIN_BAND = 48.dp
 private val MARGIN = 8.dp
 
-fun stageSlots(height: Dp): StageSlots {
+fun stageSlots(height: Dp, width: Dp = 0.dp): StageSlots {
     val c = height / 2
     // Spec: band bottom at c − 144, button centre c − 40, state line at c + 60, actions at c + 124.
     if (c - 144.dp - BAND >= MARGIN) {
         return StageSlots(c - 144.dp - BAND, BAND, c - 40.dp, 1f, c + 60.dp, c + 124.dp)
     }
+    if (width >= 480.dp && width >= height * 1.6f) return sideBySide(height, width)
     val actionTop = height - MARGIN - 40.dp
     val stateTop = actionTop - 64.dp
     val buttonBottom = stateTop - 20.dp
@@ -94,3 +107,28 @@ fun stageSlots(height: Dp): StageSlots {
 }
 
 private const val MIN_SCALE = 0.7f
+
+/** Below the band in a side column: 12 dp gap, the state line's 64 dp slot, the 40 dp action row. */
+private val SIDE_REST = 116.dp
+
+/**
+ * The button centred on the start side, as large as the height allows; beside it the band on
+ * top, then the state line and the actions, centred as a group. The band keeps its place while
+ * idle so nothing moves when humming starts.
+ */
+private fun sideBySide(height: Dp, width: Dp): StageSlots {
+    val scale = ((height - MARGIN * 2) / BUTTON).coerceIn(MIN_SCALE, 1f)
+    val band = (height - MARGIN * 2 - SIDE_REST).coerceIn(MIN_BAND, BAND)
+    val top = ((height - band - SIDE_REST) / 2).coerceAtLeast(MARGIN)
+    val stateTop = top + band + 12.dp
+    val columnStart = width * 0.46f
+    return StageSlots(
+        bandTop = top,
+        bandHeight = band,
+        buttonCenter = height / 2,
+        buttonScale = scale,
+        stateTop = stateTop,
+        actionTop = stateTop + 64.dp,
+        side = SideSlots(buttonCenter = width * 0.28f, columnStart = columnStart, columnWidth = width - columnStart - 24.dp),
+    )
+}

@@ -5,11 +5,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ButtonShapes
@@ -71,11 +76,13 @@ internal fun ListenAgainDock(modifier: Modifier = Modifier) {
         Triple(ListenSource.Hum, R.string.source_hum, 0),
     )
     val colors = MaterialTheme.colorScheme
-    // No bar of its own: content scrolling beneath fades out above the buttons.
+    // No bar of its own: content scrolling beneath fades out above the buttons. Beside a
+    // navigation rail the buttons stay clear of the gesture handle (a bar consumes it otherwise).
     Box(
         modifier
             .fillMaxWidth()
             .background(Brush.verticalGradient(0f to colors.surface.copy(alpha = 0f), 0.3f to colors.surface))
+            .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
             .onSizeChanged { snackbar.bottomInset = with(density) { it.height.toDp() } },
     ) {
         BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {

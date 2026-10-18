@@ -7,15 +7,18 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -72,6 +75,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.musicfetch.R
+import app.musicfetch.core.Track
 import app.musicfetch.ui.common.Formatters
 import app.musicfetch.ui.common.PreviewPlayer
 import app.musicfetch.ui.common.tag
@@ -122,12 +126,19 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
             contentWindowInsets = WindowInsets(0),
         ) { padding ->
             BoxWithConstraints(Modifier.fillMaxSize()) {
+                val room = maxHeight - padding.calculateTopPadding() - padding.calculateBottomPadding()
+                // Phones in landscape: artwork beside the title, so the hero fits between the bar
+                // and the dock.
+                val sideBySide = maxWidth >= 560.dp && maxHeight < 480.dp
                 // Short screens and large fonts: the artwork gives way, so the "Open in" button
                 // is clear of the bottom (and of the "Listen again" dock) at first sight. The
                 // rest of the hero is measured once laid out; until then it is estimated.
-                val room = maxHeight - padding.calculateTopPadding() - padding.calculateBottomPadding()
                 val heroRest = measuredRest ?: (if (view.context != null) 290.dp else 258.dp) * density.fontScale.coerceAtLeast(1f)
-                val artworkSize = (room - heroRest - 8.dp).coerceIn(120.dp, 240.dp)
+                val artworkSize = if (sideBySide) {
+                    (room - 32.dp).coerceIn(120.dp, 240.dp)
+                } else {
+                    (room - heroRest - 8.dp).coerceIn(120.dp, 240.dp)
+                }
                 // Wash: primaryContainer → transparent, 440 dp, 55 %.
                 Box(
                     Modifier
@@ -137,121 +148,51 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
                 )
                 val reveal = remember(track.identityKey) { Animatable(0f) }
                 LaunchedEffect(track.identityKey) { reveal.animateTo(1f, spring(0.8f, 380f)) }
+                val playing = preview.url != null && preview.url == track.previewUrl
+                val onTitlePlaced = { bottom: Float -> titleBottom = bottom }
                 Column(
                     Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
                         .padding(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding())
-                        // Landscape with a cutout: keep the hero clear of it.
+                        // Landscape with a cutout: keep the hero clear of it. Without the dock,
+                        // beside a navigation rail: clear of the gesture handle.
                         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                        .then(if (listenAgain) Modifier else Modifier.windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom)))
                         .padding(horizontal = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Spacer(Modifier.height(16.dp))
-                    val playing = preview.url != null && preview.url == track.previewUrl
-                    val previewLabel = stringResource(if (playing) R.string.result_pause_preview else R.string.result_play_preview)
-                    Box(
-                        Modifier
-                            .graphicsLayer {
-                                val p = reveal.value
-                                alpha = p
-                                scaleX = 0.92f + 0.08f * p
-                                scaleY = 0.92f + 0.08f * p
+                    if (sideBySide) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(32.dp, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            HeroArtwork(track.artworkUrl, track.previewUrl, artworkSize, playing, preview.progress) { reveal.value }
+                            Column(Modifier.weight(1f, fill = false).widthIn(max = 440.dp)) {
+                                HeroText(track, view.context, reveal.value, TextAlign.Start, onTitlePlaced)
+                                Spacer(Modifier.height(22.dp))
+                                preference?.let { OpenInSplitButton(track, it) } ?: Spacer(Modifier.height(56.dp))
                             }
-                            .shadow(16.dp, RoundedCornerShape(20.dp))
-                            .then(
-                                if (track.previewUrl != null) {
-                                    Modifier
-                                        .clickable(role = Role.Button) { track.previewUrl?.let(PreviewPlayer::toggle) }
-                                        .semantics { contentDescription = previewLabel }
-                                        .tag("result.preview")
-                                } else {
-                                    Modifier
-                                },
-                            )
-                            .drawWithContent {
-                                drawContent()
-                                if (playing) {
-                                    val stroke = 3.dp.toPx()
-                                    val path = Path().apply {
-                                        addRoundRect(
-                                            RoundRect(
-                                                stroke / 2,
-                                                stroke / 2,
-                                                size.width - stroke / 2,
-                                                size.height - stroke / 2,
-                                                CornerRadius(20.dp.toPx()),
-                                            ),
-                                        )
-                                    }
-                                    val measure = PathMeasure().apply { setPath(path, false) }
-                                    val segment = Path()
-                                    measure.getSegment(0f, measure.length * preview.progress, segment, true)
-                                    drawPath(segment, colors.primary, style = Stroke(stroke, cap = StrokeCap.Round))
-                                }
-                            },
-                    ) {
-                        Artwork(track.artworkUrl, artworkSize, corner = 20.dp, contentDescription = stringResource(R.string.result_artwork))
-                        // The artwork plays the 30 s preview; the badge says so.
-                        if (track.previewUrl != null) PreviewBadge(playing, Modifier.align(Alignment.BottomEnd).padding(12.dp))
-                    }
-                    Spacer(Modifier.height(24.dp))
-                    Staggered(reveal.value, 0) {
-                        Text(
-                            track.title,
-                            style = MaterialTheme.typography.displaySmallEmphasized,
-                            textAlign = TextAlign.Center,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .widthIn(max = 520.dp)
-                                .onGloballyPositioned { titleBottom = it.boundsInRoot().bottom },
-                        )
-                    }
-                    Spacer(Modifier.height(2.dp))
-                    Staggered(reveal.value, 1) {
-                        Text(track.artist, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-                    }
-                    val meta = listOfNotNull(track.album?.takeIf { it.isNotBlank() }, track.releaseYear?.toString()).joinToString(" · ")
-                    if (meta.isNotEmpty()) {
-                        Spacer(Modifier.height(2.dp))
-                        Staggered(reveal.value, 2) {
-                            Text(
-                                meta,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = colors.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                            )
                         }
-                    }
-                    view.context?.let { context ->
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            when (context) {
-                                is SessionContext.File -> stringResource(R.string.result_context_file, context.name)
-                                is SessionContext.Link -> context.atMs?.let {
-                                    stringResource(R.string.result_context_link, Formatters.clock(it), context.title)
-                                } ?: stringResource(R.string.result_context_link_no_time, context.title)
+                    } else {
+                        HeroArtwork(track.artworkUrl, track.previewUrl, artworkSize, playing, preview.progress) { reveal.value }
+                        Spacer(Modifier.height(24.dp))
+                        HeroText(track, view.context, reveal.value, TextAlign.Center, onTitlePlaced)
+                        Spacer(Modifier.height(22.dp))
+                        Box(
+                            Modifier.onGloballyPositioned { coordinates ->
+                                val bottom = with(density) { (coordinates.positionInParent().y + coordinates.size.height).toDp() }
+                                measuredRest = bottom - artworkSize
                             },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Spacer(Modifier.height(22.dp))
-                    Box(
-                        Modifier.onGloballyPositioned { coordinates ->
-                            val bottom = with(density) { (coordinates.positionInParent().y + coordinates.size.height).toDp() }
-                            measuredRest = bottom - artworkSize
-                        },
-                    ) {
-                        preference?.let { OpenInSplitButton(track, it) } ?: Spacer(Modifier.height(56.dp))
+                        ) {
+                            preference?.let { OpenInSplitButton(track, it) } ?: Spacer(Modifier.height(56.dp))
+                        }
                     }
                     lyrics?.let { text ->
                         Spacer(Modifier.height(40.dp))
-                        Column(Modifier.fillMaxWidth()) {
+                        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth()) {
                             Text(stringResource(R.string.result_lyrics), style = MaterialTheme.typography.titleSmall)
                             Spacer(Modifier.height(8.dp))
                             Text(text.plain.trim(), style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
@@ -261,6 +202,103 @@ internal fun ResultContent(view: SessionView.Result, viewModel: SessionViewModel
                 }
             }
         }
+    }
+}
+
+/** The artwork; it plays the 30 s preview, a ring drawing its progress. */
+@Composable
+private fun HeroArtwork(artworkUrl: String?, previewUrl: String?, artworkSize: Dp, playing: Boolean, progress: Float, reveal: () -> Float) {
+    val colors = MaterialTheme.colorScheme
+    val previewLabel = stringResource(if (playing) R.string.result_pause_preview else R.string.result_play_preview)
+    Box(
+        Modifier
+            .graphicsLayer {
+                val p = reveal()
+                alpha = p
+                scaleX = 0.92f + 0.08f * p
+                scaleY = 0.92f + 0.08f * p
+            }
+            .shadow(16.dp, RoundedCornerShape(20.dp))
+            .then(
+                if (previewUrl != null) {
+                    Modifier
+                        .clickable(role = Role.Button) { PreviewPlayer.toggle(previewUrl) }
+                        .semantics { contentDescription = previewLabel }
+                        .tag("result.preview")
+                } else {
+                    Modifier
+                },
+            )
+            .drawWithContent {
+                drawContent()
+                if (playing) {
+                    val stroke = 3.dp.toPx()
+                    val path = Path().apply {
+                        addRoundRect(
+                            RoundRect(
+                                stroke / 2,
+                                stroke / 2,
+                                size.width - stroke / 2,
+                                size.height - stroke / 2,
+                                CornerRadius(20.dp.toPx()),
+                            ),
+                        )
+                    }
+                    val measure = PathMeasure().apply { setPath(path, false) }
+                    val segment = Path()
+                    measure.getSegment(0f, measure.length * progress, segment, true)
+                    drawPath(segment, colors.primary, style = Stroke(stroke, cap = StrokeCap.Round))
+                }
+            },
+    ) {
+        Artwork(artworkUrl, artworkSize, corner = 20.dp, contentDescription = stringResource(R.string.result_artwork))
+        // The artwork plays the 30 s preview; the badge says so.
+        if (previewUrl != null) PreviewBadge(playing, Modifier.align(Alignment.BottomEnd).padding(12.dp))
+    }
+}
+
+/** Title, artist, album · year and where the song was found, in the caller's column. */
+@Composable
+private fun HeroText(track: Track, context: SessionContext?, reveal: Float, align: TextAlign, onTitlePlaced: (Float) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Staggered(reveal, 0) {
+        Text(
+            track.title,
+            style = MaterialTheme.typography.displaySmallEmphasized,
+            textAlign = align,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .widthIn(max = 520.dp)
+                .onGloballyPositioned { onTitlePlaced(it.boundsInRoot().bottom) },
+        )
+    }
+    Spacer(Modifier.height(2.dp))
+    Staggered(reveal, 1) {
+        Text(track.artist, style = MaterialTheme.typography.titleMedium, textAlign = align)
+    }
+    val meta = listOfNotNull(track.album?.takeIf { it.isNotBlank() }, track.releaseYear?.toString()).joinToString(" · ")
+    if (meta.isNotEmpty()) {
+        Spacer(Modifier.height(2.dp))
+        Staggered(reveal, 2) {
+            Text(meta, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, textAlign = align)
+        }
+    }
+    context?.let {
+        Spacer(Modifier.height(12.dp))
+        Text(
+            when (it) {
+                is SessionContext.File -> stringResource(R.string.result_context_file, it.name)
+                is SessionContext.Link -> it.atMs?.let { at ->
+                    stringResource(R.string.result_context_link, Formatters.clock(at), it.title)
+                } ?: stringResource(R.string.result_context_link_no_time, it.title)
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.onSurfaceVariant,
+            textAlign = align,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
