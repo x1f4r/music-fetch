@@ -95,7 +95,9 @@ class PageMicRelay {
 
 async function readSettings(): Promise<HostSettings> {
   const [micPriority, lowPower] = await Promise.all([settings.micPriority.getValue(), settings.lowPower.getValue()]);
-  return { micPriority: micPriority.map((m) => m.id), lowPower };
+  if (import.meta.env.MODE !== 'e2e') return { micPriority: micPriority.map((m) => m.id), lowPower };
+  const { mfE2eRecognizer } = (await browser.storage.local.get('mfE2eRecognizer')) as { mfE2eRecognizer?: string };
+  return { micPriority: micPriority.map((m) => m.id), lowPower, e2eRecognizer: mfE2eRecognizer ?? null };
 }
 
 /**

@@ -62,7 +62,9 @@ export default defineBackground(() => {
     'mf:host.idle': async () => ({ closed: import.meta.env.FIREFOX ? false : await closeOffscreenHost() }),
     'mf:host.settings': async () => {
       const [micPriority, lowPower] = await Promise.all([settings.micPriority.getValue(), settings.lowPower.getValue()]);
-      return { micPriority: micPriority.map((m) => m.id), lowPower };
+      if (import.meta.env.MODE !== 'e2e') return { micPriority: micPriority.map((m) => m.id), lowPower };
+      const { mfE2eRecognizer } = (await browser.storage.local.get('mfE2eRecognizer')) as { mfE2eRecognizer?: string };
+      return { micPriority: micPriority.map((m) => m.id), lowPower, e2eRecognizer: mfE2eRecognizer ?? null };
     },
     'mf:net.ensure': async () => ({ rules: await installHeaderRules() }),
   });

@@ -1,13 +1,33 @@
 import type { BackendFactory } from './host-backend';
 import { openKv } from './host-idb';
 import { kvPersistence, MockBackend } from './host-mock-backend';
+import { WasmBackend, type WasmModule } from './host-wasm-backend';
 
 /**
- * The engine the engine Worker runs. This is the one place the wasm engine (extension
- * plan E7) swaps in: `createWasmBackend(env)` over `mfcore-wasm`'s `Engine`, which keeps
- * its library in SQLite on OPFS instead of the mock's IndexedDB snapshot.
+ * The engine the engine Worker runs: the wasm engine (`core/crates/mfcore-wasm`, built
+ * into `./wasm/` by `npm run build:engine`) over SQLite on OPFS. Builds without that
+ * module, or with `WXT_MF_ENGINE=mock`, run the mock engine instead (UI work, demos,
+ * screenshots).
  */
+const engineModule = import.meta.glob<WasmModule>('./wasm/mfcore_wasm.js');
+const engineBinary = import.meta.glob<string>('./wasm/mfcore_wasm_bg.wasm', { query: '?url', import: 'default', eager: true });
+
 export const createBackend: BackendFactory = async (env) => {
-  const kv = await openKv('mf-mock-engine');
-  return new MockBackend(env, await kvPersistence(kv));
+  const load = engineModule['./wasm/mfcore_wasm.js'];
+  const binary = engineBinary['./wasm/mfcore_wasm_bg.wasm'];
+  if (import.meta.env.WXT_MF_ENGINE === 'mock' || !load || !binary) {
+    if (import.meta.env.MODE === 'production' && import.meta.env.WXT_MF_ENGINE !== 'mock') console.warn('Music Fetch: no engine module in this build; running the mock engine');
+    const kv = await openKv('mf-mock-engine');
+    return new MockBackend(env, await kvPersistence(kv));
+  }
+  const wasm = await load();
+  await wasm.default({ module_or_path: binary });
+  return WasmBackend.create(wasm, env, {
+    // e2e builds: the test's stub recognizer (until the test names it, an address where
+    // nothing listens: tests never reach the real service), paced for tests, and no
+    // catalog lookups.
+    ...(import.meta.env.MODE === 'e2e'
+      ? { shazam_base_url: env.recognizerUrl ?? 'http://127.0.0.1:9', test_pacing_ms: 300, offline_catalog: true, log_level: 'info' }
+      : {}),
+  });
 };

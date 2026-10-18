@@ -6,7 +6,8 @@
      element with the movie_player API, ytInitialPlayerResponse / ytInitialData with a
      description tracklist and chapters, a pre-roll "ad" (?preroll=<s>) and SPA navigation
      (window.fakeNavigate). The e2e build reads mf-test-adapter to use the YouTube adapter
-     on 127.0.0.1. Media: ?src=<wav> (default /media/mix.wav). -->
+     on 127.0.0.1. Media: ?src=<wav> (default /media/mix.wav), ?length=<s>, ?marks=<s,s,s>
+     (tracklist and chapter starts, default 0,20,40). -->
 <meta name="mf-test-adapter" content="youtube">
 <meta property="og:title" content="Fake Mix">
 <title>Fake Mix - YouTube</title>
@@ -20,24 +21,26 @@
 <script>
   var params = new URLSearchParams(location.search);
   var content = params.get('src') || '/media/mix.wav';
+  // Tracklist and chapter starts in seconds (?marks=0,90,180 for the long mix).
+  var marks = (params.get('marks') || '0,20,40').split(',').map(Number);
+  var titles = ['Alpha Signal', 'Bravo Signal', 'Charlie Signal'];
+  function clock(s) { return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
   var ytInitialPlayerResponse = {
     videoDetails: {
       videoId: 'fakemix0001',
       title: 'Fake Mix',
       author: 'Test Channel',
       lengthSeconds: params.get('length') || '60',
-      shortDescription: 'Tracklist:\n0:00 Music Fetch Test Signals - Test Signal A\n0:20 Music Fetch Test Signals - Test Signal B\n0:40 Music Fetch Test Signals - Test Signal C',
+      shortDescription: 'Tracklist:\n' + marks.map(function (m, i) { return clock(m) + ' Music Fetch Test Signals - ' + titles[i]; }).join('\n'),
       isLiveContent: false
     }
   };
   var ytInitialData = {
     currentVideoEndpoint: { watchEndpoint: { videoId: 'fakemix0001' } },
     playerOverlays: { playerOverlayRenderer: { decoratedPlayerBarRenderer: { decoratedPlayerBarRenderer: { playerBar: { multiMarkersPlayerBarRenderer: { markersMap: [
-      { key: 'DESCRIPTION_CHAPTERS', value: { chapters: [
-        { chapterRenderer: { title: { simpleText: 'Test Signal A' }, timeRangeStartMillis: 0 } },
-        { chapterRenderer: { title: { simpleText: 'Test Signal B' }, timeRangeStartMillis: 20000 } },
-        { chapterRenderer: { title: { simpleText: 'Test Signal C' }, timeRangeStartMillis: 40000 } }
-      ] } }
+      { key: 'DESCRIPTION_CHAPTERS', value: { chapters: marks.map(function (m, i) {
+        return { chapterRenderer: { title: { simpleText: titles[i] }, timeRangeStartMillis: m * 1000 } };
+      }) } }
     ] } } } } } }
   };
   var player = document.getElementById('movie_player');

@@ -6,14 +6,14 @@ set -uo pipefail
 source ~/mf/env.sh
 export PATH="$HOME/mf/tools/node-24/bin:$PATH"
 DISPLAY_NUM="${MF_RT_DISPLAY:-:93}"
-SINK="mf_rt_null"
+SINK="${MF_RT_SINK:-mf_rt_null}"
 
 if ! xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1; then
   Xvfb "$DISPLAY_NUM" -screen 0 1600x1000x24 -nolisten tcp -noreset >/dev/null 2>&1 &
   XVFB_PID=$!
   for _ in $(seq 1 50); do xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1 && break; sleep 0.1; done
 fi
-MODULE=$(pactl load-module module-null-sink sink_name="$SINK" sink_properties=device.description=mf-rt-null 2>/dev/null || true)
+MODULE=$(pactl load-module module-null-sink sink_name="$SINK" sink_properties=device.description="$SINK" 2>/dev/null || true)
 if [[ -z "$MODULE" ]]; then
   # Without the private sink the test pages would play on the machine's speakers.
   echo "no private null sink; not running"; echo "E2E-DONE 2"; exit 2

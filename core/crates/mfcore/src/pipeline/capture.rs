@@ -221,13 +221,13 @@ impl CaptureSink {
             return;
         }
         state.captured_ms += samples.len() as f64 / rate as f64 * 1000.0;
+        // Capture progress is a phase fraction: `Progress` belongs to the analysis
+        // that follows (it starts again at 0).
         let due = state.last_progress.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY);
         if due && let Some(total) = state.duration_ms.filter(|d| *d > 0) {
             state.last_progress = Some(Instant::now());
-            let analyzed = (state.captured_ms as u64).min(total);
-            let left = total - analyzed;
-            let eta = (f64::from(speed) > 0.0).then(|| (left as f64 / f64::from(speed)) as u64);
-            self.ctx.emitter.progress(analyzed, total, eta);
+            let fraction = (state.captured_ms / total as f64).clamp(0.0, 1.0) as f32;
+            self.ctx.emitter.phase(Phase::Listening, Some(fraction));
         }
     }
 
