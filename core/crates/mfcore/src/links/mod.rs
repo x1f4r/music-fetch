@@ -37,6 +37,8 @@ mod tidal;
 mod tiktok;
 #[cfg(feature = "net")]
 mod youtube;
+#[cfg(feature = "engine")]
+pub mod youtube_api;
 
 use std::future::Future;
 use std::pin::Pin;

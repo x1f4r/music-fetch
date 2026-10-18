@@ -6,7 +6,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -47,7 +47,7 @@ fn throttling_server() -> (String, Arc<AtomicUsize>) {
     (url, hits)
 }
 
-fn open(dir: &PathBuf, url: &str) -> Arc<Engine> {
+fn open(dir: &Path, url: &str) -> Arc<Engine> {
     let config = EngineConfig {
         data_dir: dir.join("data").to_string_lossy().into_owned(),
         cache_dir: dir.join("cache").to_string_lossy().into_owned(),

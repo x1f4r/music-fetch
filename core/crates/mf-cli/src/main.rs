@@ -12,6 +12,7 @@ mod melody;
 mod session;
 mod shazam;
 mod stub;
+mod youtube_record;
 
 #[derive(Parser)]
 #[command(name = "mf", version, about = "Music Fetch engine CLI")]

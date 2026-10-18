@@ -1,4 +1,5 @@
-//! `mf dev stub-recognizer` and `mf dev header-rules`.
+//! `mf dev stub-recognizer` and `mf dev header-rules` (`mf dev youtube-probe`
+//! lives in youtube_record.rs).
 //!
 //! The stub recognizer is a local stand-in for every service the engine needs
 //! to identify the synthetic fixtures (`tools/fixtures/synth_songs.py`): Shazam
@@ -44,6 +45,8 @@ pub enum Command {
     StubRecognizer(StubArgs),
     /// Print the header policy table (what the browser extension installs as rules) as JSON.
     HeaderRules(HeaderRulesArgs),
+    /// Read YouTube links as the browser engine does (no yt-dlp); optionally record the answers.
+    YoutubeProbe(crate::youtube_record::ProbeArgs),
 }
 
 #[derive(Args)]
@@ -81,6 +84,7 @@ pub struct HeaderRulesArgs {
 pub fn run(command: Command) -> Result<()> {
     match command {
         Command::StubRecognizer(args) => serve(args),
+        Command::YoutubeProbe(args) => crate::youtube_record::run(args),
         Command::HeaderRules(args) => {
             let rules = mfcore::util::http::header_rules(&args.app_version, args.agent);
             println!("{}", serde_json::to_string_pretty(&rules)?);

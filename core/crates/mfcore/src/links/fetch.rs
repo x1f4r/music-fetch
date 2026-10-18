@@ -265,6 +265,29 @@ pub(crate) async fn fetch_json(
     Ok(JsonResponse { status, retry_after, value: serde_json::from_slice(&body).ok() })
 }
 
+/// POST a JSON body to a fixed public host with the shared client (InnerTube),
+/// with the header rule `rule` and `headers`; the answer whatever the status.
+pub(crate) async fn post_json(
+    http: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+    rule: HeaderRuleId,
+    headers: &[(&str, &str)],
+    site: &str,
+    cancel: &CancelToken,
+) -> Result<JsonResponse> {
+    let mut request = http.post(url).timeout(API_TIMEOUT).header(ACCEPT, "application/json").json(body);
+    request = HeaderRule::new(rule, env!("CARGO_PKG_VERSION"), 0).apply(request, url);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let response = send(request, cancel, site).await?;
+    let status = response.status();
+    let retry_after = retry_after(&response);
+    let body = read_body(response, MAX_JSON_BYTES, cancel, site).await?;
+    Ok(JsonResponse { status, retry_after, value: serde_json::from_slice(&body).ok() })
+}
+
 /// GET JSON from a fixed public host with the shared client; errors on failure statuses.
 pub(crate) async fn get_json(
     http: &reqwest::Client,

@@ -97,7 +97,7 @@ fn apply_oembed(source: &mut SourceInfo, oembed: Option<OEmbed>) {
 }
 
 /// Depth-first search for the first value under `key`.
-fn find_key<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+pub(super) fn find_key<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     match value {
         Value::Object(map) => map.get(key).or_else(|| map.values().find_map(|v| find_key(v, key))),
         Value::Array(items) => items.iter().find_map(|v| find_key(v, key)),
@@ -105,7 +105,8 @@ fn find_key<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     }
 }
 
-fn largest_thumbnail(details: &Value) -> Option<String> {
+/// The widest of `details.thumbnail.thumbnails`.
+pub(super) fn largest_thumbnail(details: &Value) -> Option<String> {
     details
         .pointer("/thumbnail/thumbnails")
         .and_then(Value::as_array)?
@@ -120,7 +121,7 @@ fn youtube_music_link(video_id: &str) -> crate::model::ServiceLink {
 
 /// Songs in the description's "Music" section
 /// (`engagementPanels → structuredDescriptionContentRenderer → horizontalCardListRenderer`).
-fn music_cards(data: &Value) -> Vec<Track> {
+pub(super) fn music_cards(data: &Value) -> Vec<Track> {
     let mut tracks = Vec::new();
     let panels = data.get("engagementPanels").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     for panel in panels {

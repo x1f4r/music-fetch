@@ -149,6 +149,8 @@ pub const YOUTUBE_CONSENT_COOKIE: &str = "SOCS=CAI; CONSENT=YES+1";
 pub const YOUTUBE_LANGUAGE: &str = "en-US,en;q=0.9";
 /// Origin YouTube Music's InnerTube search expects.
 pub const YTMUSIC_ORIGIN: &str = "https://music.youtube.com";
+/// Origin YouTube's InnerTube expects (the web client's).
+pub const YOUTUBE_ORIGIN: &str = "https://www.youtube.com";
 
 /// The requests that need particular headers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -158,8 +160,10 @@ pub enum HeaderRuleId {
     Shazam,
     /// Spotify and Amazon Music pages serve their Open Graph tags to link-preview crawlers.
     Crawler,
-    /// YouTube watch, Shorts and playlist pages and InnerTube: the consent cookie, English.
+    /// YouTube watch, Shorts and playlist pages: the consent cookie, English.
     Youtube,
+    /// YouTube's InnerTube API (`next`, `browse`): as `Youtube`, plus the site's own origin.
+    Innertube,
     /// YouTube Music's InnerTube search: its own origin and referer.
     Ytmusic,
     /// Genius refuses browser agents (S4: 403) and answers the neutral one. Natively the
@@ -168,10 +172,11 @@ pub enum HeaderRuleId {
 }
 
 impl HeaderRuleId {
-    pub const ALL: [HeaderRuleId; 5] = [
+    pub const ALL: [HeaderRuleId; 6] = [
         HeaderRuleId::Shazam,
         HeaderRuleId::Crawler,
         HeaderRuleId::Youtube,
+        HeaderRuleId::Innertube,
         HeaderRuleId::Ytmusic,
         HeaderRuleId::Neutral,
     ];
@@ -224,9 +229,19 @@ impl HeaderRule {
                     "https://www.youtube.com/watch",
                     "https://www.youtube.com/shorts/",
                     "https://www.youtube.com/playlist",
-                    "https://www.youtube.com/youtubei/v1/",
                 ]),
                 set: set(&[("cookie", YOUTUBE_CONSENT_COOKIE), ("accept-language", YOUTUBE_LANGUAGE)]),
+                remove: Vec::new(),
+            },
+            HeaderRuleId::Innertube => Self {
+                id,
+                prefixes: prefixes(&["https://www.youtube.com/youtubei/v1/"]),
+                set: set(&[
+                    ("cookie", YOUTUBE_CONSENT_COOKIE),
+                    ("accept-language", YOUTUBE_LANGUAGE),
+                    ("origin", YOUTUBE_ORIGIN),
+                    ("referer", "https://www.youtube.com/"),
+                ]),
                 remove: Vec::new(),
             },
             HeaderRuleId::Ytmusic => Self {
@@ -325,7 +340,8 @@ mod tests {
             (HeaderRuleId::Youtube, "https://www.youtube.com/watch?v=dQw4w9WgXcQ&hl=en&persist_hl=1"),
             (HeaderRuleId::Youtube, "https://www.youtube.com/shorts/abc?hl=en"),
             (HeaderRuleId::Youtube, "https://www.youtube.com/playlist?list=PL1"),
-            (HeaderRuleId::Youtube, "https://www.youtube.com/youtubei/v1/next?prettyPrint=false"),
+            (HeaderRuleId::Innertube, "https://www.youtube.com/youtubei/v1/next?prettyPrint=false"),
+            (HeaderRuleId::Innertube, "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false"),
             (HeaderRuleId::Ytmusic, "https://music.youtube.com/youtubei/v1/search?alt=json"),
             (HeaderRuleId::Neutral, "https://genius.com/api/search/lyric?q=x"),
         ];
@@ -359,8 +375,11 @@ mod tests {
                 "https://open.spotify.com/playlist/", "https://open.spotify.com/artist/", "https://music.amazon."],
              "set": {"user-agent": CRAWLER_UA}, "remove": []},
             {"id": "youtube", "prefixes": ["https://www.youtube.com/watch", "https://www.youtube.com/shorts/",
-                "https://www.youtube.com/playlist", "https://www.youtube.com/youtubei/v1/"],
+                "https://www.youtube.com/playlist"],
              "set": {"accept-language": "en-US,en;q=0.9", "cookie": "SOCS=CAI; CONSENT=YES+1"}, "remove": []},
+            {"id": "innertube", "prefixes": ["https://www.youtube.com/youtubei/v1/"],
+             "set": {"accept-language": "en-US,en;q=0.9", "cookie": "SOCS=CAI; CONSENT=YES+1",
+                     "origin": "https://www.youtube.com", "referer": "https://www.youtube.com/"}, "remove": []},
             {"id": "ytmusic", "prefixes": ["https://music.youtube.com/youtubei/v1/search"],
              "set": {"origin": "https://music.youtube.com", "referer": "https://music.youtube.com/"}, "remove": []},
             {"id": "neutral", "prefixes": ["https://genius.com/api/"],
