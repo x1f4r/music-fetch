@@ -204,7 +204,12 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     }, FRAME);
     const log = await rpc<string[]>(tab, 'mf-host', 'log').catch((e: Error) => [e.message]);
     expect(sources.some((s) => s.via === 'mic' && s.frames > 0), `${JSON.stringify(sources)} ${why} log: ${log.join(' | ')}`).toBe(true);
-    await inFrame("return doc.querySelector('.hero .ttl')");
+    // Firefox's fake microphone plays no test song (sometimes nothing at all): the mock then
+    // ends with its scripted match or CaptureSilent. Either way the session ends and lands.
+    const [newest] = await rpc<{ id: string; kind: string }[]>(tab, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
+    expect(newest?.kind).toBe('Listen');
+    const ended = await waitForSession(tab, newest!.id, (s) => s !== 'Running', 45_000);
+    expect(['Matched', 'NoMatch'], await eventsOf(tab, newest!.id)).toContain(ended.status);
   });
 
   it('rewrites the engine’s requests with the same DNR rules as Chromium', async () => {
