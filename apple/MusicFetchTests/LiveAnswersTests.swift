@@ -71,6 +71,10 @@ struct LiveAnswersTests {
     private func humming() async throws -> (AppModel, FakeSession) {
         let app = AppModel(demo: DemoState(name: "tests-manual"))
         await app.start()
+        // No speech recognizer in these tests.
+        app.listen.makeTranscriber = { language, lowPower, handler in
+            SungWordsTranscriber(language: language, lowPower: lowPower, handler: handler) { _ in nil }
+        }
         app.listen.start(.hum)
         let engine = try #require(app.engine as? FakeEngine)
         let session = try #require(engine.lastLiveSession)
