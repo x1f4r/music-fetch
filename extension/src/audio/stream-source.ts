@@ -70,7 +70,7 @@ export abstract class StreamSource implements AudioSource {
       track.addEventListener(
         'ended',
         () => {
-          if (this.stream === stream) this.end('ended', 'The audio track ended.');
+          if (this.stream === stream) this.trackEnded();
         },
         { once: true },
       );
@@ -91,14 +91,19 @@ export abstract class StreamSource implements AudioSource {
     this.events.emit({ type: 'started', sampleRate: this.tap.sampleRate, label });
   }
 
+  /** The captured track ended: the source ends (element capture may pick up the next track). */
+  protected trackEnded(): void {
+    this.end('ended', 'The audio track ended.');
+  }
+
   /** Swap in another stream (the microphone changed) without ending the source. */
-  protected async replace(stream: MediaStream, label: string): Promise<void> {
+  protected async replace(stream: MediaStream, label: string, ownsTracks = true): Promise<void> {
     const old = { tap: this.tap, stream: this.stream };
     this.tap = null;
     this.stream = null;
     await old.tap?.close();
-    old.stream?.getTracks().forEach((t) => t.stop());
-    await this.attach(stream, label);
+    if (this.ownsTracks) old.stream?.getTracks().forEach((t) => t.stop());
+    await this.attach(stream, label, ownsTracks);
   }
 
   private block(samples: Float32Array, sampleRate: number, wall: number) {

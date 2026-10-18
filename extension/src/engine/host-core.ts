@@ -12,6 +12,7 @@ import {
 } from '../messaging/protocol';
 import { ENGINE_METHODS, EngineError, type ActiveSession, type CaptureErrorCode, type CaptureStatus, type EngineApi, type EngineInfo } from './client';
 import { isTerminal } from './events';
+import { hostLog, hostLogEntries } from './host-debug';
 import type { BackendConfig, EngineBackend, NetProbeResult } from './host-backend';
 import type { SessionRegistry, RegistryEntry } from './host-registry';
 import { WorkerEngine, type WorkerLike, type WorkerState } from './host-worker-client';
@@ -116,6 +117,8 @@ export interface HostApi {
   sources(): Promise<{ sessionId: string; kind: string; via: string; frames: number }[]>;
   /** e2e builds: fetch through the engine (see `EngineBackend.netProbe`). */
   netProbe(url: string, init: { method?: string; body?: string }): Promise<NetProbeResult>;
+  /** e2e builds: what the host did lately (`host-debug.ts`). */
+  log(): Promise<string[]>;
   /** For the background's notifications (it is no surface, so it doesn't use `ENGINE_PORT`). */
   session(id: string): Promise<SessionDetail | null>;
   setPinned(id: string, pinned: boolean): Promise<void>;
@@ -134,7 +137,7 @@ export interface HostState {
   lowPower: boolean;
 }
 
-const HOST_METHODS = ['state', 'recycle', 'sources', 'netProbe', 'session', 'setPinned'] as const satisfies readonly (keyof HostApi)[];
+const HOST_METHODS = ['state', 'recycle', 'sources', 'netProbe', 'session', 'setPinned', 'log'] as const satisfies readonly (keyof HostApi)[];
 
 interface LiveCapture {
   source: AudioSource;
@@ -262,6 +265,7 @@ export class EngineHost {
       },
       sources: async () => [...this.live.entries()].map(([sessionId, l]) => ({ sessionId, kind: l.source.kind, via: l.via, frames: l.frames })),
       netProbe: (url, init) => this.call('netProbe', [url, init]) as Promise<NetProbeResult>,
+      log: async () => hostLogEntries(),
       session: (id) => this.call('session', [id]) as Promise<SessionDetail | null>,
       setPinned: (id, pinned) => this.call('setPinned', [id, pinned]) as Promise<void>,
     };
@@ -321,6 +325,7 @@ export class EngineHost {
       return this.call('startLive', [source, mode, options, { kind: 'none', sampleRate: 0, label: '', directive }]) as Promise<string>;
     }
     if (source === 'SystemAudio') throw captureError('CantCapture', 'Computer audio is not available in this browser yet.');
+    hostLog(`startListening ${source} ${mode} from ${conn?.url ?? 'host'}`);
     const release = this.worker.hold();
     let opened: OpenedSource | null = null;
     try {
@@ -328,6 +333,7 @@ export class EngineHost {
       // Start the Worker while the capture opens: both take a moment.
       const warm = this.worker.ensure().catch(() => undefined);
       opened = source === 'Tab' ? await platform.openTab(conn) : await platform.openMic(conn, settings.micPriority);
+      hostLog(`opened ${opened.via} ${opened.source.kind}`);
       await warm;
       const buffered: PcmChunk[] = [];
       let sessionId: string | null = null;
@@ -363,6 +369,7 @@ export class EngineHost {
       });
       return sessionId;
     } catch (error) {
+      hostLog(`startListening failed: ${error instanceof Error ? error.message : String(error)}`);
       opened?.source.stop();
       throw toEngineError(error);
     } finally {

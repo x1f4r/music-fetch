@@ -1,5 +1,6 @@
 import { MediaClock } from './media-clock';
 import { StreamSource } from './stream-source';
+import { wallNow } from './types';
 import type { TapOptions } from './tap';
 
 /** The clock of an element capture: anchored once, then the frame count (S2). */
@@ -54,22 +55,42 @@ export class ElementCaptureSource extends StreamSource {
     }
     const audio = await audioTracks(stream, 3000);
     if (audio.length === 0) throw new ElementCaptureError('NothingPlaying', 'The element has no audio.');
+    this.captured = stream;
     // Only the audio: a video track would keep the decoder busy for nothing.
     await this.attach(new MediaStream(audio), element.currentSrc || element.tagName.toLowerCase(), false);
   }
+
+  private captured: MediaStream | null = null;
+
+  /**
+   * The element loaded another source (an ad ending, the next track, a quality switch):
+   * its captured stream ends the old track and adds a new one. Follow it instead of
+   * ending the capture; the media clock re-anchors at the change.
+   */
+  protected override trackEnded(): void {
+    const stream = this.captured;
+    if (!stream || this.ended) return super.trackEnded();
+    void audioTracks(stream, 3000, true).then((audio) => {
+      if (this.ended) return;
+      if (audio.length === 0) return super.trackEnded();
+      this.clock?.restart(wallNow());
+      void this.replace(new MediaStream(audio), this.element.currentSrc || this.element.tagName.toLowerCase(), false).catch(() => super.trackEnded());
+    });
+  }
 }
 
-/** The stream's audio tracks; a paused element adds them once it plays. */
-async function audioTracks(stream: MediaStream, timeoutMs: number): Promise<MediaStreamTrack[]> {
-  if (stream.getAudioTracks().length > 0) return stream.getAudioTracks();
+/** The stream's live audio tracks; a paused element (or one changing source) adds them once it plays. */
+async function audioTracks(stream: MediaStream, timeoutMs: number, liveOnly = false): Promise<MediaStreamTrack[]> {
+  const live = () => stream.getAudioTracks().filter((t) => !liveOnly || t.readyState === 'live');
+  if (live().length > 0) return live();
   return new Promise((resolve) => {
     const done = () => {
       clearTimeout(timer);
       stream.removeEventListener('addtrack', onAdd);
-      resolve(stream.getAudioTracks());
+      resolve(live());
     };
     const onAdd = () => {
-      if (stream.getAudioTracks().length > 0) done();
+      if (live().length > 0) done();
     };
     const timer = setTimeout(done, timeoutMs);
     stream.addEventListener('addtrack', onAdd);

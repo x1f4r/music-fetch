@@ -9,6 +9,7 @@ import { settings } from '../settings/settings';
 import { CaptureError, EngineHost, type HostPlatform, type HostRuntime, type IncomingPort, type OpenedSource, type UiConnection } from './host-core';
 import { openKv } from './host-idb';
 import { EventPageKeepalive } from './host-keepalive';
+import { hostLog } from './host-debug';
 import { takeMockDirective } from './host-mock-directive';
 import { SessionRegistry } from './host-registry';
 import { injectAgent, resolveTab } from './host-tabs';
@@ -26,6 +27,7 @@ class PageMicRelay {
       if (wire?.t !== 'hello') return;
       port.onMessage.removeListener(first);
       const resolve = this.waiting.get(wire.token);
+      hostLog(`mic page said hello (${resolve ? 'expected' : 'unknown token'})`);
       this.waiting.delete(wire.token);
       if (resolve) resolve(port);
       else port.disconnect();
@@ -46,6 +48,7 @@ class PageMicRelay {
         clearTimeout(timer);
         resolve(p);
       });
+      hostLog(`asking ${caller.url} for the microphone`);
       caller.emit('capture:mic', { token, deviceIds: priority });
     });
     let started: ((info: { sampleRate: number; label: string }) => void) | null = null;
@@ -61,12 +64,18 @@ class PageMicRelay {
     );
     port.onMessage.addListener((message: unknown) => {
       const wire = message as MicWire;
-      if (wire.t === 'started') started?.({ sampleRate: wire.sampleRate, label: wire.label });
-      else if (wire.t === 'error') failed?.(new CaptureError(wire.reason, wire.message));
+      if (wire.t === 'started') {
+        hostLog(`mic page started at ${wire.sampleRate} Hz`);
+        started?.({ sampleRate: wire.sampleRate, label: wire.label });
+      } else if (wire.t === 'error') {
+        hostLog(`mic page failed: ${wire.reason} ${wire.message}`);
+        failed?.(new CaptureError(wire.reason, wire.message));
+      }
       else if (wire.t === 'pcm') source.feed(wire.chunk);
       else if (wire.t === 'event') source.signal(wire.event);
     });
     port.onDisconnect.addListener(() => {
+      hostLog('mic page port closed');
       failed?.(new CaptureError('MicUnavailable', 'The page closed.'));
       source.signal({ type: 'ended', reason: 'ended', message: 'The page holding the microphone closed.' });
     });

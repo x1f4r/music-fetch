@@ -179,7 +179,8 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
       const permission = await (frame.contentWindow as Window).navigator.permissions.query({ name: 'microphone' as PermissionName }).then((p) => p.state, (e: Error) => `query failed: ${e.message}`);
       return `stage "${doc.querySelector('#stage-state')?.textContent?.trim()}", permission ${permission}`;
     }, FRAME);
-    expect(sources.some((s) => s.via === 'mic' && s.frames > 0), `${JSON.stringify(sources)} ${why}`).toBe(true);
+    const log = await rpc<string[]>(tab, 'mf-host', 'log').catch((e: Error) => [e.message]);
+    expect(sources.some((s) => s.via === 'mic' && s.frames > 0), `${JSON.stringify(sources)} ${why} log: ${log.join(' | ')}`).toBe(true);
     await inFrame("return doc.querySelector('.hero .ttl')");
   });
 
