@@ -2,9 +2,10 @@
 //!
 //! Three sources run concurrently on the captured 16 kHz audio: melody
 //! matching against the installed index, sung-lyric search (speech-to-text from
-//! the app, then `lyrics::search`) and ACRCloud humming. Each answer is fused by
-//! identity into ranked candidates; interim lists go out as they arrive, the
-//! final list after a short enrichment pass.
+//! the app, either pushed while the user sings or asked for afterwards, then
+//! `lyrics::search`) and ACRCloud humming. Each answer is fused by identity into
+//! ranked candidates; interim lists go out as they arrive, the final list after
+//! a short enrichment pass.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -15,6 +16,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use futures_util::future::join_all;
 use futures_util::stream::FuturesUnordered;
+use tokio::sync::watch;
 
 use crate::audio::SAMPLE_RATE;
 use crate::audio::resample::f32_to_i16;
@@ -26,7 +28,7 @@ use crate::melody::pitch::FrameDetail;
 use crate::melody::{MelodyIndex, MelodyMatch, MelodyQuery, SongMeta, matcher, notes};
 use crate::model::{
     Candidate, CandidateSource, CandidateSourceKind, CandidateTier, MelodyAlignment, NoMatchReason, Notice, Outcome,
-    Phase, Track,
+    Phase, SpeechTranscript, Track,
 };
 use crate::pipeline::ctx::SessionCtx;
 use crate::platform::SpeechToText;
@@ -47,6 +49,8 @@ const ACR_RATE: u32 = 8_000;
 const ENRICH_BUDGET: Duration = Duration::from_secs(4);
 /// A transcript needs this many real words (not "la la", "hmm") to be searched.
 const MIN_REAL_WORDS: usize = 3;
+/// Longest transcript hypothesis searched.
+const MAX_TRANSCRIPT_CHARS: usize = 500;
 
 const MAX_CANDIDATES: usize = 5;
 const MIN_SCORE: f32 = 0.05;
@@ -58,6 +62,15 @@ const W_ACR: f32 = 0.9;
 /// Bonus when melody and lyrics agree, and the cap of the combined score.
 const AGREEMENT_BONUS: f32 = 0.1;
 const MAX_COMBINED: f32 = 0.99;
+
+/// Where the sung words of an impression come from.
+pub enum SpeechInput {
+    /// Transcribe the capture with the app's `SpeechToText`, if it supplied one.
+    Recognizer,
+    /// The newest transcript the app pushed (`LiveSession::push_transcript`),
+    /// waiting up to `wait` for the recognizer's final one.
+    Pushed { transcripts: watch::Receiver<Option<SpeechTranscript>>, wait: Duration },
+}
 
 /// Where the melody evidence of an impression comes from.
 pub enum MelodyInput {
@@ -94,7 +107,7 @@ pub fn melody_candidates(matches: &[MelodyMatch]) -> Vec<Candidate> {
 /// lyrics and ACRCloud humming, fused into candidates. Emits `Candidates` events
 /// and returns the outcome; the caller emits the terminal event.
 pub async fn run_impression(ctx: &SessionCtx, audio: &[f32]) -> Result<Outcome> {
-    Ok(run_impression_detailed(ctx, audio, MelodyInput::Track, false, false).await?.0)
+    Ok(run_impression_detailed(ctx, audio, MelodyInput::Track, SpeechInput::Recognizer, false, false).await?.0)
 }
 
 /// [`run_impression`] that also returns the final candidates (best first).
@@ -105,6 +118,7 @@ pub async fn run_impression_detailed(
     ctx: &SessionCtx,
     audio: &[f32],
     melody: MelodyInput,
+    speech: SpeechInput,
     live: bool,
     shown: bool,
 ) -> Result<(Outcome, Vec<Candidate>)> {
@@ -119,8 +133,15 @@ pub async fn run_impression_detailed(
     type SourceFuture<'a> = Pin<Box<dyn Future<Output = Answer> + Send + 'a>>;
     let mut sources: FuturesUnordered<SourceFuture<'_>> = FuturesUnordered::new();
     sources.push(Box::pin(melody_source(ctx, audio, melody, index.clone())));
-    if let Some(speech) = ctx.engine.speech.clone() {
-        sources.push(Box::pin(crate::util::rt::sendable(lyrics_source(ctx, speech, audio))));
+    match speech {
+        SpeechInput::Pushed { transcripts, wait } => {
+            sources.push(Box::pin(crate::util::rt::sendable(pushed_lyrics_source(ctx, transcripts, wait))))
+        }
+        SpeechInput::Recognizer => {
+            if let Some(speech) = ctx.engine.speech.clone() {
+                sources.push(Box::pin(crate::util::rt::sendable(lyrics_source(ctx, speech, audio))));
+            }
+        }
     }
     if ctx.credentials.acr_humming.is_some() {
         sources.push(Box::pin(crate::util::rt::sendable(acr_source(ctx, audio))));
@@ -274,8 +295,72 @@ async fn melody_source(
 }
 
 async fn lyrics_source(ctx: &SessionCtx, speech: Arc<dyn SpeechToText>, audio: &[f32]) -> Answer {
-    let none = || Answer::Lyrics(Vec::new());
     let hypotheses = transcribe(ctx, speech, audio).await;
+    sung_lyrics(ctx, hypotheses, 1.0).await
+}
+
+/// Sung lyrics from the transcripts the app pushed: the final one, or the newest
+/// when the final one does not arrive within `wait`.
+async fn pushed_lyrics_source(
+    ctx: &SessionCtx,
+    transcripts: watch::Receiver<Option<SpeechTranscript>>,
+    wait: Duration,
+) -> Answer {
+    let Some(transcript) = final_transcript(ctx, transcripts, wait).await else { return Answer::Lyrics(Vec::new()) };
+    let weight = transcript_weight(transcript.confidence);
+    sung_lyrics(ctx, transcript_hypotheses(&transcript), weight).await
+}
+
+/// Wait up to `wait` for a final transcript; the newest one otherwise.
+pub(crate) async fn final_transcript(
+    ctx: &SessionCtx,
+    mut transcripts: watch::Receiver<Option<SpeechTranscript>>,
+    wait: Duration,
+) -> Option<SpeechTranscript> {
+    let deadline = crate::util::rt::Instant::now() + wait;
+    loop {
+        if transcripts.borrow_and_update().as_ref().is_some_and(|t| t.is_final) {
+            break;
+        }
+        let changed = tokio::select! {
+            biased;
+            _ = ctx.cancel.canceled() => return None,
+            changed = crate::util::rt::timeout_at(deadline, transcripts.changed()) => changed,
+        };
+        // Timed out, or the session handle is gone.
+        if !matches!(changed, Ok(Ok(()))) {
+            break;
+        }
+    }
+    transcripts.borrow().clone()
+}
+
+/// A pushed transcript's hypotheses, best first: trimmed, at most five, no repeats.
+pub(crate) fn transcript_hypotheses(t: &SpeechTranscript) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for text in std::iter::once(&t.text).chain(&t.alternatives) {
+        let text: String = text.trim().chars().take(MAX_TRANSCRIPT_CHARS).collect();
+        if !text.is_empty() && !out.iter().any(|o| o.eq_ignore_ascii_case(&text)) {
+            out.push(text);
+        }
+    }
+    out.truncate(5);
+    out
+}
+
+/// How much a transcript's lyric matches count: recognizers that report a low
+/// confidence often misheard the words, which then match the wrong song.
+pub(crate) fn transcript_weight(confidence: Option<f32>) -> f32 {
+    match confidence {
+        Some(c) if c.is_finite() && c > 0.0 => 0.4 + 0.6 * c.min(1.0),
+        _ => 1.0,
+    }
+}
+
+/// Lyric search for transcription hypotheses with enough real words; match
+/// scores are scaled by `weight`.
+async fn sung_lyrics(ctx: &SessionCtx, hypotheses: Vec<String>, weight: f32) -> Answer {
+    let none = || Answer::Lyrics(Vec::new());
     let hypotheses: Vec<String> = hypotheses.into_iter().filter(|h| real_words(h) >= MIN_REAL_WORDS).collect();
     let Some(best) = hypotheses.first() else { return none() };
     let update = SessionUpdate { transcript: Some(best.clone()), ..Default::default() };
@@ -283,9 +368,20 @@ async fn lyrics_source(ctx: &SessionCtx, speech: Arc<dyn SpeechToText>, audio: &
         tracing::warn!("could not store the transcript: {e}");
     }
     ctx.emitter.phase(Phase::SearchingLyrics, None);
+    #[cfg(test)]
+    if let Some(stub) = tests::LYRIC_STUB.with(|s| s.borrow().clone()) {
+        let mut matches = stub(&hypotheses);
+        matches.iter_mut().for_each(|m| m.score *= weight);
+        return Answer::Lyrics(matches);
+    }
     let search = lyrics::search(&ctx.engine.http, &hypotheses, ctx.engine.country(), &ctx.cancel);
     match crate::util::rt::timeout(LYRICS_TIMEOUT, search).await {
-        Ok(Ok(matches)) => Answer::Lyrics(matches),
+        Ok(Ok(mut matches)) => {
+            for m in &mut matches {
+                m.score *= weight;
+            }
+            Answer::Lyrics(matches)
+        }
         Ok(Err(MfError::Canceled)) => none(),
         Ok(Err(e)) => {
             ctx.emitter.notice(Notice::ProviderUnavailable { provider: "Lyrics".into(), message: e.to_string() });
@@ -750,6 +846,114 @@ pub(crate) async fn enrich(ctx: &SessionCtx, candidates: Vec<Candidate>) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type LyricStub = Arc<dyn Fn(&[String]) -> Vec<LyricMatch>>;
+
+    thread_local! {
+        /// Lyric search answers for tests (no network).
+        pub(super) static LYRIC_STUB: std::cell::RefCell<Option<LyricStub>> = const { std::cell::RefCell::new(None) };
+    }
+
+    fn transcript(text: &str, is_final: bool) -> SpeechTranscript {
+        SpeechTranscript { text: text.into(), is_final, ..SpeechTranscript::default() }
+    }
+
+    #[test]
+    fn transcript_hypotheses_and_weights() {
+        let t = SpeechTranscript {
+            text: "  never gonna give you up ".into(),
+            alternatives: vec!["Never gonna give you up".into(), "".into(), "never going to give you up".into()],
+            ..SpeechTranscript::default()
+        };
+        assert_eq!(transcript_hypotheses(&t), vec!["never gonna give you up", "never going to give you up"]);
+        assert_eq!(transcript_weight(None), 1.0);
+        assert_eq!(transcript_weight(Some(0.0)), 1.0, "0 means unknown (SFSpeech partials, Android without scores)");
+        assert_eq!(transcript_weight(Some(-1.0)), 1.0);
+        assert!((transcript_weight(Some(0.5)) - 0.7).abs() < 1e-6);
+        assert_eq!(transcript_weight(Some(3.0)), 1.0);
+    }
+
+    #[tokio::test]
+    async fn the_final_transcript_is_awaited_briefly() {
+        let dir = std::env::temp_dir().join(format!("mf-transcript-{}", crate::util::new_id()));
+        let (ctx, _) = crate::pipeline::testutil::session(&dir, crate::model::SessionKind::Hum);
+        let (tx, rx) = watch::channel(None);
+        // Nothing pushed: nothing to wait for beyond the limit.
+        assert_eq!(final_transcript(&ctx, rx.clone(), Duration::from_millis(20)).await, None);
+        // A partial result, then the final one shortly after capture.
+        tx.send_replace(Some(transcript("never gonna", false)));
+        let later = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            later.send_replace(Some(transcript("never gonna give you up", true)));
+        });
+        let got = final_transcript(&ctx, rx.clone(), Duration::from_secs(5)).await;
+        assert_eq!(got.map(|t| t.text).as_deref(), Some("never gonna give you up"));
+        // No final one in time: the newest partial.
+        tx.send_replace(Some(transcript("let it", false)));
+        let got = final_transcript(&ctx, rx, Duration::from_millis(20)).await;
+        assert_eq!(got.map(|t| t.text).as_deref(), Some("let it"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn pushed_words_find_the_song_by_its_lyrics() {
+        let dir = std::env::temp_dir().join(format!("mf-sung-{}", crate::util::new_id()));
+        let (ctx, events) = crate::pipeline::testutil::session(&dir, crate::model::SessionKind::Hum);
+        let searched = Arc::new(parking_lot::Mutex::new(Vec::<Vec<String>>::new()));
+        let seen = searched.clone();
+        let stub: LyricStub = Arc::new(move |hypotheses: &[String]| {
+            seen.lock().push(hypotheses.to_vec());
+            vec![LyricMatch {
+                track: track("Never Gonna Give You Up", "Rick Astley"),
+                score: 0.9,
+                matched_line: Some("Never gonna give you up".into()),
+            }]
+        });
+        LYRIC_STUB.with(|s| *s.borrow_mut() = Some(stub));
+        let audio = vec![0.0f32; 16_000];
+
+        // Filler only ("la la"): no lyric search.
+        let (tx, rx) = watch::channel(Some(transcript("la la la lalala", true)));
+        let speech = SpeechInput::Pushed { transcripts: rx, wait: Duration::from_millis(50) };
+        let (outcome, candidates) =
+            run_impression_detailed(&ctx, &audio, MelodyInput::Track, speech, true, false).await.unwrap();
+        assert_eq!(outcome, Outcome::NoMatch { reason: NoMatchReason::NotFound });
+        assert!(candidates.is_empty() && searched.lock().is_empty());
+
+        // Real words with a middling recognizer confidence.
+        tx.send_replace(Some(SpeechTranscript {
+            text: "never gonna give you up".into(),
+            alternatives: vec!["never gonna give you a cup".into()],
+            confidence: Some(0.5),
+            is_final: true,
+            ..SpeechTranscript::default()
+        }));
+        let speech = SpeechInput::Pushed { transcripts: tx.subscribe(), wait: Duration::from_millis(50) };
+        let (outcome, candidates) =
+            run_impression_detailed(&ctx, &audio, MelodyInput::Track, speech, true, false).await.unwrap();
+        assert_eq!(outcome, Outcome::Candidates { count: 1 });
+        assert_eq!(candidates[0].track.title, "Never Gonna Give You Up");
+        let lyric = &candidates[0].sources[0];
+        assert_eq!(lyric.kind, CandidateSourceKind::Lyrics);
+        assert!((lyric.score - 0.9 * 0.7).abs() < 1e-5, "{}", lyric.score);
+        assert_eq!(
+            *searched.lock(),
+            vec![vec!["never gonna give you up".to_string(), "never gonna give you a cup".into()]]
+        );
+        let detail = ctx.engine.store.session_detail("s").unwrap().unwrap();
+        assert_eq!(detail.transcript.as_deref(), Some("never gonna give you up"));
+        assert!(
+            events
+                .0
+                .lock()
+                .iter()
+                .any(|e| matches!(e, crate::model::SessionEvent::Phase { phase: Phase::SearchingLyrics, .. }))
+        );
+        LYRIC_STUB.with(|s| *s.borrow_mut() = None);
+        ctx.cleanup();
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn track(title: &str, artist: &str) -> Track {
         Track { title: title.into(), artist: artist.into(), ..Track::default() }

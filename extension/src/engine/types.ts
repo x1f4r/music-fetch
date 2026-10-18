@@ -49,6 +49,7 @@ export type {
   SessionKind,
   SessionStatus,
   SourceInfo,
+  SpeechTranscript,
   StorageUsage,
   Tier,
   Track,

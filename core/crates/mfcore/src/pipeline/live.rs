@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
+use tokio::sync::watch;
 
 use crate::audio::SAMPLE_RATE;
 use crate::audio::resample::{StreamResampler, f32_to_i16};
@@ -26,7 +27,7 @@ use crate::melody::pitch::FrameDetail;
 use crate::melody::{ImpressionDetector, StreamingPitch};
 use crate::model::{
     CaptureSource, Evidence, ListenMode, ListenOptions, NoMatchReason, Notice, Outcome, Phase, PitchFrame, Segment,
-    SegmentKind, SessionKind, Tier,
+    SegmentKind, SessionKind, SpeechTranscript, Tier,
 };
 use crate::pipeline::ctx::SessionCtx;
 use crate::pipeline::hum;
@@ -86,6 +87,12 @@ const MATCH_ENRICH_LIMIT: Duration = Duration::from_secs(3);
 const POP_TIMEOUT: Duration = Duration::from_millis(20);
 /// Share of speech-like windows above which a miss is reported as `MostlySpeech`.
 const SPEECH_SHARE: f32 = 0.6;
+/// With `ListenOptions::transcripts`, how long the answer waits after capture for
+/// the recognizer's final transcript.
+const FINAL_TRANSCRIPT_WAIT: Duration = Duration::from_secs(2);
+/// Pushed transcript text kept, at most.
+const MAX_TRANSCRIPT_CHARS: usize = 2_000;
+const MAX_TRANSCRIPT_ALTERNATIVES: usize = 4;
 
 /// One pushed chunk, already converted to f32.
 struct Chunk {
@@ -108,7 +115,6 @@ struct InputState {
 }
 
 /// Audio handed over by the app, shared by the session handle and its DSP thread.
-#[derive(Default)]
 pub struct LiveInput {
     state: Mutex<InputState>,
     ready: Condvar,
@@ -119,12 +125,38 @@ pub struct LiveInput {
     busy: AtomicBool,
     /// A recognizer call is running.
     inflight: AtomicBool,
+    /// The newest transcript the app pushed.
+    transcript: watch::Sender<Option<SpeechTranscript>>,
 }
 
 impl LiveInput {
     /// An empty input queue.
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Arc::new(Self {
+            state: Mutex::default(),
+            ready: Condvar::new(),
+            #[cfg(target_family = "wasm")]
+            ready_task: tokio::sync::Notify::new(),
+            busy: AtomicBool::new(false),
+            inflight: AtomicBool::new(false),
+            transcript: watch::Sender::new(None),
+        })
+    }
+
+    /// Replace the transcript of what the user sang so far (any thread, also
+    /// shortly after capture ended).
+    pub fn push_transcript(&self, mut transcript: SpeechTranscript) {
+        transcript.text = transcript.text.chars().take(MAX_TRANSCRIPT_CHARS).collect();
+        transcript.alternatives.truncate(MAX_TRANSCRIPT_ALTERNATIVES);
+        for alternative in &mut transcript.alternatives {
+            *alternative = alternative.chars().take(MAX_TRANSCRIPT_CHARS).collect();
+        }
+        self.transcript.send_replace(Some(transcript));
+    }
+
+    /// Follow the pushed transcripts.
+    pub fn transcripts(&self) -> watch::Receiver<Option<SpeechTranscript>> {
+        self.transcript.subscribe()
     }
 
     /// Queue interleaved little-endian f32 PCM. Never blocks on analysis: beyond
@@ -1024,7 +1056,16 @@ impl Live {
             _ => hum::MelodyInput::Track,
         };
         let capture = std::mem::take(&mut self.capture);
-        match hum::run_impression_detailed(&self.ctx, &capture, melody, true, self.shown_candidates).await {
+        let transcripts = self.input.transcripts();
+        // Transcripts the app pushed replace asking its recognizer afterwards.
+        let speech = if self.options.transcripts {
+            hum::SpeechInput::Pushed { transcripts, wait: FINAL_TRANSCRIPT_WAIT }
+        } else if transcripts.borrow().is_some() {
+            hum::SpeechInput::Pushed { transcripts, wait: Duration::ZERO }
+        } else {
+            hum::SpeechInput::Recognizer
+        };
+        match hum::run_impression_detailed(&self.ctx, &capture, melody, speech, true, self.shown_candidates).await {
             Ok((outcome, candidates)) => {
                 let top = candidates.first().map(|c| &c.track);
                 let update = SessionUpdate {

@@ -56,6 +56,7 @@ fn trace() -> Registry {
         CaptureSource,
         ListenMode,
         ListenOptions,
+        SpeechTranscript,
         AnalyzeMode,
         LibraryQuery,
         LibraryEntry,
@@ -102,6 +103,7 @@ const ORDER: &[&str] = &[
     "CaptureSource",
     "ListenMode",
     "ListenOptions",
+    "SpeechTranscript",
     "AnalyzeMode",
     "LibraryQuery",
     "LibraryEntry",
@@ -118,10 +120,57 @@ const ORDER: &[&str] = &[
     "WebEngineConfig",
 ];
 
-/// Records whose fields all have serde defaults (input types: every field may be left out).
-const ALL_OPTIONAL: &[&str] = &["PageChapter", "PageMedia", "WebEngineConfig"];
-/// Single fields with serde defaults.
-const OPTIONAL_FIELDS: &[(&str, &str)] = &[("ListenOptions", "live_candidates")];
+/// Sources whose `#[serde(default)]` attributes make fields optional in TS
+/// (serde-reflection cannot see defaults).
+const SOURCES: &[&str] =
+    &["../mfcore/src/model.rs", "../mfcore/src/config.rs", "../mfcore/src/pipeline/capture.rs", "src/config.rs"];
+
+/// (type, field) pairs that may be left out, and types whose fields all may:
+/// read from the `#[serde(default)]` attributes in [`SOURCES`].
+fn defaults() -> (BTreeSet<(String, String)>, BTreeSet<String>) {
+    let mut fields = BTreeSet::new();
+    let mut types = BTreeSet::new();
+    for source in SOURCES {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(source);
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let mut owner: Option<String> = None;
+        let mut pending_default = false;
+        for line in text.lines().map(str::trim) {
+            if line.starts_with("#[serde(default") {
+                pending_default = true;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("pub struct ") {
+                let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                if pending_default {
+                    types.insert(name.clone());
+                }
+                owner = Some(name);
+                pending_default = false;
+                continue;
+            }
+            if line.starts_with("pub enum ") || line == "}" {
+                owner = None;
+                pending_default = false;
+                continue;
+            }
+            if let (Some(owner), Some(rest)) = (&owner, line.strip_prefix("pub "))
+                && let Some((field, _)) = rest.split_once(':')
+            {
+                if pending_default {
+                    fields.insert((owner.clone(), field.trim().to_string()));
+                }
+                pending_default = false;
+                continue;
+            }
+            // Doc comments and other attributes between `#[serde(default)]` and the field keep it.
+            if !(line.starts_with("///") || line.starts_with("#[") || line.is_empty()) {
+                pending_default = false;
+            }
+        }
+    }
+    (fields, types)
+}
 /// Fields whose TS type is wider than the trace says: JSON transports (the mock
 /// engine, the CLI) carry NaN as null.
 const WIDER: &[(&str, &str, &str)] = &[("PitchFrame", "midi", "number | null")];
@@ -158,9 +207,11 @@ fn ts(format: &Format) -> String {
 }
 
 fn fields(owner: &str, fields: &[Named<Format>]) -> String {
+    let (optional_fields, optional_types) = defaults();
     let mut out = String::new();
     for field in fields {
-        let optional = ALL_OPTIONAL.contains(&owner) || OPTIONAL_FIELDS.contains(&(owner, field.name.as_str()));
+        let optional =
+            optional_types.contains(owner) || optional_fields.contains(&(owner.to_string(), field.name.clone()));
         let ty = WIDER
             .iter()
             .find(|(t, f, _)| *t == owner && *f == field.name)
@@ -172,8 +223,7 @@ fn fields(owner: &str, fields: &[Named<Format>]) -> String {
 }
 
 fn inline_fields(owner: &str, list: &[Named<Format>]) -> String {
-    let body: Vec<String> =
-        fields(owner, list).lines().map(|l| l.trim().trim_end_matches(';').to_string()).collect();
+    let body: Vec<String> = fields(owner, list).lines().map(|l| l.trim().trim_end_matches(';').to_string()).collect();
     if body.is_empty() { "{}".into() } else { format!("{{ {} }}", body.join("; ")) }
 }
 

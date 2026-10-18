@@ -14,9 +14,10 @@ use std::time::{Duration, Instant};
 use mfcore::engine::{Engine, EngineOptions, LiveSession};
 use mfcore::model::*;
 use mfcore::pipeline::recognize::CallBudget;
-use mfcore::platform::SessionObserver;
+use mfcore::platform::{SessionObserver, SpeechToText};
 use mfcore::shazam::QueuePolicy;
 use mfcore::store::SessionUpdate;
+use mfcore::util::cancel::TaskHandle;
 use mfcore::{EngineConfig, MfError};
 use sha2::{Digest, Sha256};
 
@@ -155,6 +156,17 @@ fn engine_with_wait(server: &Server, manifest_path: &str, max_wait: Duration) ->
 
 /// An engine in `dir` (which may already hold data, e.g. an installed index).
 fn engine_in(dir: PathBuf, server: &Server, manifest_path: &str, max_wait: Duration) -> Fixture {
+    engine_in_with(dir, server, manifest_path, max_wait, None)
+}
+
+/// [`engine_in`] with the app's speech recognizer.
+fn engine_in_with(
+    dir: PathBuf,
+    server: &Server,
+    manifest_path: &str,
+    max_wait: Duration,
+    speech: Option<Arc<dyn SpeechToText>>,
+) -> Fixture {
     let config = EngineConfig {
         data_dir: dir.join("data").to_string_lossy().into_owned(),
         cache_dir: dir.join("cache").to_string_lossy().into_owned(),
@@ -181,7 +193,7 @@ fn engine_in(dir: PathBuf, server: &Server, manifest_path: &str, max_wait: Durat
         call_budget: Some(CallBudget::new(1000.0, Duration::from_millis(1))),
         offline_catalog: true,
     };
-    let engine = Engine::with_options(config, None, None, None, options).expect("engine");
+    let engine = Engine::with_options(config, None, None, speech, options).expect("engine");
     Fixture { engine, dir: TempDir(dir) }
 }
 
@@ -526,6 +538,10 @@ const HUM_NOTES: [f32; 8] = [57.0, 59.0, 60.0, 62.0, 64.0, 62.0, 60.0, 59.0];
 
 /// An engine whose installed melody index holds the hummed tune and 40 other songs.
 fn engine_with_hum_index(server: &Server) -> Fixture {
+    engine_with_hum_index_and_speech(server, None)
+}
+
+fn engine_with_hum_index_and_speech(server: &Server, speech: Option<Arc<dyn SpeechToText>>) -> Fixture {
     let dir = std::env::temp_dir().join(format!("mf-engine-test-{}", mfcore::util::new_id()));
     let melody = dir.join("data/melody");
     std::fs::create_dir_all(&melody).unwrap();
@@ -554,7 +570,7 @@ fn engine_with_hum_index(server: &Server) -> Fixture {
     let jsonl = dir.join("songs.jsonl");
     std::fs::write(&jsonl, lines.join("\n")).unwrap();
     mfcore::melody::builder::build_index(&jsonl, &melody.join("melody-index.mfi"), "2026.10.1").expect("build index");
-    engine_in(dir, server, "/manifest.json", Duration::from_secs(5))
+    engine_in_with(dir, server, "/manifest.json", Duration::from_secs(5), speech)
 }
 
 fn candidate_lists(events: &[SessionEvent], final_list: bool) -> Vec<Vec<Candidate>> {
@@ -577,7 +593,7 @@ fn progressive_search_answers_while_humming_and_stops_when_confident() {
     let server = shazam_server(NO_MATCH_JSON);
     let fx = engine_with_hum_index(&server);
     let recorder = Arc::new(Recorder::default());
-    let options = ListenOptions { auto_stop: true, live_candidates: true };
+    let options = ListenOptions { auto_stop: true, live_candidates: true, ..ListenOptions::default() };
     let session =
         fx.engine.start_listening_with(CaptureSource::Microphone, ListenMode::Hum, options, recorder.clone()).unwrap();
     feed(&session, &hum(25.0), 16_000, 1);
@@ -622,7 +638,7 @@ fn without_auto_stop_a_hum_runs_until_finish_and_interim_lists_stay_off() {
     let server = shazam_server(NO_MATCH_JSON);
     let fx = engine_with_hum_index(&server);
     let recorder = Arc::new(Recorder::default());
-    let options = ListenOptions { auto_stop: false, live_candidates: false };
+    let options = ListenOptions { auto_stop: false, live_candidates: false, ..ListenOptions::default() };
     let session =
         fx.engine.start_listening_with(CaptureSource::Microphone, ListenMode::Hum, options, recorder.clone()).unwrap();
     let mut audio = hum(12.0);
@@ -635,6 +651,57 @@ fn without_auto_stop_a_hum_runs_until_finish_and_interim_lists_stay_off() {
     assert!(candidate_lists(&events, false).is_empty(), "interim lists are opt-in");
     assert_eq!(candidate_lists(&events, true)[0][0].track.title, "Hummed Tune");
     assert!((recording_seconds(&fx, &session.id()) - 18.0).abs() < 0.5);
+}
+
+/// A speech recognizer that hears only humming and counts its calls.
+#[derive(Default)]
+struct CountingSpeech(AtomicUsize);
+
+impl SpeechToText for CountingSpeech {
+    fn transcribe(
+        &self,
+        _wav: String,
+        _language: String,
+        _task: Arc<TaskHandle>,
+    ) -> Result<Vec<String>, mfcore::PlatformError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(vec!["hmm hmm".into()])
+    }
+}
+
+#[test]
+fn pushed_transcripts_replace_the_speech_recognizer() {
+    let server = shazam_server(NO_MATCH_JSON);
+    let speech = Arc::new(CountingSpeech::default());
+    let fx = engine_with_hum_index_and_speech(&server, Some(speech.clone()));
+    let hum_with = |options: ListenOptions, transcripts: &[(&str, bool)]| {
+        let recorder = Arc::new(Recorder::default());
+        let session = fx
+            .engine
+            .start_listening_with(CaptureSource::Microphone, ListenMode::Hum, options, recorder.clone())
+            .unwrap();
+        let audio = hum(6.0);
+        let (first, rest) = audio.split_at(audio.len() / 2);
+        feed(&session, first, 16_000, 1);
+        for &(text, is_final) in transcripts {
+            session.push_transcript(SpeechTranscript { text: text.into(), is_final, ..SpeechTranscript::default() });
+        }
+        feed(&session, rest, 16_000, 1);
+        session.finish();
+        let events = recorder.wait_terminal();
+        assert!(matches!(check_contract(&events), SessionEvent::Finished { .. }), "{events:?}");
+        assert!(!events.iter().any(|e| matches!(e, SessionEvent::Phase { phase: Phase::SearchingLyrics, .. })));
+    };
+    // The app sends what its recognizer hears: the engine does not ask it again.
+    let options = ListenOptions { transcripts: true, ..ListenOptions::default() };
+    hum_with(options, &[("la la", false), ("la la la la", true)]);
+    assert_eq!(speech.0.load(Ordering::SeqCst), 0);
+    // Pushed without saying so: used as well.
+    hum_with(ListenOptions::default(), &[("da da da", true)]);
+    assert_eq!(speech.0.load(Ordering::SeqCst), 0);
+    // Nothing pushed: the recognizer transcribes the capture.
+    hum_with(ListenOptions::default(), &[]);
+    assert_eq!(speech.0.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -964,4 +1031,193 @@ fn concurrent_index_download_counter() {
         }
     }
     assert_eq!(count.load(Ordering::SeqCst), 3);
+}
+
+// ---------------------------------------------------------------- melody encoder
+
+const TINY_ENCODER_MODEL: &[u8] = include_bytes!("../src/melody/encoder/fixtures/tiny.onnx");
+
+/// An index of `songs` random 26 s melodies (seeded), as file bytes.
+fn random_index(dir: &std::path::Path, songs: usize, seed: u32, version: &str) -> Vec<u8> {
+    let mut state = seed | 1;
+    let mut lines = Vec::new();
+    for k in 0..songs {
+        let mut pitch = 60.0f32;
+        let notes: Vec<String> = (0..64)
+            .map(|i| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                pitch = (pitch + [-5.0, -3.0, -2.0, -1.0, 1.0, 2.0, 3.0, 4.0][(state % 8) as usize]).clamp(50.0, 74.0);
+                format!("[{pitch}, {}, 380]", i * 400)
+            })
+            .collect();
+        lines.push(format!(
+            r#"{{"title": "Song {k}", "artist": "Band", "isrc": null, "deezer_id": null, "year": 2001, "popularity": 0.5, "phrases": [{{"source": "midi", "start_ms": 0, "notes": [{}]}}]}}"#,
+            notes.join(", ")
+        ));
+    }
+    let jsonl = dir.join(format!("songs-{seed}.jsonl"));
+    std::fs::write(&jsonl, lines.join("\n")).unwrap();
+    let mfi = dir.join(format!("index-{seed}.mfi"));
+    mfcore::melody::builder::build_index(&jsonl, &mfi, version).expect("build index");
+    std::fs::read(&mfi).unwrap()
+}
+
+/// An encoder file for the index in `mfi` (the tiny test model).
+fn encoder_for(mfi: &[u8]) -> Vec<u8> {
+    use mfcore::melody::encoder::build::{BuildOptions, build};
+    let index = mfcore::melody::MelodyIndex::from_bytes(mfi.to_vec()).expect("index");
+    let options = BuildOptions {
+        top_songs: None,
+        sub_quantizers: 16,
+        threads: 2,
+        version: "test".into(),
+        ..BuildOptions::default()
+    };
+    build(&index, TINY_ENCODER_MODEL, &options, &|_| {}).expect("encoder").0
+}
+
+fn sha_hex(data: &[u8]) -> String {
+    Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Servers for an index and (optionally) its encoder: manifests at
+/// `/manifest.json` (with the encoder entry) and `/manifest-plain.json` (without).
+fn encoder_servers(index: &[u8], encoder: &[u8]) -> (Server, Server) {
+    let file = |prefix: &str, data: &[u8]| Route {
+        prefix: prefix.into(),
+        status: 200,
+        content_type: "application/octet-stream",
+        body: Body::Bytes(data.to_vec()),
+    };
+    let files = Server::start(vec![file("/melody-index.mfi", index), file("/melody-encoder-android.mfe", encoder)]);
+    let plain = format!(
+        r#"{{"version": "2026.10.1", "url": "{}/melody-index.mfi", "sha256": "{}", "bytes": {}, "songs": 30, "min_core": "1.1.0", "format": 2}}"#,
+        files.url,
+        sha_hex(index),
+        index.len()
+    );
+    let with = format!(
+        r#"{}, "encoder": {{"url": "{}/melody-encoder-android.mfe", "sha256": "{}", "bytes": {}, "format": 1, "min_core": "1.1.0"}}}}"#,
+        plain.trim_end_matches('}'),
+        files.url,
+        sha_hex(encoder),
+        encoder.len()
+    );
+    let api = Server::start(vec![
+        json_route("/manifest.json", &with),
+        json_route("/manifest-plain.json", &plain),
+        json_route("/discovery/", NO_MATCH_JSON),
+    ]);
+    (api, files)
+}
+
+fn install(fx: &Fixture) -> SessionEvent {
+    let recorder = Arc::new(Recorder::default());
+    fx.engine.install_melody_index(recorder.clone()).unwrap();
+    check_contract(&recorder.wait_terminal())
+}
+
+const INSTALLED: SessionEvent = SessionEvent::Finished { outcome: Outcome::Completed { identified: 1, total: 1 } };
+
+#[test]
+fn the_encoder_installs_with_its_index_and_is_removed_with_it() {
+    let scratch = std::env::temp_dir().join(format!("mf-encoder-{}", mfcore::util::new_id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let _cleanup = TempDir(scratch.clone());
+    let index = random_index(&scratch, 30, 7, "2026.10.1");
+    let encoder = encoder_for(&index);
+    let (api, files) = encoder_servers(&index, &encoder);
+    let fx = engine_with(&api, "/manifest.json");
+
+    let status = fx.engine.check_melody_index().unwrap();
+    assert_eq!(status.download_bytes, Some((index.len() + encoder.len()) as u64), "one download, one size");
+    assert_eq!(install(&fx), INSTALLED);
+    let status = fx.engine.melody_index_status();
+    assert!(status.installed && status.encoder_installed, "{status:?}");
+    assert_eq!(status.size_bytes, (index.len() + encoder.len()) as u64);
+    assert_eq!(status.available_version, None);
+    let dir = melody_dir(&fx);
+    assert_eq!(std::fs::read(dir.join("melody-encoder.mfe")).unwrap(), encoder);
+    assert!(!dir.join(".download-encoder").exists());
+    let manifest = std::fs::read_to_string(dir.join("manifest.json")).unwrap();
+    assert!(manifest.contains("melody-encoder-android.mfe"), "{manifest}");
+    assert_eq!(files.hits("/melody-encoder-android.mfe"), 1);
+    // Up to date: nothing to fetch again.
+    assert_eq!(fx.engine.check_melody_index().unwrap().available_version, None);
+    assert_eq!(install(&fx), INSTALLED);
+    assert_eq!((files.hits("/melody-index.mfi"), files.hits("/melody-encoder-android.mfe")), (1, 1));
+
+    fx.engine.remove_melody_index().unwrap();
+    let status = fx.engine.melody_index_status();
+    assert!(!status.installed && !status.encoder_installed);
+    assert!(!dir.join("melody-encoder.mfe").exists());
+    assert!(!dir.join("melody-index.mfi").exists());
+}
+
+#[test]
+fn a_current_index_gets_its_missing_encoder_and_keeps_it_across_restarts() {
+    let scratch = std::env::temp_dir().join(format!("mf-encoder-{}", mfcore::util::new_id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let _cleanup = TempDir(scratch.clone());
+    let index = random_index(&scratch, 30, 11, "2026.10.1");
+    let encoder = encoder_for(&index);
+    let (api, files) = encoder_servers(&index, &encoder);
+    let home = scratch.join("app");
+
+    // Installed from a manifest without the encoder (as by a core before the glue).
+    let first = engine_in(home.clone(), &api, "/manifest-plain.json", Duration::from_secs(5));
+    assert_eq!(install(&first), INSTALLED);
+    assert!(!first.engine.melody_index_status().encoder_installed);
+    let Fixture { engine, dir } = first;
+    std::mem::forget(dir);
+    drop(engine);
+
+    // The manifest now names an encoder: offered as the same version, encoder bytes only.
+    let second = engine_in(home.clone(), &api, "/manifest.json", Duration::from_secs(5));
+    let status = second.engine.check_melody_index().unwrap();
+    assert_eq!(status.available_version.as_deref(), Some("2026.10.1"));
+    assert_eq!(status.download_bytes, Some(encoder.len() as u64));
+    assert_eq!(install(&second), INSTALLED);
+    assert_eq!(files.hits("/melody-index.mfi"), 1, "the index is not fetched again");
+    assert!(second.engine.melody_index_status().encoder_installed);
+    let Fixture { engine, dir } = second;
+    std::mem::forget(dir);
+    drop(engine);
+
+    // Opened at startup next time.
+    let third = engine_in(home, &api, "/manifest.json", Duration::from_secs(5));
+    let status = third.engine.melody_index_status();
+    assert!(status.installed && status.encoder_installed, "{status:?}");
+}
+
+#[test]
+fn an_encoder_of_another_index_is_refused_and_the_index_still_installs() {
+    let scratch = std::env::temp_dir().join(format!("mf-encoder-{}", mfcore::util::new_id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let _cleanup = TempDir(scratch.clone());
+    let index = random_index(&scratch, 30, 13, "2026.10.1");
+    let other = random_index(&scratch, 30, 17, "2026.10.1");
+    let foreign = encoder_for(&other);
+    let (api, _files) = encoder_servers(&index, &foreign);
+    let fx = engine_with(&api, "/manifest.json");
+    assert_eq!(install(&fx), INSTALLED);
+    let status = fx.engine.melody_index_status();
+    assert!(status.installed && !status.encoder_installed, "{status:?}");
+    assert_eq!(status.size_bytes, index.len() as u64);
+    let dir = melody_dir(&fx);
+    assert!(!dir.join("melody-encoder.mfe").exists());
+    assert!(!dir.join(".download-encoder").exists());
+    assert!(!std::fs::read_to_string(dir.join("manifest.json")).unwrap().contains("encoder"));
+
+    // A foreign file left in place (copied by hand) is deleted at startup.
+    std::fs::write(dir.join("melody-encoder.mfe"), &foreign).unwrap();
+    let home = fx.dir.0.clone();
+    let Fixture { engine, dir: guard } = fx;
+    drop(engine);
+    let again = engine_in(home, &api, "/manifest.json", Duration::from_secs(5));
+    std::mem::forget(guard);
+    assert!(!again.engine.melody_index_status().encoder_installed);
+    assert!(!melody_dir(&again).join("melody-encoder.mfe").exists());
 }

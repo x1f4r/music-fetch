@@ -1,12 +1,14 @@
 //! Melody index installation: manifest, streamed download with progress,
-//! SHA-256 verification and an atomic swap. See docs/PIPELINES.md ("Melody
-//! index installation") and docs/CORE_API.md ("Melody index").
+//! SHA-256 verification and an atomic swap, then the index's optional encoder
+//! file the same way. See docs/PIPELINES.md ("Melody index installation") and
+//! docs/CORE_API.md ("Melody index").
 //!
 //! In the browser the index is a work file (`melody/melody-index.mfi` in
 //! `EngineCtx::files`) instead of a memory-mapped file. It is read into memory
 //! only when humming needs it ([`load_installed`], in 1 MiB pieces with the
 //! event loop running in between) and dropped with the Worker; a download
 //! builds the index in memory as it arrives, so installing needs no second read.
+//! The browser does not install the encoder file (the index works without it).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -19,6 +21,8 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::error::{MfError, Result};
+#[cfg(not(target_family = "wasm"))]
+use crate::melody::encoder::EncoderIndex;
 use crate::melody::{MelodyIndex, index};
 use crate::model::{MelodyIndexStatus, Phase};
 use crate::pipeline::ctx::{EngineCtx, SessionCtx};
@@ -27,9 +31,14 @@ use crate::util::rt::Instant;
 
 /// The installed index, in `data_dir/melody/`.
 pub const INDEX_FILE: &str = "melody-index.mfi";
-/// The manifest the installed index came with.
+/// The manifest the installed index came with (its `encoder` entry only when
+/// that file is installed too).
 pub const MANIFEST_FILE: &str = "manifest.json";
+/// The installed index's learned encoder (`melody-encoder-<tier>.mfe` on the server).
+pub const ENCODER_FILE: &str = "melody-encoder.mfe";
 const DOWNLOAD_FILE: &str = ".download";
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
+const ENCODER_DOWNLOAD_FILE: &str = ".download-encoder";
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// Longest wait for the next piece of the download before giving up.
 const STALL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -56,8 +65,8 @@ pub struct Manifest {
     #[serde(default = "first_format")]
     pub format: u32,
     /// The index's learned-encoder file (`melody-encoder-<tier>.mfe`, see
-    /// `melody/encoder.rs`). Optional: cores before 1.2 ignore it, and the index
-    /// works without it.
+    /// `melody/encoder.rs`). Optional: the index works without it, and cores
+    /// ignore entries they cannot use ([`Manifest::usable_encoder`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encoder: Option<CompanionFile>,
 }
@@ -193,6 +202,7 @@ pub fn open_installed(engine: &EngineCtx) -> Option<Arc<MelodyIndex>> {
         tracing::info!("removing the format {format} melody index (this version reads format {})", index::FORMAT);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(melody_dir(engine).join(MANIFEST_FILE));
+        let _ = std::fs::remove_file(melody_dir(engine).join(ENCODER_FILE));
         return None;
     }
     match catch_unwind(AssertUnwindSafe(|| MelodyIndex::open(&path))) {
@@ -204,6 +214,7 @@ pub fn open_installed(engine: &EngineCtx) -> Option<Arc<MelodyIndex>> {
                 tracing::warn!("could not move the melody index aside: {e}");
             }
             let _ = std::fs::remove_file(melody_dir(engine).join(MANIFEST_FILE));
+            let _ = std::fs::remove_file(melody_dir(engine).join(ENCODER_FILE));
             None
         }
         Err(_) => {
@@ -211,6 +222,59 @@ pub fn open_installed(engine: &EngineCtx) -> Option<Arc<MelodyIndex>> {
             None
         }
     }
+}
+
+/// Open the installed index's encoder file. A file that does not belong to
+/// `index` (or is damaged) is deleted: it can never be used.
+#[cfg(not(target_family = "wasm"))]
+pub fn open_encoder(engine: &EngineCtx, index: &Arc<MelodyIndex>) -> Option<(Arc<MelodyIndex>, Arc<EncoderIndex>)> {
+    let path = melody_dir(engine).join(ENCODER_FILE);
+    if !path.exists() {
+        return None;
+    }
+    match catch_unwind(AssertUnwindSafe(|| EncoderIndex::open(&path, index))) {
+        Ok(Ok(encoder)) => Some((index.clone(), Arc::new(encoder))),
+        Ok(Err(e)) => {
+            tracing::warn!("removing the melody encoder file ({e})");
+            let _ = std::fs::remove_file(&path);
+            None
+        }
+        Err(_) => {
+            tracing::error!("opening the melody encoder panicked; searching without it");
+            None
+        }
+    }
+}
+
+/// The installed encoder's manifest entry, when the engine uses that file.
+fn installed_encoder(
+    engine: &EngineCtx,
+    index: &Arc<MelodyIndex>,
+    manifest: Option<&Manifest>,
+) -> Option<CompanionFile> {
+    engine.melody_encoder(index)?;
+    manifest?.encoder.clone()
+}
+
+/// What installing `available` would still download: the index when it is
+/// newer than the installed one (or none is installed), and its encoder file
+/// when this core uses one and the installed index lacks that exact file.
+fn pending(engine: &EngineCtx, available: &Manifest, installed: Option<&Manifest>) -> (bool, Option<CompanionFile>) {
+    let index = engine.melody_index();
+    let version = index.as_ref().and_then(|i| guarded(|| i.version().to_string()));
+    let index_newer = match (&index, &version) {
+        (Some(_), Some(v)) => compare_versions(&available.version, v).is_gt(),
+        _ => true,
+    };
+    let current = index.as_ref().and_then(|i| installed_encoder(engine, i, installed));
+    let encoder = available
+        .usable_encoder()
+        .filter(|e| index_newer || current.as_ref().is_none_or(|c| !c.sha256.eq_ignore_ascii_case(&e.sha256)))
+        .cloned();
+    // The browser installs the index alone.
+    #[cfg(target_family = "wasm")]
+    let encoder = encoder.filter(|_| false);
+    (index_newer, encoder)
 }
 
 /// Status of the installed index plus what the last manifest check found.
@@ -223,9 +287,12 @@ pub fn status(engine: &EngineCtx, available: Option<&Manifest>) -> MelodyIndexSt
         .or_else(|| manifest.as_ref().map(|m| m.version.clone()));
     let song_count =
         index.as_ref().and_then(|i| guarded(|| i.song_count())).or(manifest.as_ref().map(|m| m.songs)).unwrap_or(0);
+    let encoder_installed = index.as_ref().is_some_and(|i| engine.melody_encoder(i).is_some());
     #[cfg(not(target_family = "wasm"))]
-    let (size_bytes, installed) =
-        (std::fs::metadata(index_path(engine)).map(|m| m.len()).unwrap_or(0), index.is_some());
+    let (size_bytes, installed) = {
+        let size = |name: &str| std::fs::metadata(melody_dir(engine).join(name)).map(|m| m.len()).unwrap_or(0);
+        (size(INDEX_FILE) + if encoder_installed { size(ENCODER_FILE) } else { 0 }, index.is_some())
+    };
     // In the browser the index is loaded only for humming: a stored file with
     // its manifest counts as installed.
     #[cfg(target_family = "wasm")]
@@ -233,17 +300,24 @@ pub fn status(engine: &EngineCtx, available: Option<&Manifest>) -> MelodyIndexSt
         let size = engine.files.len(&name(&index_path(engine))).ok().flatten().unwrap_or(0);
         (size, index.is_some() || (size > 0 && manifest.as_ref().is_some_and(|m| m.bytes == size)))
     };
-    let newer = available.filter(|m| match (&version, installed) {
-        (Some(v), true) => compare_versions(&m.version, v).is_gt(),
-        _ => true,
+    let pending = available.map(|m| (m, pending(engine, m, manifest.as_ref())));
+    let wanted = pending.filter(|(m, (index_newer, encoder))| {
+        // Browser: an index that is stored but not loaded yet is as new as its manifest.
+        let stored_current = installed
+            && index.is_none()
+            && manifest.as_ref().is_some_and(|stored| compare_versions(&m.version, &stored.version).is_le());
+        (*index_newer && !stored_current) || encoder.is_some()
     });
     MelodyIndexStatus {
         installed,
         version: if installed { version } else { None },
         song_count: if installed { song_count } else { 0 },
         size_bytes: if installed { size_bytes } else { 0 },
-        available_version: newer.map(|m| m.version.clone()),
-        download_bytes: newer.map(|m| m.bytes),
+        available_version: wanted.as_ref().map(|(m, _)| m.version.clone()),
+        download_bytes: wanted.map(|(m, (index_newer, encoder))| {
+            (if index_newer { m.bytes } else { 0 }) + encoder.map_or(0, |e| e.bytes)
+        }),
+        encoder_installed,
     }
 }
 
@@ -358,8 +432,10 @@ impl Drop for Partial {
 }
 
 /// Download, verify and install the index from `manifest_url`, then swap it
-/// into the engine. Emits `Phase(Downloading, fraction)`; the caller emits the
-/// terminal event.
+/// into the engine; then the same for the index's encoder file, when the
+/// manifest names one this core can use. An index that is already current only
+/// gets its missing encoder file. Emits `Phase(Downloading, fraction)` over
+/// both files; the caller emits the terminal event.
 #[cfg(not(target_family = "wasm"))]
 pub async fn install(ctx: &SessionCtx, manifest_url: &str) -> Result<Manifest> {
     let engine = &ctx.engine;
@@ -370,53 +446,128 @@ pub async fn install(ctx: &SessionCtx, manifest_url: &str) -> Result<Manifest> {
         .map_err(|_| MfError::Storage { message: "The app folder is not writable.".into() })?;
 
     let current = installed_manifest(engine);
-    if engine.melody_index().is_some()
+    let same_index = engine.melody_index().is_some()
         && current
             .as_ref()
-            .is_some_and(|m| m.version == manifest.version && m.sha256.eq_ignore_ascii_case(&manifest.sha256))
-    {
+            .is_some_and(|m| m.version == manifest.version && m.sha256.eq_ignore_ascii_case(&manifest.sha256));
+    let (_, wanted_encoder) = pending(engine, &manifest, current.as_ref());
+    let encoder_bytes = wanted_encoder.as_ref().map_or(0, |e| e.bytes);
+
+    if same_index {
+        if let (Some(file), Some(index)) = (wanted_encoder, engine.melody_index()) {
+            // Only the encoder is missing (or outdated): fetching it is the whole job.
+            let progress = Progress { done: 0, total: file.bytes };
+            install_encoder(ctx, &file, &index, progress).await?;
+            let kept = Manifest { encoder: Some(file), ..current.clone().unwrap_or_else(|| manifest.clone()) };
+            write_manifest(&dir, &kept)?;
+        }
         ctx.emitter.phase(Phase::Downloading, Some(1.0));
         return Ok(manifest);
     }
 
     let partial_path = dir.join(DOWNLOAD_FILE);
     let mut partial = Partial(Some(partial_path.clone()));
-    download(ctx, &manifest, &partial_path).await?;
+    let progress = Progress { done: 0, total: manifest.bytes + encoder_bytes };
+    download(ctx, &manifest.url, &manifest.sha256, manifest.bytes, &partial_path, progress, "melody index").await?;
     ctx.cancel.check()?;
 
     let open_path = partial_path.clone();
     let opened =
         crate::util::rt::spawn_blocking(move || guarded(|| MelodyIndex::open(&open_path))).await.ok().flatten();
     let index = match opened {
-        Some(Ok(index)) => index,
+        Some(Ok(index)) => Arc::new(index),
         _ => return Err(MfError::internal("the downloaded melody index could not be opened")),
     };
     ctx.cancel.check()?;
 
+    // The old encoder file belongs to the old index.
+    *engine.encoder.write() = None;
+    let _ = std::fs::remove_file(dir.join(ENCODER_FILE));
     let final_path = dir.join(INDEX_FILE);
     std::fs::rename(&partial_path, &final_path)
         .map_err(|_| MfError::Storage { message: "The melody index could not be saved.".into() })?;
     partial.0 = None;
-    write_manifest(&dir, &manifest)?;
-    *engine.melody.write() = Some(Arc::new(index));
+    write_manifest(&dir, &Manifest { encoder: None, ..manifest.clone() })?;
+    *engine.melody.write() = Some(index.clone());
+
+    if let Some(file) = wanted_encoder {
+        let progress = Progress { done: manifest.bytes, total: manifest.bytes + file.bytes };
+        match install_encoder(ctx, &file, &index, progress).await {
+            Ok(()) => write_manifest(&dir, &Manifest { encoder: Some(file), ..manifest.clone() })?,
+            // The index is installed and works alone; the status offers the encoder again.
+            Err(MfError::Canceled) => return Err(MfError::Canceled),
+            Err(e) => tracing::warn!("melody encoder not installed: {e}"),
+        }
+    }
     ctx.emitter.phase(Phase::Downloading, Some(1.0));
     Ok(manifest)
 }
 
+/// Download, verify and open the encoder file for `index`, then swap it in.
 #[cfg(not(target_family = "wasm"))]
-async fn download(ctx: &SessionCtx, manifest: &Manifest, path: &Path) -> Result<()> {
-    let request = crate::util::http::prepare(ctx.engine.http.get(&manifest.url).timeout(DOWNLOAD_TIMEOUT)).send();
+async fn install_encoder(
+    ctx: &SessionCtx,
+    file: &CompanionFile,
+    index: &Arc<MelodyIndex>,
+    progress: Progress,
+) -> Result<()> {
+    let engine = &ctx.engine;
+    let dir = melody_dir(engine);
+    let partial_path = dir.join(ENCODER_DOWNLOAD_FILE);
+    let mut partial = Partial(Some(partial_path.clone()));
+    download(ctx, &file.url, &file.sha256, file.bytes, &partial_path, progress, "melody encoder").await?;
+    ctx.cancel.check()?;
+    let open_path = partial_path.clone();
+    let for_index = index.clone();
+    let opened = crate::util::rt::spawn_blocking(move || guarded(|| EncoderIndex::open(&open_path, &for_index)))
+        .await
+        .ok()
+        .flatten();
+    let encoder = match opened {
+        Some(Ok(encoder)) => encoder,
+        // Another index's file, or damaged in a way the checksum cannot see.
+        Some(Err(e)) => return Err(MfError::internal(format!("the downloaded melody encoder is unusable ({e})"))),
+        None => return Err(MfError::internal("the downloaded melody encoder could not be opened")),
+    };
+    ctx.cancel.check()?;
+    *engine.encoder.write() = None;
+    std::fs::rename(&partial_path, dir.join(ENCODER_FILE))
+        .map_err(|_| MfError::Storage { message: "The melody encoder could not be saved.".into() })?;
+    partial.0 = None;
+    // Only for the index the engine still has (a removal may have raced us).
+    if engine.melody_index().is_some_and(|i| Arc::ptr_eq(&i, index)) {
+        *engine.encoder.write() = Some((index.clone(), Arc::new(encoder)));
+    }
+    Ok(())
+}
+
+/// Download progress over several files: `done` bytes before this one, `total` overall.
+#[cfg(not(target_family = "wasm"))]
+#[derive(Debug, Clone, Copy)]
+struct Progress {
+    done: u64,
+    total: u64,
+}
+
+#[cfg(not(target_family = "wasm"))]
+async fn download(
+    ctx: &SessionCtx,
+    url: &str,
+    sha256: &str,
+    bytes: u64,
+    path: &Path,
+    progress: Progress,
+    what: &str,
+) -> Result<()> {
+    let request = crate::util::http::prepare(ctx.engine.http.get(url).timeout(DOWNLOAD_TIMEOUT)).send();
     let mut response = tokio::select! {
         r = request => r.map_err(|e| network(&e))?,
         _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
     };
     if !response.status().is_success() {
-        return Err(MfError::network(format!(
-            "The melody index download failed (HTTP {}).",
-            response.status().as_u16()
-        )));
+        return Err(MfError::network(format!("The {what} download failed (HTTP {}).", response.status().as_u16())));
     }
-    let storage = |_| MfError::Storage { message: "The melody index could not be saved.".into() };
+    let storage = |_| MfError::Storage { message: format!("The {what} could not be saved.") };
     let mut file = tokio::fs::File::create(path).await.map_err(storage)?;
     let mut hasher = Sha256::new();
     let mut written: u64 = 0;
@@ -433,12 +584,12 @@ async fn download(ctx: &SessionCtx, manifest: &Manifest, path: &Path) -> Result<
             Err(_) => return Err(MfError::network("The download stalled.")),
         };
         written += chunk.len() as u64;
-        if written > manifest.bytes {
+        if written > bytes {
             return Err(MfError::network("The download was damaged. Try again."));
         }
         hasher.update(&chunk);
         file.write_all(&chunk).await.map_err(storage)?;
-        let fraction = written as f32 / manifest.bytes as f32;
+        let fraction = (progress.done + written) as f32 / progress.total.max(1) as f32;
         if fraction - reported.0 >= PROGRESS_STEP && reported.1.elapsed() >= PROGRESS_INTERVAL {
             reported = (fraction, Instant::now());
             ctx.emitter.phase(Phase::Downloading, Some(fraction.min(0.99)));
@@ -448,8 +599,8 @@ async fn download(ctx: &SessionCtx, manifest: &Manifest, path: &Path) -> Result<
     file.sync_all().await.map_err(storage)?;
     drop(file);
     let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if written != manifest.bytes || !digest.eq_ignore_ascii_case(&manifest.sha256) {
-        tracing::warn!(written, expected = manifest.bytes, "melody index download failed verification");
+    if written != bytes || !digest.eq_ignore_ascii_case(sha256) {
+        tracing::warn!(written, expected = bytes, "{what} download failed verification");
         return Err(MfError::network("The download was damaged. Try again."));
     }
     Ok(())
@@ -466,11 +617,12 @@ fn write_manifest(dir: &Path, manifest: &Manifest) -> Result<()> {
     save().map_err(|_| MfError::Storage { message: "The melody index could not be saved.".into() })
 }
 
-/// Remove the installed index and its manifest.
+/// Remove the installed index, its encoder and its manifest.
 pub fn remove(engine: &EngineCtx) -> Result<()> {
+    *engine.encoder.write() = None;
     *engine.melody.write() = None;
     let dir = melody_dir(engine);
-    for file in [INDEX_FILE, MANIFEST_FILE, DOWNLOAD_FILE] {
+    for file in [INDEX_FILE, MANIFEST_FILE, DOWNLOAD_FILE, ENCODER_FILE, ENCODER_DOWNLOAD_FILE] {
         #[cfg(not(target_family = "wasm"))]
         match std::fs::remove_file(dir.join(file)) {
             Ok(()) => {}
@@ -515,7 +667,8 @@ pub async fn install(ctx: &SessionCtx, manifest_url: &str) -> Result<Manifest> {
         }
     };
     let saved = engine.files.rename(&partial, &name(&dir.join(INDEX_FILE))).and_then(|()| {
-        let json = serde_json::to_vec_pretty(&manifest)?;
+        // Without the encoder entry: the browser installs the index alone.
+        let json = serde_json::to_vec_pretty(&Manifest { encoder: None, ..manifest.clone() })?;
         engine.files.write(&name(&dir.join(MANIFEST_FILE)), &json)
     });
     if saved.is_err() {

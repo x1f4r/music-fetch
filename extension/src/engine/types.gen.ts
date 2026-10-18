@@ -212,6 +212,15 @@ export type ListenMode = 'Auto' | 'Recording' | 'Hum';
 export interface ListenOptions {
   auto_stop: boolean;
   live_candidates?: boolean;
+  transcripts?: boolean;
+}
+
+export interface SpeechTranscript {
+  text: string;
+  alternatives?: string[];
+  language?: string | null;
+  confidence?: number | null;
+  is_final: boolean;
 }
 
 export type AnalyzeMode = 'Auto' | 'Recording' | 'Impression' | 'Mix';
@@ -256,6 +265,7 @@ export interface MelodyIndexStatus {
   size_bytes: number;
   available_version: string | null;
   download_bytes: number | null;
+  encoder_installed?: boolean;
 }
 
 export interface StorageUsage {

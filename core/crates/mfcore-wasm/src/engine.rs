@@ -1,7 +1,5 @@
 //! The `Engine` facade and its session handles.
 
-
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -27,8 +25,8 @@ use crate::host::{self, JsObserver, Sessions};
 const TS_IMPORTS: &str = r#"
 import type {
   AnalyzeMode, Candidate, Credentials, ExportFormat, LibraryEntry, LibraryQuery, ListenMode, ListenOptions,
-  Lyrics, MelodyIndexStatus, PageMedia, Segment, ServiceLink, SessionDetail, SessionEvent, StorageUsage, Track,
-  WebEngineConfig,
+  Lyrics, MelodyIndexStatus, PageMedia, Segment, ServiceLink, SessionDetail, SessionEvent, SpeechTranscript,
+  StorageUsage, Track, WebEngineConfig,
 } from '../types.gen';
 
 /** What the engine calls back into. */
@@ -66,8 +64,11 @@ impl WasmEngine {
 
     async fn open(config: JsValue, host: JsValue) -> Result<WasmEngine, JsValue> {
         host::install_panic_hook();
-        let config: WebEngineConfig =
-            if config.is_undefined() || config.is_null() { WebEngineConfig::default() } else { from_js(config, "config")? };
+        let config: WebEngineConfig = if config.is_undefined() || config.is_null() {
+            WebEngineConfig::default()
+        } else {
+            from_js(config, "config")?
+        };
         host::install_logging(match config.log_level.as_str() {
             "error" => tracing::Level::ERROR,
             "info" => tracing::Level::INFO,
@@ -78,15 +79,21 @@ impl WasmEngine {
             .ok()
             .and_then(|f| f.dyn_into().ok())
             .ok_or_else(|| error(&MfError::invalid("the host needs an onEvent function")))?;
-        let (store, files, storage, interrupted): (Arc<Store>, Arc<dyn FileStore>, Option<BrowserStorage>, Vec<String>) =
-            match config.storage.as_str() {
-                "memory" => (Arc::new(js(Store::open_in_memory())?), Arc::new(js(SqliteFiles::open_in_memory())?), None, Vec::new()),
-                _ => {
-                    let storage = js(BrowserStorage::open(&config.directory).await)?;
-                    let interrupted = storage.interrupted.clone();
-                    (storage.store.clone(), storage.file_store(), Some(storage), interrupted)
-                }
-            };
+        let (store, files, storage, interrupted): (
+            Arc<Store>,
+            Arc<dyn FileStore>,
+            Option<BrowserStorage>,
+            Vec<String>,
+        ) = match config.storage.as_str() {
+            "memory" => {
+                (Arc::new(js(Store::open_in_memory())?), Arc::new(js(SqliteFiles::open_in_memory())?), None, Vec::new())
+            }
+            _ => {
+                let storage = js(BrowserStorage::open(&config.directory).await)?;
+                let interrupted = storage.interrupted.clone();
+                (storage.store.clone(), storage.file_store(), Some(storage), interrupted)
+            }
+        };
         let engine_config = EngineConfig {
             data_dir: format!("{}:/data", config.storage),
             cache_dir: format!("{}:/cache", config.storage),
@@ -257,7 +264,10 @@ impl WasmEngine {
     }
 
     #[wasm_bindgen(unchecked_return_type = "LibraryEntry[]")]
-    pub fn library(&self, #[wasm_bindgen(unchecked_param_type = "LibraryQuery")] query: JsValue) -> Result<JsValue, JsValue> {
+    pub fn library(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "LibraryQuery")] query: JsValue,
+    ) -> Result<JsValue, JsValue> {
         let query: LibraryQuery = from_js(query, "the query")?;
         to_js(&js(self.engine()?.library(query))?)
     }
@@ -518,6 +528,18 @@ impl LiveSessionHandle {
 
     pub fn cancel(&self) {
         self.session.cancel();
+    }
+
+    /// What the user sang so far, from an on-device recognizer (sessions
+    /// started with `transcripts: true`); replaces the previous transcript.
+    #[wasm_bindgen(js_name = pushTranscript)]
+    pub fn push_transcript(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "SpeechTranscript")] transcript: JsValue,
+    ) -> Result<(), JsValue> {
+        let transcript: mfcore::SpeechTranscript = from_js(transcript, "the transcript")?;
+        self.session.push_transcript(transcript);
+        Ok(())
     }
 
     /// False once the session stopped taking audio.
