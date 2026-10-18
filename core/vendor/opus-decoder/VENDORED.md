@@ -12,5 +12,11 @@ some of them on every CELT frame. The patch:
 - routes every `std::fs::OpenOptions::new()` in `src/` through it;
 - blanks the absolute log paths, so no local path ends up in release binaries.
 
-Decoding is unchanged. Drop the `[patch.crates-io]` entry in `core/Cargo.toml` and this
-folder once a release without the debug logging is published.
+A second patch fixes `extract_collapse_mask` in `src/celt/vq.rs`: it built the mask in a
+`u8`, but a band split in time can have more than eight blocks, so `1 << i` overflowed
+(a panic with overflow checks, a wrong mask without). It now computes 32 bits, as
+libopus does; ffmpeg's libopus encoder at 48 kbit/s stereo produces such bands
+(`core/crates/mfcore/tests/fixtures/codecs/opus-48k-stereo.*`).
+
+Drop the `[patch.crates-io]` entry in `core/Cargo.toml` and this folder once a release
+with both fixes is published.
