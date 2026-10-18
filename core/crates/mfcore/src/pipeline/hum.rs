@@ -181,16 +181,16 @@ pub async fn run_impression_detailed(
     sources.push(Box::pin(melody_source(ctx, audio, melody, searcher)));
     match speech {
         SpeechInput::Pushed { transcripts, wait } => {
-            sources.push(Box::pin(pushed_lyrics_source(ctx, transcripts, wait)))
+            sources.push(Box::pin(crate::util::rt::sendable(pushed_lyrics_source(ctx, transcripts, wait))))
         }
         SpeechInput::Recognizer => {
             if let Some(speech) = ctx.engine.speech.clone() {
-                sources.push(Box::pin(lyrics_source(ctx, speech, audio)));
+                sources.push(Box::pin(crate::util::rt::sendable(lyrics_source(ctx, speech, audio))));
             }
         }
     }
     if ctx.credentials.acr_humming.is_some() {
-        sources.push(Box::pin(acr_source(ctx, audio)));
+        sources.push(Box::pin(crate::util::rt::sendable(acr_source(ctx, audio))));
     }
 
     let mut fusion = Fusion::default();
@@ -279,7 +279,7 @@ enum Answer {
 async fn keep_recording(ctx: &SessionCtx, audio: &[f32]) {
     let path = ctx.engine.recording_path(&ctx.id);
     let samples = f32_to_i16(audio);
-    let result = tokio::task::spawn_blocking(move || {
+    let result = crate::util::rt::spawn_blocking(move || {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -295,7 +295,7 @@ async fn keep_recording(ctx: &SessionCtx, audio: &[f32]) {
 
 /// Run CPU-bound or panicking-prone work off the async workers; a panic becomes `None`.
 async fn blocking<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
-    match tokio::task::spawn_blocking(f).await {
+    match crate::util::rt::spawn_blocking(f).await {
         Ok(value) => Some(value),
         Err(e) => {
             tracing::error!("{what} failed: {e}");
@@ -363,7 +363,7 @@ pub(crate) async fn final_transcript(
     mut transcripts: watch::Receiver<Option<SpeechTranscript>>,
     wait: Duration,
 ) -> Option<SpeechTranscript> {
-    let deadline = tokio::time::Instant::now() + wait;
+    let deadline = crate::util::rt::Instant::now() + wait;
     loop {
         if transcripts.borrow_and_update().as_ref().is_some_and(|t| t.is_final) {
             break;
@@ -371,7 +371,7 @@ pub(crate) async fn final_transcript(
         let changed = tokio::select! {
             biased;
             _ = ctx.cancel.canceled() => return None,
-            changed = tokio::time::timeout_at(deadline, transcripts.changed()) => changed,
+            changed = crate::util::rt::timeout_at(deadline, transcripts.changed()) => changed,
         };
         // Timed out, or the session handle is gone.
         if !matches!(changed, Ok(Ok(()))) {
@@ -427,7 +427,7 @@ async fn sung_lyrics(ctx: &SessionCtx, hypotheses: Vec<String>, weight: f32) -> 
         return Answer::Lyrics(matches);
     }
     let search = lyrics::search(&ctx.engine.http, &hypotheses, ctx.engine.country(), &ctx.cancel);
-    match tokio::time::timeout(LYRICS_TIMEOUT, search).await {
+    match crate::util::rt::timeout(LYRICS_TIMEOUT, search).await {
         Ok(Ok(mut matches)) => {
             for m in &mut matches {
                 m.score *= weight;
@@ -463,14 +463,14 @@ async fn transcribe(ctx: &SessionCtx, speech: Arc<dyn SpeechToText>, audio: &[f3
     let task = TaskHandle::new(child.clone());
     let language = ctx.engine.language().to_string();
     let call_path = path.to_string_lossy().into_owned();
-    let call = tokio::task::spawn_blocking(move || speech.transcribe(call_path, language, task));
+    let call = crate::util::rt::spawn_blocking(move || speech.transcribe(call_path, language, task));
     let result = tokio::select! {
         biased;
         _ = ctx.cancel.canceled() => {
             child.cancel();
             None
         }
-        r = tokio::time::timeout(TRANSCRIBE_TIMEOUT, call) => Some(r),
+        r = crate::util::rt::timeout(TRANSCRIBE_TIMEOUT, call) => Some(r),
     };
     let _ = std::fs::remove_file(&path);
     match result {
@@ -498,7 +498,7 @@ async fn acr_source(ctx: &SessionCtx, audio: &[f32]) -> Answer {
     let Some(creds) = ctx.credentials.acr_humming.clone() else { return Answer::Acr(Vec::new()) };
     let wav = acr_humming_clip(audio);
     let client = AcrCloud::new(ctx.engine.http.clone(), creds);
-    match tokio::time::timeout(ACR_TIMEOUT, client.recognize_humming(wav, &ctx.cancel)).await {
+    match crate::util::rt::timeout(ACR_TIMEOUT, client.recognize_humming(wav, &ctx.cancel)).await {
         Ok(Ok(matches)) => Answer::Acr(matches),
         Ok(Err(MfError::Canceled)) => Answer::Acr(Vec::new()),
         Ok(Err(e)) => {
@@ -909,12 +909,12 @@ pub(crate) async fn enrich(ctx: &SessionCtx, candidates: Vec<Candidate>) -> Vec<
     if candidates.is_empty() {
         return candidates;
     }
-    let deadline = tokio::time::Instant::now() + ENRICH_BUDGET;
+    let deadline = crate::util::rt::Instant::now() + ENRICH_BUDGET;
     let tracks = join_all(candidates.iter().map(|c| {
         let track = c.track.clone();
         async move {
             let fallback = track.clone();
-            tokio::time::timeout_at(deadline, ctx.engine.enrich(track, &ctx.cancel)).await.unwrap_or(fallback)
+            crate::util::rt::timeout_at(deadline, ctx.engine.enrich(track, &ctx.cancel)).await.unwrap_or(fallback)
         }
     }))
     .await;

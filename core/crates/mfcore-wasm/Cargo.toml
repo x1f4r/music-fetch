@@ -1,0 +1,37 @@
+[package]
+name = "mfcore-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "The Music Fetch engine for the browser extension: a wasm-bindgen facade over mfcore."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The whole engine without UniFFI, mmap or the tokio runtime (see mfcore's features).
+mfcore = { path = "../mfcore", default-features = false, features = ["engine"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+parking_lot = "0.12"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+# Matches wasm-bindgen-cli 0.2.129 (the extension build pins the same version).
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.106"
+web-sys = { version = "0.3.106", features = ["console"] }
+serde-wasm-bindgen = "0.6.5"
+send_wrapper = "0.6"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tokio = { workspace = true }
+
+[dev-dependencies]
+# Generates extension/src/engine/types.gen.ts from the core's serde types (tests/types.rs).
+serde-reflection = "0.5"
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen-test = "0.3.79"

@@ -116,7 +116,7 @@ pub async fn page_song_heard<S: Services>(services: &S, pcm: &PcmFile, prior: &P
     let Some(preview) = services.preview(track).await else { return Ok(None) };
     let media = pcm.clone();
     let cancel = services.cancel().clone();
-    let found = tokio::task::spawn_blocking(move || -> Result<bool> {
+    let found = crate::util::rt::spawn_blocking(move || -> Result<bool> {
         let peaks = fingerprint::peaks_in(&media, 0, media.duration_ms(), &cancel)?;
         let mut index = fingerprint::Index::new();
         index.add(&fingerprint::peaks(&preview));

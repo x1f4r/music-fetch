@@ -7,7 +7,7 @@
 //! behind a mix. Cache hits cost nothing.
 
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
@@ -20,6 +20,7 @@ use crate::providers::ProviderMatch;
 use crate::providers::acrcloud::AcrCloud;
 use crate::providers::audd::AudD;
 use crate::shazam::{self, Priority, ShazamMatch};
+use crate::util::rt::Instant;
 
 const CACHE_NAMESPACE: &str = "shazam";
 const POSITIVE_TTL_MS: i64 = 30 * 24 * 3600 * 1000;

@@ -21,9 +21,9 @@ use std::fs::File;
 use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 use std::path::PathBuf;
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -47,18 +47,18 @@ use symphonia::core::meta::MetadataOptions;
 use crate::audio::mp4;
 use crate::audio::opus::OpusAudioDecoder;
 use crate::audio::resample::StreamResampler;
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 use crate::audio::resample::downmix_into;
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 use crate::audio::wav::WavReader;
 use crate::audio::{PcmFile, PcmWriter, SAMPLE_RATE};
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 use crate::error::PlatformError;
 use crate::error::{MfError, Result};
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 use crate::platform::PlatformDecoder;
 use crate::util::cancel::CancelToken;
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 use crate::util::cancel::TaskHandle;
 use crate::util::rt::Instant;
 
@@ -71,7 +71,7 @@ const MAX_RESETS: u32 = 64;
 const PROGRESS_STEP: f32 = 0.005;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 /// Share of the progress bar for the platform decoder; the WAV conversion gets the rest.
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 const PLATFORM_SHARE: f32 = 0.9;
 /// Output delay of an SBR (HE-AAC) decoder, in output samples (ISO/IEC 14496-3).
 const SBR_DECODER_DELAY: u64 = 962;
@@ -79,7 +79,7 @@ const SBR_DECODER_DELAY: u64 = 962;
 /// Decode the first audio track of `input` to a 16 kHz mono PCM file at `output`.
 ///
 /// `progress` receives 0..=1. On failure or cancellation `output` is removed.
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 pub fn decode_file(
     input: &Path,
     output: &Path,
@@ -189,7 +189,7 @@ pub fn decode_bytes_into(
 
 /// What to decode.
 enum Input<'a> {
-    #[cfg_attr(not(feature = "engine"), allow(dead_code))]
+    #[cfg_attr(not(all(feature = "engine", not(target_family = "wasm"))), allow(dead_code))]
     Path(&'a Path),
     Bytes {
         data: Arc<[u8]>,
@@ -260,7 +260,7 @@ fn guarded(decode: impl FnOnce() -> std::result::Result<PcmFile, Failure>) -> st
 
 /// Which decoder gets codecs that both can handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(feature = "engine"), allow(dead_code))]
+#[cfg_attr(not(all(feature = "engine", not(target_family = "wasm"))), allow(dead_code))]
 enum Prefer {
     Builtin,
     /// Leave Opus (much faster natively) and HE-AAC (symphonia skips SBR) to the
@@ -288,7 +288,7 @@ impl From<MfError> for Failure {
 }
 
 /// symphonia decode guarded against panics; removes `output` on any failure.
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 fn run_symphonia(
     input: &Path,
     output: &Path,
@@ -689,7 +689,7 @@ fn average_planes<'a>(planes: impl Iterator<Item = &'a [f32]>, frames: usize, mo
     }
 }
 
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 enum PlatformFailure {
     Canceled,
     Fatal(MfError),
@@ -698,7 +698,7 @@ enum PlatformFailure {
     Failed(String),
 }
 
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 impl From<MfError> for PlatformFailure {
     fn from(e: MfError) -> Self {
         match e {
@@ -710,17 +710,17 @@ impl From<MfError> for PlatformFailure {
 }
 
 /// Removes a file when dropped.
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 struct TempPath(PathBuf);
 
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 impl Drop for TempPath {
     fn drop(&mut self) {
         remove_quietly(&self.0);
     }
 }
 
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 fn decode_with_platform(
     decoder: &Arc<dyn PlatformDecoder>,
     input: &Path,
@@ -783,7 +783,7 @@ fn decode_with_platform(
 }
 
 /// `output` with `suffix` appended to its file name.
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 fn sibling_path(output: &Path, suffix: &str) -> PathBuf {
     let mut name = output.file_name().map(|n| n.to_os_string()).unwrap_or_else(|| "decode".into());
     name.push(".");
@@ -794,7 +794,7 @@ fn sibling_path(output: &Path, suffix: &str) -> PathBuf {
 /// Convert a WAV written by a platform decoder into a 16 kHz mono PCM file.
 /// 16-bit PCM is streamed directly (resampled if the decoder ignored the
 /// requested format); anything else goes through symphonia.
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 fn wav_to_pcm(wav: &Path, output: &Path, cancel: &CancelToken) -> Result<PcmFile> {
     let mut reader = match WavReader::open_any(wav) {
         Ok(r) if r.spec().is_pcm16() => r,
@@ -852,7 +852,7 @@ fn wav_to_pcm(wav: &Path, output: &Path, cancel: &CancelToken) -> Result<PcmFile
     writer.finish()
 }
 
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", not(target_family = "wasm")))]
 fn remove_quietly(path: &Path) {
     if let Err(e) = std::fs::remove_file(path)
         && e.kind() != ErrorKind::NotFound
@@ -989,7 +989,7 @@ mod codec_fixtures {
     }
 
     /// The file path (the apps) and the in-memory path (the browser) decode alike.
-    #[cfg(feature = "engine")]
+    #[cfg(all(feature = "engine", not(target_family = "wasm")))]
     #[test]
     fn files_and_bytes_decode_alike() {
         let dir = crate::audio::testutil::TempDir::new("decbytes");

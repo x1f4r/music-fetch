@@ -354,6 +354,7 @@ fn engine(args: &MixesArgs, paths: &Paths) -> anyhow::Result<Arc<EngineCtx>> {
         decoder: None,
         speech: None,
         runtime: tokio::runtime::Handle::current(),
+        files: Arc::new(mfcore::util::files::DirFiles::new(&paths.work)),
         low_power: Default::default(),
         pitch_low_power: OnceLock::new(),
         recognizer_url: String::new(),

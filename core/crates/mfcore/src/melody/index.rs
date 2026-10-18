@@ -157,7 +157,68 @@ pub fn file_format(path: &Path) -> Option<u32> {
     use std::io::Read;
     let mut head = [0u8; 12];
     File::open(path).ok()?.read_exact(&mut head).ok()?;
+    header_format(&head)
+}
+
+/// The format number in the first 12 bytes of an index, when they start one.
+pub fn header_format(head: &[u8]) -> Option<u32> {
+    let head = head.get(..12)?;
     (&head[..8] == MAGIC).then(|| u32::from_le_bytes([head[8], head[9], head[10], head[11]]))
+}
+
+/// Builds an index from pieces (a download as it arrives, a stored file read
+/// in chunks) into one allocation of the final size: no second copy of the
+/// whole index, and a file of another format is refused at its first bytes.
+pub struct IndexLoader {
+    bytes: Vec<u8>,
+    expected: usize,
+}
+
+impl IndexLoader {
+    /// A loader for an index of `expected` bytes (the manifest's or the stored
+    /// file's size). More bytes than that are refused.
+    pub fn new(expected: u64) -> Result<Self> {
+        let expected = usize::try_from(expected).map_err(|_| MfError::IndexUnavailable)?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(expected)
+            .map_err(|_| MfError::Internal { message: "there is not enough memory for the melody index".into() })?;
+        Ok(Self { bytes, expected })
+    }
+
+    /// Appends the next piece.
+    pub fn push(&mut self, piece: &[u8]) -> Result<()> {
+        if self.bytes.len() + piece.len() > self.expected {
+            return Err(MfError::Internal { message: "the melody index is larger than announced".into() });
+        }
+        let had_header = self.bytes.len() >= 12;
+        self.bytes.extend_from_slice(piece);
+        if !had_header && self.bytes.len() >= 12 {
+            match header_format(&self.bytes) {
+                Some(FORMAT) => {}
+                Some(_) => return Err(MfError::IndexUnavailable),
+                None => return Err(MfError::Internal { message: "the melody index is damaged".into() }),
+            }
+        }
+        Ok(())
+    }
+
+    /// Bytes received so far.
+    pub fn len(&self) -> u64 {
+        self.bytes.len() as u64
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// The index, once every announced byte arrived.
+    pub fn finish(self) -> Result<MelodyIndex> {
+        if self.bytes.len() != self.expected {
+            return Err(MfError::Internal { message: "the melody index is incomplete".into() });
+        }
+        MelodyIndex::from_bytes(self.bytes)
+    }
 }
 
 impl MelodyIndex {
@@ -709,5 +770,30 @@ mod tests {
         b[8..12].copy_from_slice(&1u32.to_le_bytes());
         let old = MelodyIndex::from_bytes(b).err().map(|e| e.to_string()).unwrap_or_default();
         assert!(old.contains("older"), "{old}");
+    }
+
+    #[test]
+    fn loads_in_pieces() {
+        let (bytes, _) = crate::melody::builder::build_bytes(&[], "pieces").expect("build");
+        let mut loader = IndexLoader::new(bytes.len() as u64).unwrap();
+        for piece in bytes.chunks(7) {
+            loader.push(piece).unwrap();
+        }
+        assert_eq!(loader.len(), bytes.len() as u64);
+        assert_eq!(loader.finish().unwrap().version(), "pieces");
+
+        // Missing bytes, extra bytes, another format, not an index.
+        let mut short = IndexLoader::new(bytes.len() as u64).unwrap();
+        short.push(&bytes[..bytes.len() - 1]).unwrap();
+        assert!(short.finish().is_err());
+        let mut long = IndexLoader::new(bytes.len() as u64 - 1).unwrap();
+        assert!(long.push(&bytes).is_err());
+        let mut other = bytes.clone();
+        other[8..12].copy_from_slice(&(FORMAT + 1).to_le_bytes());
+        let mut newer = IndexLoader::new(other.len() as u64).unwrap();
+        assert_eq!(newer.push(&other[..5]).map(drop), Ok(()), "too short to tell yet");
+        assert_eq!(newer.push(&other[5..20]).map(drop), Err(MfError::IndexUnavailable));
+        assert_eq!(header_format(&other), Some(FORMAT + 1));
+        assert!(IndexLoader::new(12).unwrap().push(b"not an index").is_err());
     }
 }

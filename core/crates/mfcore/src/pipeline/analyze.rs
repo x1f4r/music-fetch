@@ -9,13 +9,16 @@ mod survey;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
 pub use self::services::{Services, SessionServices};
 pub use self::survey::{Prior, Survey, Verdict};
-use crate::audio::{PcmFile, decode::decode_file};
+use crate::audio::PcmFile;
+#[cfg(not(target_family = "wasm"))]
+use crate::audio::decode::decode_file;
 use crate::error::{MfError, Result};
 use crate::links::{self, Resolution};
 use crate::media::{self, MediaInfo};
@@ -38,8 +41,13 @@ const COMMENTS_MIN_MS: u64 = 8 * 60_000;
 /// Survey probes are interactive below this length.
 const INTERACTIVE_MAX_MS: u64 = 10 * 60_000;
 /// Largest direct download.
+#[cfg(not(target_family = "wasm"))]
 const MAX_DIRECT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// The browser decodes a direct download from memory.
+#[cfg(target_family = "wasm")]
+const MAX_DIRECT_BYTES: u64 = 1024 * 1024 * 1024;
 /// Waits before trying a failed download again.
+#[cfg(not(target_family = "wasm"))]
 const DOWNLOAD_RETRIES: [Duration; 2] = [Duration::from_millis(1500), Duration::from_secs(4)];
 /// Impression analysis looks at the start of the media.
 const IMPRESSION_MS: u64 = 30_000;
@@ -394,7 +402,7 @@ pub(crate) async fn probe_media(
     })?;
     let task = TaskHandle::new(ctx.cancel.clone());
     let url_owned = url.to_string();
-    let json = tokio::task::spawn_blocking(move || backend.probe(url_owned, with_comments, task))
+    let json = crate::util::rt::spawn_blocking(move || backend.probe(url_owned, with_comments, task))
         .await
         .map_err(|e| MfError::internal(format!("probe: {e}")))??;
     if let Some(path) = cache {
@@ -472,27 +480,46 @@ pub(crate) async fn fetch_audio(
     {
         return PcmFile::open(&cached);
     }
-    std::fs::create_dir_all(dir)?;
-    ctx.emitter.phase(Phase::Downloading, Some(0.0));
-    let file = if direct { download_direct(ctx, url, dir).await? } else { download(ctx, url, dir).await? };
-    ctx.emitter.phase(Phase::Decoding, Some(0.0));
-    let out = match cache_path(options, url, "pcm") {
-        Some(path) => path.with_extension("pcm.part"),
-        None => dir.join("audio.pcm"),
-    };
-    let decoded = decode(ctx, &file, &out).await;
-    let _ = std::fs::remove_file(&file);
-    let pcm = decoded?;
-    if let Some(path) = cache_path(options, url, "pcm") {
-        std::fs::rename(pcm.path(), &path)?;
-        return PcmFile::open(&path);
+    #[cfg(not(target_family = "wasm"))]
+    {
+        std::fs::create_dir_all(dir)?;
+        ctx.emitter.phase(Phase::Downloading, Some(0.0));
+        let file = if direct { download_direct(ctx, url, dir).await? } else { download(ctx, url, dir).await? };
+        ctx.emitter.phase(Phase::Decoding, Some(0.0));
+        let out = match cache_path(options, url, "pcm") {
+            Some(path) => path.with_extension("pcm.part"),
+            None => dir.join("audio.pcm"),
+        };
+        let decoded = decode(ctx, &file, &out).await;
+        let _ = std::fs::remove_file(&file);
+        let pcm = decoded?;
+        if let Some(path) = cache_path(options, url, "pcm") {
+            std::fs::rename(pcm.path(), &path)?;
+            return PcmFile::open(&path);
+        }
+        Ok(pcm)
     }
-    Ok(pcm)
+    #[cfg(target_family = "wasm")]
+    {
+        // The browser has no media backend (capture comes with E5): direct
+        // media only, downloaded into memory and decoded into a work file.
+        let _ = dir;
+        if !direct {
+            return Err(MfError::Platform {
+                message: "Links with media need the media download tools, which are not available.".into(),
+            });
+        }
+        ctx.emitter.phase(Phase::Downloading, Some(0.0));
+        let (bytes, ext) = download_direct_bytes(ctx, url).await?;
+        ctx.emitter.phase(Phase::Decoding, Some(0.0));
+        decode_bytes(ctx, bytes, &ext, &ctx.work_name("audio.pcm")).await
+    }
 }
 
 /// Download through the media backend. Sites drop connections and refuse a
 /// stream now and then, so a failed download is tried again twice, each time
 /// into a fresh directory (a broken partial file is never taken for the result).
+#[cfg(not(target_family = "wasm"))]
 async fn download(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<PathBuf> {
     let backend = ctx.engine.media.clone().ok_or_else(|| MfError::Platform {
         message: "Links with media need the media download tools, which are not available.".into(),
@@ -504,7 +531,7 @@ async fn download(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<PathBuf> {
         let task = TaskHandle::with_progress(ctx.cancel.clone(), move |f| emitter.phase(Phase::Downloading, Some(f)));
         let (url_owned, dest) = (url.to_string(), dest.to_string_lossy().into_owned());
         let backend = backend.clone();
-        let result = tokio::task::spawn_blocking(move || backend.download_audio(url_owned, dest, task))
+        let result = crate::util::rt::spawn_blocking(move || backend.download_audio(url_owned, dest, task))
             .await
             .map_err(|e| MfError::internal(format!("download: {e}")))?;
         match result.map_err(MfError::from) {
@@ -521,6 +548,7 @@ async fn download(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<PathBuf> {
 
 /// Plain HTTP download of a media file: every hop checked by the SSRF
 /// guard, at most 2 GiB.
+#[cfg(not(target_family = "wasm"))]
 async fn download_direct(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<PathBuf> {
     use tokio::io::AsyncWriteExt;
     let client = direct_client(&ctx.engine.config.app_version)?;
@@ -575,12 +603,91 @@ async fn download_direct(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<Path
     Ok(path)
 }
 
+/// Browser: a direct media download into memory. fetch() follows redirects
+/// itself; where it ended must still be a public address. At most 1 GiB.
+#[cfg(target_family = "wasm")]
+async fn download_direct_bytes(ctx: &SessionCtx, url: &str) -> Result<(Vec<u8>, String)> {
+    use futures_util::StreamExt;
+    links::ensure_public_url(url).await?;
+    let request = crate::util::http::prepare(ctx.engine.http.get(url)).send();
+    let response = tokio::select! {
+        r = request => r?,
+        _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
+    };
+    links::ensure_public_url(response.url().as_str()).await?;
+    if !response.status().is_success() {
+        return Err(MfError::MediaUnavailable {
+            message: format!("The file couldn't be downloaded ({}).", response.status()),
+        });
+    }
+    let too_large =
+        || MfError::MediaUnavailable { message: "The file is too large to analyze here (over 1 GB).".into() };
+    let total = response.content_length();
+    if total.is_some_and(|t| t > MAX_DIRECT_BYTES) {
+        return Err(too_large());
+    }
+    let ext = Path::new(response.url().path()).extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let ext: String = ext.chars().filter(char::is_ascii_alphanumeric).take(5).collect();
+    let mut body = Vec::with_capacity(total.unwrap_or(0) as usize);
+    let mut stream = response.bytes_stream();
+    loop {
+        let chunk = tokio::select! {
+            c = stream.next() => c,
+            _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
+        };
+        let Some(chunk) = chunk else { break };
+        let chunk = chunk?;
+        if (body.len() + chunk.len()) as u64 > MAX_DIRECT_BYTES {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+        if let Some(t) = total.filter(|t| *t > 0) {
+            ctx.emitter.phase(Phase::Downloading, Some(body.len() as f32 / t as f32));
+        }
+    }
+    Ok((body, ext))
+}
+
+/// Browser: decode `bytes` (`hint`: extension or MIME type) into the work file
+/// `output`.
+#[cfg(target_family = "wasm")]
+pub(crate) async fn decode_bytes(ctx: &SessionCtx, bytes: Vec<u8>, hint: &str, output: &str) -> Result<PcmFile> {
+    use crate::audio::PcmWriter;
+    let files = ctx.engine.files.clone();
+    let cancel = ctx.cancel.clone();
+    let emitter = ctx.emitter.clone();
+    let (hint, output) = (hint.to_string(), output.to_string());
+    crate::util::rt::spawn_blocking(move || {
+        let progress = move |f: f32| emitter.phase(Phase::Decoding, Some(f));
+        let writer = PcmWriter::create_in(files.clone(), &output)?;
+        let decoded =
+            crate::audio::decode::decode_bytes_into(Arc::from(bytes), Some(&hint), writer, &cancel, &progress);
+        if decoded.is_err() {
+            let _ = files.remove(&output);
+        }
+        decoded
+    })
+    .await
+    .map_err(|e| MfError::internal(format!("decode: {e}")))?
+}
+
+/// Browser: decode the work file `input` (a file the user picked, written by
+/// the host) into the work file `output`.
+#[cfg(target_family = "wasm")]
+pub(crate) async fn decode(ctx: &SessionCtx, input: &Path, output: &Path) -> Result<PcmFile> {
+    let name = input.to_string_lossy();
+    let bytes = ctx.engine.files.read(&name)?;
+    let hint = input.extension().and_then(|e| e.to_str()).unwrap_or("bin").to_string();
+    decode_bytes(ctx, bytes, &hint, &output.to_string_lossy()).await
+}
+
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn decode(ctx: &SessionCtx, input: &Path, output: &Path) -> Result<PcmFile> {
     let decoder = ctx.engine.decoder.clone();
     let cancel = ctx.cancel.clone();
     let emitter = ctx.emitter.clone();
     let (input, output) = (input.to_path_buf(), output.to_path_buf());
-    tokio::task::spawn_blocking(move || {
+    crate::util::rt::spawn_blocking(move || {
         let progress = move |f: f32| emitter.phase(Phase::Decoding, Some(f));
         decode_file(&input, &output, decoder.as_ref(), &cancel, &progress)
     })
@@ -811,6 +918,7 @@ fn refresh_source(source: &mut SourceInfo, info: &MediaInfo) {
 
 /// HTTP client for direct downloads: no automatic redirects (each hop is
 /// checked), a resolver that refuses non-public addresses, long reads allowed.
+#[cfg(not(target_family = "wasm"))]
 fn direct_client(app_version: &str) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .tls_backend_preconfigured(crate::util::http::tls_config()?)
@@ -824,8 +932,10 @@ fn direct_client(app_version: &str) -> Result<reqwest::Client> {
 }
 
 /// Resolves names only to public addresses (no DNS rebinding into the LAN).
+#[cfg(not(target_family = "wasm"))]
 struct PublicResolver;
 
+#[cfg(not(target_family = "wasm"))]
 impl reqwest::dns::Resolve for PublicResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_string();
