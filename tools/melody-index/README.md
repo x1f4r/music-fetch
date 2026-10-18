@@ -68,10 +68,14 @@ Single stages (`uv run mfidx <stage> --help`):
 | `mfidx extract [--limit N] [--follow]` | 3. previews -> RMVPE -> notes -> phrases |
 | `mfidx renote` | recompute preview phrases from stored f0 (no network) |
 | `mfidx fulltrack [--top 3000] [--interval 12.5]` | 3b. full-track melodies of the most popular songs (YouTube) |
+| `mfidx refs [--top 15000] [--sources …]` | 3c. verified full tracks from SoundCloud, Dailymotion and YouTube, second windows from iTunes |
+| `mfidx refs-status` | 3c progress per source and tier, hit rates, ETA, breakers, eval-song coverage |
+| `mfidx refs --reset GUARD` | close a tripped breaker (`youtube`, `soundcloud-api`, …) after checking why it tripped |
+| `mfidx evergreen [--file F]` | themes, classics, children's songs, carols, anthems and memes that charts miss |
 | `mfidx eval-references [--groups F]` | f0 of the CHAD original videos, for coverage analysis only |
 | `mfidx midi [--step catalog\|link\|extract]` | 4. Lakh MIDI melodies |
 | `mfidx validate` / `mfidx famous` | MIDI vs preview DTW agreement (all songs / report on well-known songs) |
-| `mfidx export [--date D]` | 5. JSONL + stats.json |
+| `mfidx export [--date D] [--tier android\|mac]` | 5. JSONL + stats.json (a tier: the most popular songs and full tracks within an index size) |
 | `mfidx eval-synth [--n 300]` / `mfidx eval-chad` | 6. evaluation sets |
 | `mfidx sanity` | RMVPE on a synthetic voice with a known melody |
 | `mfidx status` | progress, throughput, ETA |
@@ -129,6 +133,51 @@ and the stage pauses 30 min, then longer, when YouTube asks for a sign-in. YouTu
 build host after about 400 videos in 90 minutes at 12.5 s; 25 s has been sustainable. It needs
 a current yt-dlp (`MFIDX_YTDLP`, e.g. a separate `uv venv` with `yt-dlp[default]`) and uses
 Node as the JS runtime when Deno is missing. Export adds these melodies as `"audio"` phrases.
+
+**3c. Verified full tracks (`mfidx refs`).** Stage 3b alone cannot cover the library without
+pushing YouTube too hard, so `refs` asks several sources in turn, for the `--top` most popular
+resolved songs (songs without a validated MIDI melody first):
+
+1. SoundCloud (api-v2 with the public web client id): official uploads are 30-s snippets or
+   encrypted, so the plain HLS streams of re-uploads are used. About a quarter of the songs.
+2. Dailymotion (public API search, the smallest rendition through yt-dlp): about 30 % of the rest.
+3. YouTube (stage 3b's search and choice, with a bgutil PO-token server via `MFIDX_POT_URL`):
+   about 70 % of what is left, and the bottleneck.
+4. iTunes Search previews: Apple's 30 s, often another part of the song, kept as a second
+   window for songs SoundCloud and Dailymotion could not find (dropped once a full track exists).
+
+A pick is kept only if the Deezer preview's 10 fps RMVPE contour finds itself in the full track
+without transposition or tempo change for ≥ 50 % of its voiced frames and the decoded audio lasts
+as long as Deezer's track (max(12 s, 8 %)). On the 701 stage-3b tracks 0.5 keeps 98.4 % of the
+true pairs and none of 6,300 wrong ones (they reach 0.36); live sessions and award-show
+performances fall in between. Title filters reject remix, live, cover, sped-up, nightcore, mashup
+and similar uploads and uploads crediting a featured artist the song lacks; verification rejects
+what the titles do not reveal (covers, transposed edits, medleys).
+
+Each source has `SourceGuard`s (`state/<name>.guard`, shared by all threads and processes):
+a sliding-window rate limit with a jittered minimum gap, exponential backoff on timeouts and
+5xx, and a circuit breaker that pauses the source on a block signal (403/429, rate-limit
+messages) and disables it after several in a row until `--reset`. YouTube is held to one yt-dlp
+run (search or download) per 30 s on average and 2,400 runs per 24 h; the first bot check,
+sign-in prompt, 429 or rate-limit notice pauses it for 24 h, a second one right after disables
+it, and five failed runs in a row count as a block. Audio is decoded in memory and dropped after
+RMVPE; full tracks go to `track_melody` (like 3b), windows to `window_melody`, every outcome to
+`ref_attempt` (resumable). The plan picks up new songs every 30 minutes.
+
+**Evergreen tunes.** `melody_index/data/evergreen.toml` lists ~400 tunes people hum that charts
+miss: film, TV and game themes, classical hits, children's songs (also German ones), carols,
+anthems and meme tunes. Public-domain melodies carry an ABC transcription of the part people
+hum (written for this project, CC0), exported as `midi` phrases; recordings are resolved on
+Deezer like chart songs (optionally pinned to a track id) and get previews and full tracks from
+the normal stages. Each item records its licence. Run it after `universe` (which resets chart
+scores), then `resolve`, `extract`; `refs` picks the songs up by popularity.
+
+**Tiers.** `mfidx export --tier android` keeps the 25,000 most popular songs and gives full
+tracks to as many of the most popular as fit an estimated 75 MB format-2 index; `--tier mac`
+keeps every song within 150 MB. Songs whose full track does not fit keep their preview and
+second window. The estimate (7.52 B per preview, MIDI or transcription note, 13.1 B per
+full-track note, 40 B per song, fitted to two format-2 builds of 2026-10-18; a full track costs
+~9.2 KB) is in `stats-<tier>.json`; check it against `mf index build` after builder changes.
 
 `mfidx eval-references` stores the same data for the original videos of the CHAD hums in
 `eval_reference` (never exported). It shows where each Deezer preview sits in the song and

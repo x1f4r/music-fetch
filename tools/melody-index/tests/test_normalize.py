@@ -94,3 +94,16 @@ def test_artist_edge_cases():
         == title_key("Saudade Burra (Ao Vivo)")
         == "saudadeburra"
     )
+
+
+def test_foreign_featured_artists_in_upload_titles():
+    from melody_index.normalize import foreign_featured_artist as f
+
+    assert f("24kGoldn - Mood ft. NCK", "24kGoldn Featuring iann dior") == "NCK"
+    assert f("Drake - God's Plan [feat. Random Guy]", "Drake") == "Random Guy"
+    assert f("24kGoldn - Mood (feat. iann dior)", "24kGoldn Featuring iann dior") is None
+    assert f("The Weeknd - Die For You (with Ariana Grande)", "The Weeknd & Ariana Grande") is None
+    assert f("Calvin Harris - This Is What You Came For (Official Video) ft. Rihanna", "Calvin Harris Featuring Rihanna") is None
+    # "with" in a title is not a credit.
+    assert f("Stay With Me", "Sam Smith") is None
+    assert f("Lady Gaga, Bruno Mars - Die With A Smile", "Lady Gaga & Bruno Mars") is None
