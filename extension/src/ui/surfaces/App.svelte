@@ -131,8 +131,6 @@
       onopen={(url) => void platform.openUrl(url)}
       oncopy={(text) => void platform.copyText(text)}
       onopensession={(id) => go({ name: 'session', id })}
-      onpin={(entries) => void engine.setPinnedMany(entries.map((e) => e.id), entries.some((e) => !e.pinned))}
-      ondelete={(entries) => void engine.deleteSessions(entries.map((e) => e.id))}
     />
   {/if}
   {#if narrow && !bare}

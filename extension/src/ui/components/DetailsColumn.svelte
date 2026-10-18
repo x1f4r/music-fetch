@@ -1,7 +1,6 @@
 <script lang="ts">
-  import type { Candidate, LibraryEntry, Segment, Track } from '../../engine/types';
+  import type { Candidate, Segment, Track } from '../../engine/types';
   import { t, tm } from '../../i18n';
-  import { pinsSelection } from '../../models/library';
   import {
     candidateWhere,
     clock,
@@ -22,7 +21,7 @@
 
   /**
    * The app tab's details column (design spec "Details", 300 px at ≥ 1000): the selected
-   * track, candidate, mix segment or playlist entry; in selection mode the batch actions.
+   * track, candidate, mix segment or playlist entry, or a mix or playlist from the library.
    */
   interface Props {
     subject: DetailSubject | null;
@@ -30,11 +29,9 @@
     onopen: (url: string) => void;
     oncopy: (text: string) => void;
     onopensession?: (id: string) => void;
-    onpin?: (entries: LibraryEntry[]) => void;
-    ondelete?: (entries: LibraryEntry[]) => void;
   }
 
-  let { subject, providers, onopen, oncopy, onopensession, onpin, ondelete }: Props = $props();
+  let { subject, providers, onopen, oncopy, onopensession }: Props = $props();
 
   const label = $derived(
     subject?.kind === 'segment' ? t('session.segmentDetails') : subject?.kind === 'item' ? t('session.trackDetails') : t('session.details'),
@@ -124,14 +121,5 @@
     <div class="headline center">{detail.entry.title}</div>
     <div class="callout secondary center">{[sourceSite(detail), t('mix.identified', counts.identified, counts.total)].filter(Boolean).join(' · ')}</div>
     <div class="acts"><button class="btn filled" onclick={() => onopensession?.(detail.entry.id)}>{t('action.open')}</button></div>
-  {:else}
-    {@const entries = subject.entries}
-    <div class="many">
-      <div class="headline">{t('session.sessions', entries.length)}</div>
-      <div class="acts">
-        <button class="btn" onclick={() => (subject.kind === 'many' ? subject.onpin() : onpin?.(entries))}><span class="ic {pinsSelection(entries) ? 'ic-pin' : 'ic-pin-fill'}"></span>{t(pinsSelection(entries) ? 'session.pin' : 'session.unpin')}</button>
-        <button class="btn danger outlined" onclick={() => (subject.kind === 'many' ? subject.ondelete() : ondelete?.(entries))}><span class="ic ic-trash"></span>{t('session.delete')}</button>
-      </div>
-    </div>
   {/if}
 </aside>

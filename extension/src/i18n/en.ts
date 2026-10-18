@@ -326,7 +326,6 @@ export const en = {
   'session.deleteConfirm.message': 'The tracklist and its saved audio will be removed.',
   'session.deleteConfirm.pinned': 'Pinned sessions keep their audio until you delete them.',
   'session.notFound': 'This session is no longer in the library.',
-  'session.sessions': '%d sessions',
   'session.details': 'Session details',
   'session.segmentDetails': 'Segment details',
   'session.trackDetails': 'Track details',
