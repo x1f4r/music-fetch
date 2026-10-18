@@ -22,7 +22,8 @@ MIN_VOICED = 0.3
 
 
 class Pool:
-    def __init__(self, prefix, train_songs: set[int], m2p_path=None, m2p_min=0.40, tracked=None, qbsh=None):
+    def __init__(self, prefix, train_songs: set[int], m2p_path=None, m2p_min=0.40, tracked=None, qbsh=None,
+                 qbsh_holdout=False):
         self.refs = Refs(prefix)
         r = self.refs
         self.contours = r.contours.astype(np.float16)
@@ -40,6 +41,10 @@ class Pool:
             self.m2p = {k: z[k][keep] for k in ("song", "preview", "midi", "scale", "lag")}
         self.tracked = pickle.load(open(tracked, "rb")) if tracked else None
         self.qbsh = pickle.load(open(qbsh, "rb")) if qbsh else None
+        if self.qbsh and qbsh_holdout:
+            from melenc.splits import qbsh_val
+
+            self.qbsh["queries"] = [q for q in self.qbsh["queries"] if not qbsh_val(q["ref"])]
 
     def track(self, t):
         return self.contours[self.refs.off[t] : self.refs.off[t + 1]].astype(np.float32)

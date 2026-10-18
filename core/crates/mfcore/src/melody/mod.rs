@@ -4,6 +4,7 @@
 pub mod builder;
 pub mod contour;
 pub mod detect;
+pub mod encoder;
 pub mod index;
 pub mod matcher;
 pub mod ngrams;

@@ -109,10 +109,15 @@ def main():
     ap.add_argument("--init")
     ap.add_argument("--kinds", help="JSON overriding pair-kind weights")
     ap.add_argument("--val-every", type=int, default=1000)
+    ap.add_argument("--save-every", type=int, help="also keep model-<step>.pt this often")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--qbsh-holdout", action="store_true", help="train on no MIR-QBSH hums of the validation songs (splits.qbsh_val)")
+    ap.add_argument("--gpu-frac", type=float, default=0.45, help="cap on this process's share of GPU memory")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     dev = "cuda"
-    torch.manual_seed(0)
+    torch.cuda.set_per_process_memory_fraction(a.gpu_frac)
+    torch.manual_seed(a.seed)
 
     refs = Refs(a.refs)
     hold = holdout_songs(refs, [f"{D}/eval-chad.pkl", f"{D}/eval-chadfull.pkl", f"{D}/eval-synth.pkl"])
@@ -130,8 +135,9 @@ def main():
     kinds = dict(KINDS)
     if a.kinds:
         kinds.update(json.loads(a.kinds))
-    pool_args = dict(prefix=a.refs, train_songs=train_songs, m2p_path=a.m2p, tracked=a.tracked, qbsh=a.qbsh)
-    ds = PairStream(pool_args, a.batch, a.negs, kinds=kinds, seed=1)
+    pool_args = dict(prefix=a.refs, train_songs=train_songs, m2p_path=a.m2p, tracked=a.tracked, qbsh=a.qbsh,
+                     qbsh_holdout=a.qbsh_holdout)
+    ds = PairStream(pool_args, a.batch, a.negs, kinds=kinds, seed=1 + a.seed)
     dl = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=a.workers, prefetch_factor=4, persistent_workers=True)
 
     model = Encoder(d=a.d, layers=a.layers, dim=a.dim).to(dev)
@@ -180,6 +186,8 @@ def main():
         if step % 100 == 0:
             l = np.mean(hist[-100:], axis=0)
             print(f"step {step} loss {l[0]:.3f} acc {l[1]:.3f} T {1 / ls.item():.4f} lr {lr_at(step):.2e} {time.time() - t0:.0f}s", flush=True)
+        if a.save_every and step % a.save_every == 0 and step % a.val_every != 0:
+            torch.save({"model": model.state_dict(), "args": vars(a), "step": step}, f"{a.out}/model-{step}.pt")
         if step % a.val_every == 0 or step == a.steps:
             m = val_metrics(model, val, dev)
             print("val", json.dumps({k: round(v, 4) if isinstance(v, float) else v for k, v in m.items()}), flush=True)

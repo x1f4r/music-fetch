@@ -307,6 +307,12 @@ impl MelodyIndex {
         None
     }
 
+    /// FNV-1a 64 over the track table: identifies the tracks, in order, that
+    /// companion files such as the encoder's refer to.
+    pub fn tracks_digest(&self) -> u64 {
+        fnv1a_bytes(self.section(S_TRCK))
+    }
+
     /// File size in bytes.
     pub fn size_bytes(&self) -> u64 {
         self.bytes.len() as u64
@@ -614,7 +620,12 @@ fn shares_word(a: &str, b: &str) -> bool {
 
 /// FNV-1a, 64-bit.
 pub(crate) fn fnv1a(s: &str) -> u64 {
-    s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
+    fnv1a_bytes(s.as_bytes())
+}
+
+/// FNV-1a, 64-bit, over bytes.
+pub(crate) fn fnv1a_bytes(b: &[u8]) -> u64 {
+    b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
 pub(crate) fn read_varint(b: &[u8], pos: &mut usize) -> Option<u32> {

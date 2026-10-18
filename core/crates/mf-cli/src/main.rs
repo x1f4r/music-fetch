@@ -2,6 +2,7 @@
 
 use clap::{Parser, Subcommand};
 
+mod encoder;
 mod eval_mixes;
 mod library;
 mod links;
