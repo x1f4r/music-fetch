@@ -85,7 +85,7 @@ fn codec_window_diffs() -> Vec<(&'static str, usize, i32)> {
         .map(|(name, hint, bytes, window)| {
             let samples = decode_bytes(bytes, Some(hint), &CancelToken::new()).unwrap_or_default();
             let start = codec_window_start(samples.len());
-            let native = window.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]));
+            let native = window.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b));
             let diffs: Vec<i32> =
                 samples.iter().skip(start).zip(native).map(|(a, b)| (i32::from(*a) - i32::from(b)).abs()).collect();
             (*name, diffs.iter().filter(|d| **d != 0).count(), diffs.into_iter().max().unwrap_or(0))
@@ -118,7 +118,7 @@ fn codec_mismatches() -> Vec<String> {
             continue;
         }
         let start = codec_window_start(samples.len());
-        let native: Vec<i16> = window.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        let native: Vec<i16> = window.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b)).collect();
         let ours = &samples[start..(start + native.len()).min(samples.len())];
         let max_diff = ours.iter().zip(&native).map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs()).max().unwrap_or(0);
         let differing = ours.iter().zip(&native).filter(|(a, b)| a != b).count();
