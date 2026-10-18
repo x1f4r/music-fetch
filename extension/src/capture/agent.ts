@@ -150,6 +150,9 @@ class CaptureAgent implements AgentApi {
       pickElement(this.env.doc.querySelectorAll('audio, video'));
     if (!element) return null;
     if (element !== this.element) this.bind(element);
+    // An ad may already be showing; later changes arrive as events.
+    const state = this.pageScript || marked ? await this.bridge.call<{ ad: boolean }>('state').catch(() => null) : null;
+    if (state) this.ad = state.ad;
     return this.info(marked);
   }
 

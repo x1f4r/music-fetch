@@ -16,6 +16,13 @@ export const E2E_OUTPUT = {
   firefox: resolve('.output/firefox-mv3-e2e'),
 };
 
+/**
+ * The runtime tests play audio: they run only when asked (`MF_RUNTIME_E2E=1`, set by
+ * `npm run e2e:runtime` and `legion-runtime.sh`, which also routes the audio to a private
+ * null sink), never as part of `npm run e2e`.
+ */
+export const RUNTIME_E2E = process.env.MF_RUNTIME_E2E === '1';
+
 export const SAMPLE_RATE = 48_000;
 const [A, B, C, D, E, F] = SYNTHETIC_SONGS as unknown as [typeof SYNTHETIC_SONGS[0], ...typeof SYNTHETIC_SONGS[0][]];
 

@@ -25,7 +25,7 @@ cleanup() {
 trap cleanup EXIT
 
 unset WAYLAND_DISPLAY WAYLAND_SOCKET
-export DISPLAY="$DISPLAY_NUM" XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 MOZ_ENABLE_WAYLAND=0 PULSE_SINK="$SINK"
+export DISPLAY="$DISPLAY_NUM" XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 MOZ_ENABLE_WAYLAND=0 PULSE_SINK="$SINK" MF_RUNTIME_E2E=1
 npm run build:e2e >/dev/null || { echo "build failed"; exit 1; }
 nice -n 10 npx vitest run --config vitest.e2e.config.ts "${1:-tests/e2e/runtime-}"
 code=$?

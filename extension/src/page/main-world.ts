@@ -67,11 +67,15 @@ export function startPageScript(win: Window & typeof globalThis, doc: Document, 
   const element = (): HTMLMediaElement | null => adapter.element(win, doc, played);
 
   const describe = (el: HTMLMediaElement): MarkedPlayer => {
-    const duration = adapter.durationMs?.(win) ?? (finite(el.duration) ?? 0) * 1000;
     const facts = adapter.facts(win, doc);
+    // During an ad the element holds the ad: trust the player API, then the page's facts.
+    const ad = adapter.ad?.(win, doc) ?? false;
+    const element = (finite(el.duration) ?? 0) * 1000 || null;
+    const fromPage = facts.durationMs ?? null;
+    const duration = adapter.durationMs?.(win) ?? (ad ? fromPage : (element ?? fromPage));
     return {
       found: true,
-      durationMs: duration || facts.durationMs || null,
+      durationMs: duration,
       live: Boolean(facts.live) || el.duration === Infinity,
       protected: Boolean(el.mediaKeys),
       title: facts.title ?? null,

@@ -4,7 +4,7 @@ import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import webExt from 'web-ext';
 import { HEADLESS } from './support';
-import { E2E_OUTPUT, echoed, rpc, sleep, startFixtureServer, waitForSession, type FixtureServer } from './runtime-support';
+import { E2E_OUTPUT, RUNTIME_E2E, echoed, rpc, sleep, startFixtureServer, waitForSession, type FixtureServer } from './runtime-support';
 
 const FIREFOX = process.env.FIREFOX_BIN ?? '/usr/bin/firefox';
 const FRAME = 'mf-rt-frame';
@@ -33,7 +33,7 @@ type Api = {
  * open the toolbar popup or navigate a web tab into the extension, so the tests drive one
  * extension tab (the welcome tab) and call the host from it.
  */
-describe.skipIf(!existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.firefox))('Firefox runtime', () => {
+describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.firefox))('Firefox runtime', () => {
   let runner: { exit(): Promise<void> } | null = null;
   let browser: Browser;
   let server: FixtureServer;

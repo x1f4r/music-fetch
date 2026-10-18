@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ARTIFACTS, HEADLESS, tempProfile } from './support';
-import { E2E_OUTPUT, echoed, micFile, rpc, sleep, startFixtureServer, waitForSession, type FixtureServer } from './runtime-support';
+import { E2E_OUTPUT, RUNTIME_E2E, echoed, micFile, rpc, sleep, startFixtureServer, waitForSession, type FixtureServer } from './runtime-support';
 
 const CHROMIUM = process.env.CHROMIUM_BIN ?? '/usr/bin/chromium';
 
@@ -13,7 +13,7 @@ const CHROMIUM = process.env.CHROMIUM_BIN ?? '/usr/bin/chromium';
  * that play synthetic songs. Headful (Xvfb) so the toolbar action opens a real popup:
  * tab capture needs the extension to be invoked on the tab.
  */
-describe.skipIf(!existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.chromium))('Chromium runtime', () => {
+describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.chromium))('Chromium runtime', () => {
   let browser: Browser;
   let server: FixtureServer;
   let id = '';
