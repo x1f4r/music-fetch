@@ -116,6 +116,7 @@
 <svelte:window onfocus={() => void surface.refreshTab()} {onkeydown} {onpaste} />
 
 <main class="panel" class:narrow bind:clientWidth={width}>
+  <h1 class="sr-only">{t('app.name')}</h1>
   {#if !providers}
     <!-- Waiting for the stored provider decision. -->
   {:else if providers.needsPanel}
@@ -148,7 +149,7 @@
         {#if !narrow}<button class="btn text quiet" onclick={() => void platform.copyText(session?.tracklist() ?? '')}><span class="ic ic-copy"></span>{t('export.copyTracklist')}</button>{/if}
       {/if}
       <span class="grow"></span>
-      <button class="btn text quiet" onclick={() => void platform.openApp(`/session/${session?.id}`)}><span class="ic ic-expand"></span>{narrow ? '' : t('nav.openInTab')}</button>
+      <button class="btn text quiet" aria-label={narrow ? t('nav.openInTab') : undefined} onclick={() => void platform.openApp(`/session/${session?.id}`)}><span class="ic ic-expand"></span>{narrow ? '' : t('nav.openInTab')}</button>
     </nav>
   {:else}
     <div class="top">

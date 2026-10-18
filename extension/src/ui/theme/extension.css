@@ -22,6 +22,13 @@
 h1, h2, h3 { margin: 0; font: inherit; }
 kbd { font: inherit; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 6px; background: var(--fill-2); box-shadow: inset 0 -1px 0 var(--hairline); }
 
+/* Small tertiary text (ruler labels, captions, "No selection"): the outline role measures
+   4.3:1 on the light surface, under AA for small text; a step darker in light only. */
+:root { --outline-text: #646e6a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --outline-text: var(--outline); } }
+html[data-theme="dark"] { --outline-text: var(--outline); }
+.tertiary, .ruler, .details-col .no-selection, .grant-states .cap { color: var(--outline-text); }
+
 /* The tokens declare the default after the media query, which wins; restore the high-contrast value. */
 @media (prefers-contrast: more) {
   :root { --likely-opacity: .75; }
@@ -109,7 +116,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 
 /* ---------- Popup (popup-*.html): absolute slots ---------- */
 .popup .state.two { top: 302px; }
-.popup .dl-bar { position: absolute; left: 60px; right: 60px; top: 338px; margin: 0; max-width: none; }
+.popup .dl-bar { position: absolute; left: 60px; right: 60px; top: 338px; width: auto; margin: 0; max-width: none; }
 .popup .scroll { overflow-y: auto; scrollbar-width: thin; }
 .popup .scroll .hero { padding-top: 14px; }
 /* The provider menu centres on the result's actions, above the button (popup-result-menu). */
@@ -157,7 +164,10 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .panel .session-pane { padding-top: 8px; }
 .panel.narrow .footer .btn.text { padding: 0 8px; }
 .panel.narrow .stage { padding: 0 12px; }
-.track.prov { opacity: .7; }
+/* Provisional rows (from the tracklist, not heard yet): dimmed artwork and title, text kept
+   at AA contrast; "from the tracklist" and the Possible tag say it in words too. */
+.track.prov .art { opacity: .7; }
+.track.prov .ttl { color: var(--on-surface-variant); }
 .track.pending .ttl { color: var(--on-surface-variant); }
 .track .art.placeholder { background: var(--fill); box-shadow: inset 0 0 0 1px var(--hairline); }
 .mix-status .small-bar { width: 88px; flex: none; }
@@ -234,7 +244,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .details-col .dsec { margin-top: 16px; }
 .details-col .acts { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .details-col .acts > .btn { width: 100%; }
-.details-col .no-selection { margin: auto; color: var(--outline); font-size: var(--fs-title); }
+.details-col .no-selection { margin: auto; color: var(--outline-text); font-size: var(--fs-title); }
 .details-col .many { margin: auto 0; display: flex; flex-direction: column; align-items: stretch; text-align: center; gap: 4px; }
 
 /* Library: toolbar, context bar, list, toast (app-library.html) */

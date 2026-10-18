@@ -19,14 +19,17 @@ src/
   engine/               Types mirrored from core model.rs, EngineClient, host and remote
                         client over Ports, the mock (catalog, scripts, persistence, export).
   messaging/            Typed request/response and event bus; control messages to the background.
-  models/               Pure state: the listen stage (folded from SessionEvents), library sections.
+  models/               Pure state: the listen stage, sessions (timeline, tracklist, status row),
+                        library rows and selection, notifications and the badge.
   providers/            "Open in": services, search links (port of catalog::search_links),
                         custom provider (port of custom_provider_link).
   settings/             storage.sync (provider decision, custom provider, …) and storage.local.
   platform/             Manifest per browser, capability probe, offscreen, surfaces.
   page/                 Page facts read in the page (site adapters are task X4).
   i18n/                 Copy from docs/design/DESIGN.md §7 and the extension plan §5.9.
-  ui/                   Svelte components, surfaces and routes; ui/theme holds every style.
+  notify/               The background's badge and result notifications (wired by the background).
+  ui/                   Svelte components, surfaces, routes and controllers; ui/theme holds every
+                        style; ui/demo the demo states.
 tests/unit, tests/e2e, tests/fixtures
 ```
 
@@ -41,6 +44,7 @@ tests/unit, tests/e2e, tests/fixtures
 | `npm run check` | `svelte-check` (types in `.ts` and `.svelte`) |
 | `npm run lint:firefox` | `web-ext lint` on the Firefox build |
 | `npm run e2e` | Builds, then loads the extension into Chromium (Puppeteer) and Firefox (web-ext + WebDriver BiDi). `CHROMIUM_BIN` / `FIREFOX_BIN` pick the browsers; with `DISPLAY` set they run headful |
+| `npm run screens` | After `npm run build:chrome`: every demo state, light and dark, at 2× into `.screens/` (with `manifest.json`), and an axe-core audit of each (`.screens/a11y.json`). `SCREENS=<id,…>` picks states |
 
 ## Mock engine
 
@@ -55,6 +59,15 @@ lives in the extension origin's `localStorage`. To reach hard states:
 
 Streams recorded from the native CLI (`mf listen … > events.jsonl`) replay through
 `fromRecording(parseRecording(text))`.
+
+## Demo states
+
+Every state of the extension plan §5 and the design spec opens from a URL on the real
+pages, like the apps' `-MFDemoState`: `popup.html?demo=popup-hum`, `sidepanel.html?demo=panel-mix`,
+`app.html?demo=app-library` (add `&theme=dark`, or `&still=1` for screenshots). The gallery of
+all of them is `app.html?demo=gallery`. A demo runs on the mock engine with its own library
+(`src/ui/demo/library.ts`), keeps settings in memory and never touches the user's data; the
+states and the clicks that reach them are in `src/ui/demo/states.ts`.
 
 ## Design
 

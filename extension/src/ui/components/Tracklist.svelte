@@ -33,6 +33,12 @@
   /** The row that holds the list's one tab stop (roving tabindex). */
   const cursor = $derived(selectedId && ids.includes(selectedId) ? selectedId : (ids[0] ?? null));
 
+  // A selection made elsewhere (the timeline, the details column) brings its row into view.
+  $effect(() => {
+    if (!selectedId) return;
+    list?.querySelector(`[data-id="${CSS.escape(selectedId)}"]`)?.scrollIntoView({ block: 'nearest' });
+  });
+
   function focusRow(id: string) {
     onselect?.(id);
     const row = list?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`);

@@ -181,6 +181,7 @@
 {/snippet}
 
 <main class={touch ? 'mobile touch' : 'popup'}>
+  <h1 class="sr-only">{t('app.name')}</h1>
   {#if !providers}
     <!-- Loading the provider decision: render nothing rather than flash the stage. -->
   {:else if providers.needsPanel}

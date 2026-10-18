@@ -46,7 +46,6 @@
   const time = $derived(text(rowTime(entry, now, inDaySection)));
   const failed = $derived(entry.status === 'NoMatch' || entry.status === 'Failed');
   const title = $derived(entry.status === 'NoMatch' ? t('library.noMatch') : entry.title);
-  const label = $derived([title, subtitle, time, entry.pinned ? t('library.pinnedRow') : ''].filter(Boolean).join(', '));
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -58,7 +57,6 @@
   data-id={entry.id}
   role="option"
   aria-selected={selectable ? checked : current}
-  aria-label={label}
   aria-describedby={headingId}
   tabindex="-1"
   {onclick}
@@ -78,7 +76,7 @@
   <div class="trail">
     {#if entry.status === 'Running'}<span class="spinner small" aria-hidden="true"></span>{/if}
     <span class="callout tnum">{time}</span>
-    {#if entry.pinned}<span class="ic ic-pin-fill s14 pin" aria-hidden="true"></span>{/if}
+    {#if entry.pinned}<span class="ic ic-pin-fill s14 pin" aria-hidden="true"></span><span class="sr-only">{t('library.pinnedRow')}</span>{/if}
     {#if chevron}<span class="ic ic-chev-right s14" aria-hidden="true"></span>{/if}
   </div>
 </div>
