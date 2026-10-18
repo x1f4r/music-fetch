@@ -109,6 +109,26 @@ final class ScreenshotTests: XCTestCase {
                 sleep(1)
                 self.attachWindow(window, "noMatch-hum", variant)
             }
+            // Clicking a live answer while humming stops and selects it in the final list.
+            run("hum-answers", variant) { app, window in
+                let answer = window.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Dancing Queen")).firstMatch
+                XCTAssertTrue(answer.waitForExistence(timeout: 5), "hum-answers \(variant.name): no live answer")
+                guard answer.exists else { return }
+                answer.click()
+                XCTAssertTrue(self.element("mf.humAgain", in: window).waitForExistence(timeout: 6),
+                              "hum-answers \(variant.name): the final list did not appear")
+                sleep(1)
+                self.attachWindow(window, "hum-answers-chosen", variant)
+            }
+            // "Not Now" on the speech explanation hums without words.
+            run("speechPrePrompt", variant) { app, window in
+                let notNow = self.element("mf.action.skipSpeech", in: window)
+                XCTAssertTrue(notNow.waitForExistence(timeout: 3), "speechPrePrompt \(variant.name): no Not Now")
+                guard notNow.exists else { return }
+                notNow.click()
+                sleep(2)
+                self.attachWindow(window, "speechPrePrompt-notNow", variant)
+            }
             // ⌘⇧P pins the whole selection. (Synthetic hover and right clicks don't reach
             // list rows on the runners, so row hover and context menus aren't shot.)
             run("library-selection", variant) { app, window in
