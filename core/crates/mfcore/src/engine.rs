@@ -290,9 +290,10 @@ impl Engine {
     }
 
     /// Delete sessions: running ones are canceled first; their kept recordings
-    /// and cached media are removed too. (In the browser this cannot wait for
-    /// canceled sessions to stop; use `delete_sessions_async` there.)
+    /// and cached media are removed too.
     pub fn delete_sessions(&self, ids: Vec<String>) -> Result<()> {
+        // The browser cannot wait for canceled sessions here: it uses
+        // `delete_sessions_async`. (Doc comments here go into the app bindings.)
         let (ids, mut waiting) = self.cancel_for_delete(ids);
         let started = Instant::now();
         #[cfg(not(target_family = "wasm"))]
