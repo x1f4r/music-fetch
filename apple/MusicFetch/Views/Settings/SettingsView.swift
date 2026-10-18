@@ -356,7 +356,7 @@ struct MelodyPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(minHeight: 320)
+        .frame(minHeight: 480)
         .onAppear { settings.refreshMelody() }
         .task { await app.speech.refresh() }
     }

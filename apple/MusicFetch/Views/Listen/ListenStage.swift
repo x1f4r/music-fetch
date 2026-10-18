@@ -10,6 +10,8 @@ struct ListenStage: View {
 
     var listen: ListenModel
     var glass: Namespace.ID
+    /// The source toggles' width: the live answers line up with their edges.
+    @State private var togglesWidth: CGFloat = 340
 
     private var showsTrace: Bool {
         (listen.stage == .listening || listen.stage == .matching) && listen.impression
@@ -44,6 +46,7 @@ struct ListenStage: View {
 
                 SourceToggles(listen: listen)
                     .frame(height: 28)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { togglesWidth = $0 }
                     .position(x: x, y: c + 30 + stateLineHeight + 20 + 14)
 
                 RecoveryRow(listen: listen)
@@ -51,9 +54,10 @@ struct ListenStage: View {
                     .position(x: x, y: c + 30 + stateLineHeight + 20 + 28 + 12 + 14)
 
                 // While humming, the recovery row's slot holds the live answers; the
-                // block grows downwards and keeps its frame whatever it shows.
+                // block grows downwards and keeps its frame whatever it shows. Its text
+                // and tags line up with the toggles' outer edges (rows inset 10 pt).
                 LiveAnswersView(listen: listen)
-                    .frame(width: min(440, size.width - 48), height: LiveAnswersView.height)
+                    .frame(width: min(max(togglesWidth + 20, 320), size.width - 48), height: LiveAnswersView.height)
                     .position(x: x, y: c + 30 + stateLineHeight + 20 + 28 + 12 + LiveAnswersView.height / 2)
                     .opacity(listen.showsLiveAnswers ? 1 : 0)
                     .allowsHitTesting(listen.showsLiveAnswers && listen.isCapturing)
