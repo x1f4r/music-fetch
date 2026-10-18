@@ -671,6 +671,10 @@ impl Engine {
             .map(|entries| entries.into_iter().map(|e| e.id).collect())
             .unwrap_or_default();
         remove_session_files(&ctx, |id| !pinned.contains(id));
+        // Files handed over for analysis whose session never ended.
+        if let Err(e) = ctx.files.remove_prefix("imports/") {
+            tracing::warn!("could not remove leftover imports: {e}");
+        }
         Ok(Arc::new(Self { ctx, registry: Arc::new(Registry::default()), index: Arc::new(IndexState::default()) }))
     }
 
