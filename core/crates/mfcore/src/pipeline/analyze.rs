@@ -389,9 +389,15 @@ pub(crate) async fn probe_media(
     {
         return media::parse_probe(&json);
     }
-    let backend = ctx.engine.media.clone().ok_or_else(|| MfError::Platform {
-        message: "Links with media need the media download tools, which are not available.".into(),
-    })?;
+    let Some(backend) = ctx.engine.media.clone() else {
+        // Without yt-dlp (the browser), YouTube pages and InnerTube answer instead.
+        if crate::links::youtube_api::handles(url) {
+            return crate::links::youtube_api::probe(&ctx.engine.http, url, with_comments, &ctx.cancel).await;
+        }
+        return Err(MfError::Platform {
+            message: "Links with media need the media download tools, which are not available.".into(),
+        });
+    };
     let task = TaskHandle::new(ctx.cancel.clone());
     let url_owned = url.to_string();
     let json = tokio::task::spawn_blocking(move || backend.probe(url_owned, with_comments, task))

@@ -62,6 +62,10 @@ impl Recorder {
     }
 }
 
+fn now_s() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
 fn refused(message: String) -> mfcore::MfError {
     eprintln!("youtube-probe: {message}");
     mfcore::MfError::RateLimited { retry_in_ms: 24 * 3600 * 1000 }
@@ -78,8 +82,15 @@ impl ProbeHooks for Recorder {
                 return Err(refused(format!("request budget of {} spent", self.budget)));
             }
         }
-        if let Some(last) = *self.last.lock() {
-            let wait = self.gap.saturating_sub(last.elapsed());
+        // The gap holds across runs too: the folder's log has the last request's time.
+        let since_logged = self.dir.as_ref().and_then(|dir| {
+            let log = std::fs::read_to_string(dir.join("log.jsonl")).ok()?;
+            let at = serde_json::from_str::<serde_json::Value>(log.lines().last()?).ok()?["at"].as_u64()?;
+            Some(Duration::from_secs(now_s().saturating_sub(at)))
+        });
+        let since = [self.last.lock().map(|t| t.elapsed()), since_logged].into_iter().flatten().min();
+        if let Some(since) = since {
+            let wait = self.gap.saturating_sub(since);
             if !wait.is_zero() {
                 eprintln!("youtube-probe: waiting {} s", wait.as_secs());
                 std::thread::sleep(wait);
@@ -109,7 +120,7 @@ impl ProbeHooks for Recorder {
             if let Some(request) = exchange.request {
                 let _ = std::fs::write(dir.join(format!("{n:02}-{}.request.json", exchange.kind)), request.to_string());
             }
-            let at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let at = now_s();
             let line = json!({"n": n, "kind": exchange.kind, "url": exchange.url, "status": exchange.status,
                 "bytes": exchange.body.len(), "at": at, "blocked": blocked});
             use std::io::Write;

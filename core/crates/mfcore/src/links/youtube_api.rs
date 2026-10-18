@@ -298,6 +298,12 @@ pub(crate) fn video_info(id: &str, page: &WatchData) -> Result<MediaInfo> {
     };
     if let Some(initial) = &page.initial {
         info.chapters = chapters(initial, duration_ms);
+    }
+    if info.chapters.is_empty() {
+        // YouTube now loads its chapter markers later; yt-dlp then reads them from the description.
+        info.chapters = description.zip(duration_ms).map(|(d, ms)| description_chapters(d, ms)).unwrap_or_default();
+    }
+    if let Some(initial) = &page.initial {
         // One song in the "Music" section names the video's song, as yt-dlp reports it.
         let cards = music_cards(initial);
         if let [card] = cards.as_slice() {
@@ -377,9 +383,41 @@ pub(crate) fn chapters(initial: &Value, duration_ms: Option<u64>) -> Vec<Chapter
     }
     found.sort_by_key(|(start, _)| *start);
     found.dedup_by_key(|(start, _)| *start);
+    with_ends(found, duration_ms)
+}
+
+/// `(start, title)` pairs as chapters ending where the next starts.
+fn with_ends(found: Vec<(u64, String)>, duration_ms: Option<u64>) -> Vec<Chapter> {
     let ends: Vec<Option<u64>> =
         found.iter().skip(1).map(|(s, _)| Some(*s)).chain(std::iter::once(duration_ms)).collect();
     found.into_iter().zip(ends).map(|((start_ms, title), end_ms)| Chapter { start_ms, end_ms, title }).collect()
+}
+
+/// Chapters from description lines that are only a timestamp and a title
+/// ("03:32 Track 02 - Dune", or the title first), as yt-dlp reads them: sorted,
+/// kept while they increase and fit the video, the first form before the second.
+pub(crate) fn description_chapters(description: &str, duration_ms: u64) -> Vec<Chapter> {
+    static TIME_FIRST: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)^\s*((?:\d+:)?\d{1,2}:\d{2})\b\W*\s(.+?)\s*$").expect("regex"));
+    static TITLE_FIRST: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)^\s*(.+?)\b\W*\s((?:\d+:)?\d{1,2}:\d{2})\s*$").expect("regex"));
+    let pick = |re: &Regex, time: usize, title: usize| -> Vec<Chapter> {
+        let mut list: Vec<(u64, String)> = re
+            .captures_iter(description)
+            .filter_map(|c| Some((clock_ms(c.get(time)?.as_str())?, c.get(title)?.as_str().trim().to_string())))
+            .collect();
+        list.sort_by_key(|(start, _)| *start);
+        let mut kept: Vec<(u64, String)> = Vec::new();
+        for (start, title) in list {
+            let last = kept.last().map_or(0, |(s, _)| *s);
+            if start >= last && start <= duration_ms && !kept.iter().any(|(s, t)| *s == start && *t == title) {
+                kept.push((start, title));
+            }
+        }
+        with_ends(kept, Some(duration_ms))
+    };
+    let first = pick(&TIME_FIRST, 1, 2);
+    if first.is_empty() { pick(&TITLE_FIRST, 2, 1) } else { first }
 }
 
 /// "1:02:03" / "4:05" in milliseconds.
@@ -633,25 +671,68 @@ fn entries_of(items: &[Value]) -> (Vec<MediaEntry>, Option<String>) {
             next = Some(token);
             continue;
         }
-        let Some(r) = item.get("playlistVideoRenderer") else { continue };
-        let Some(id) = str_at(r, "/videoId") else { continue };
-        let title = r.get("title").and_then(text_of);
+        let Some(entry) = item
+            .get("playlistVideoRenderer")
+            .and_then(video_renderer_entry)
+            .or_else(|| item.get("lockupViewModel").and_then(lockup_entry))
+        else {
+            continue;
+        };
         // Removed videos stay in playlists as placeholders.
-        if r.get("isPlayable").and_then(Value::as_bool) == Some(false)
-            || matches!(title.as_deref(), Some("[Private video]" | "[Deleted video]" | "[Unavailable video]"))
-        {
+        if matches!(entry.title.as_deref(), Some("[Private video]" | "[Deleted video]" | "[Unavailable video]")) {
             continue;
         }
-        entries.push(MediaEntry {
-            index: entries.len() as u32,
-            url: format!("https://www.youtube.com/watch?v={id}"),
-            id: Some(id),
-            title,
-            uploader: r.get("shortBylineText").and_then(text_of),
-            duration_ms: u64_at(r, "/lengthSeconds").filter(|s| *s > 0).map(|s| s * 1000),
-        });
+        entries.push(MediaEntry { index: entries.len() as u32, ..entry });
     }
     (entries, next)
+}
+
+fn entry(id: String, title: Option<String>, uploader: Option<String>, duration_ms: Option<u64>) -> MediaEntry {
+    MediaEntry {
+        index: 0,
+        url: format!("https://www.youtube.com/watch?v={id}"),
+        id: Some(id),
+        title,
+        uploader,
+        duration_ms,
+    }
+}
+
+/// The older `playlistVideoRenderer`.
+fn video_renderer_entry(r: &Value) -> Option<MediaEntry> {
+    if r.get("isPlayable").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    Some(entry(
+        str_at(r, "/videoId")?,
+        r.get("title").and_then(text_of),
+        r.get("shortBylineText").and_then(text_of),
+        u64_at(r, "/lengthSeconds").filter(|s| *s > 0).map(|s| s * 1000),
+    ))
+}
+
+/// A `lockupViewModel` (playlists since 2025): the title and channel in its
+/// metadata, the length in the thumbnail's badge.
+fn lockup_entry(r: &Value) -> Option<MediaEntry> {
+    if str_at(r, "/contentType").is_some_and(|t| t != "LOCKUP_CONTENT_TYPE_VIDEO") {
+        return None;
+    }
+    let meta = r.pointer("/metadata/lockupMetadataViewModel");
+    let title = meta.and_then(|m| m.get("title")).and_then(text_of);
+    let uploader = meta
+        .and_then(|m| m.pointer("/metadata/contentMetadataViewModel/metadataRows/0/metadataParts/0/text"))
+        .and_then(text_of);
+    let duration_ms = r
+        .pointer("/contentImage/thumbnailViewModel/overlays")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|o| o.pointer("/thumbnailBottomOverlayViewModel/badges").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|b| b.pointer("/thumbnailBadgeViewModel/text").and_then(text_of))
+        .find_map(|t| clock_ms(&t))
+        .filter(|ms| *ms > 0);
+    Some(entry(str_at(r, "/contentId")?, title, uploader, duration_ms))
 }
 
 // ------------------------------------------------------------------ client

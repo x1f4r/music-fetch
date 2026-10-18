@@ -190,3 +190,40 @@ fn the_client_comes_from_the_page() {
     assert!(fallback.version.starts_with("2.20") && fallback.version.ends_with(".00.00"), "{}", fallback.version);
     assert_eq!(civil_date(0), (1970, 1, 1));
 }
+
+#[test]
+fn chapters_from_the_description_like_yt_dlp() {
+    let description = "Album - Tracklist\n\n00:00   Track 01  -  This World\n03:32   Track 02  -  Dune\n\
+        06:47 Track 03 - BOUNCY\n#tags\n99:00 too late\nsee 1:00 in the middle";
+    let chapters = description_chapters(description, 1_168_000);
+    let starts: Vec<u64> = chapters.iter().map(|c| c.start_ms).collect();
+    assert_eq!(starts, [0, 212_000, 407_000]);
+    assert_eq!(chapters[0].title, "Track 01  -  This World");
+    assert_eq!(chapters[2].end_ms, Some(1_168_000));
+    let title_first = description_chapters("Intro 0:00\nSong A 2:10\n", 300_000);
+    assert_eq!(
+        title_first.iter().map(|c| (c.start_ms, c.title.as_str())).collect::<Vec<_>>(),
+        [(0, "Intro"), (130_000, "Song A")]
+    );
+    assert!(description_chapters("no stamps here", 60_000).is_empty());
+}
+
+#[test]
+fn lockup_playlist_entries() {
+    let item = json!({"lockupViewModel": {"contentId": "IluRBvnYMoY", "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+        "contentImage": {"thumbnailViewModel": {"overlays": [{"thumbnailBottomOverlayViewModel": {"badges": [
+            {"thumbnailBadgeViewModel": {"text": "4:44"}}]}}]}},
+        "metadata": {"lockupMetadataViewModel": {"title": {"content": "Give Life Back to Music"},
+            "metadata": {"contentMetadataViewModel": {"metadataRows": [{"metadataParts": [{"text": {"content": "Daft Punk"}}]},
+                {"metadataParts": [{"text": {"content": "30M"}}]}]}}}}}});
+    let (entries, next) = entries_of(&[
+        item,
+        json!({"lockupViewModel": {"contentId": "PL1", "contentType": "LOCKUP_CONTENT_TYPE_PLAYLIST"}}),
+    ]);
+    assert_eq!(next, None);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id.as_deref(), Some("IluRBvnYMoY"));
+    assert_eq!(entries[0].title.as_deref(), Some("Give Life Back to Music"));
+    assert_eq!(entries[0].uploader.as_deref(), Some("Daft Punk"));
+    assert_eq!(entries[0].duration_ms, Some(284_000));
+}
