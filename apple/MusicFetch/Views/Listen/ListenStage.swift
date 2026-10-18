@@ -56,7 +56,7 @@ struct ListenStage: View {
                     .frame(width: min(440, size.width - 48), height: LiveAnswersView.height)
                     .position(x: x, y: c + 30 + stateLineHeight + 20 + 28 + 12 + LiveAnswersView.height / 2)
                     .opacity(listen.showsLiveAnswers ? 1 : 0)
-                    .allowsHitTesting(listen.showsLiveAnswers)
+                    .allowsHitTesting(listen.showsLiveAnswers && listen.isCapturing)
                     .accessibilityHidden(!listen.showsLiveAnswers)
 
                 // A previous result next to live answers would be one song list too many.

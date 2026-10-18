@@ -419,7 +419,13 @@ struct StoragePane: View {
                 }
                 if let storage = settings.storage {
                     LabeledContent(Copy.cachedAudio, value: Format.bytes(storage.cacheBytes))
-                    LabeledContent(Copy.melodyLibrary, value: Format.bytes(storage.melodyIndexBytes))
+                    // The engine counts the encoder file with the index; Melody lists them apart.
+                    if let model = settings.encoderBytes, model <= storage.melodyIndexBytes {
+                        LabeledContent(Copy.melodyLibrary, value: Format.bytes(storage.melodyIndexBytes - model))
+                        LabeledContent(Copy.melodyModel, value: Format.bytes(model))
+                    } else {
+                        LabeledContent(Copy.melodyLibrary, value: Format.bytes(storage.melodyIndexBytes))
+                    }
                     LabeledContent(Copy.libraryTitle, value: Format.bytes(storage.databaseBytes))
                 }
                 HStack {

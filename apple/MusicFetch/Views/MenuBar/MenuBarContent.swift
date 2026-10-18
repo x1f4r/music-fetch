@@ -37,6 +37,7 @@ struct MenuBarContent: View {
                 Divider().padding(.top, 16)
                 LiveAnswersView(listen: listen)
                     .frame(height: LiveAnswersView.height)
+                    .allowsHitTesting(listen.isCapturing)
                     .padding(.vertical, 8)
             } else if let recent = app.library.recent {
                 Divider().padding(.top, 16)

@@ -28,7 +28,7 @@ final class ScreenshotTests: XCTestCase {
     static let pairStates = [
         "listening", "hum", "hum-answers", "matching", "collection", "failed", "micDenied", "prePrompt", "captureSilent",
         "providers", "lyrics", "melodyPrompt", "library-pinned", "settings-general", "settings-melody", "candidates-unsure",
-        "speechPrePrompt", "settings-melody-speech-off", "settings-melody-model",
+        "speechPrePrompt", "settings-melody-speech-off", "settings-melody-model", "settings-storage",
     ]
     /// The idle stage hides the toolbar Listen button (the big button is the same action).
     static let statesWithoutToolbarListen: Set<String> = [
