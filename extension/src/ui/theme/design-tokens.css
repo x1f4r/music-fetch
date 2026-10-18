@@ -1,0 +1,254 @@
+/* Copied from the D1 design deliverable (design-tokens.css, 2026-10-17) without changes.
+   Adaptations for the real surfaces live in extension.css; edit the design files there first. */
+
+/* Music Fetch browser extension — design tokens (D1).
+   One file for every surface: popup, side panel / sidebar, app tab, grant and welcome pages,
+   Firefox for Android. 1 CSS px = 1 dp/pt at 1x.
+
+   Color: the Material 3 tonal scheme from seed #1FA48A ("fetch teal"), the same values the
+   Android app falls back to (docs/design/mockups/android.css), so both read as one product.
+   The ink navy and mint of the app icon appear in exactly one place: the listen button.
+   Light is the default; dark follows prefers-color-scheme, or html[data-theme="dark"] for
+   the demo-state URLs. Never hard-code a hex in a component: use the roles below. */
+
+:root {
+  color-scheme: light;
+
+  /* ---- Roles (light) ---- */
+  --surface: #f5fbf7;
+  --surface-dim: #d6dbd8;
+  --surface-bright: #f5fbf7;
+  --surface-lowest: #ffffff;
+  --surface-low: #eff5f1;
+  --surface-container: #e9efec;
+  --surface-high: #e3eae6;
+  --surface-highest: #dee4e0;
+  --on-surface: #171d1a;
+  --on-surface-variant: #3f4945;
+  --outline: #6f7975;
+  --outline-variant: #bfc9c4;
+  --inverse-surface: #2c322f;
+  --inverse-on-surface: #ecf2ee;
+  --inverse-primary: #5edbbf;
+
+  --primary: #006b5a;
+  --on-primary: #ffffff;
+  --primary-container: #7af2d4;
+  --on-primary-container: #00201a;
+  --secondary: #4b635c;
+  --on-secondary: #ffffff;
+  --secondary-container: #cde8df;
+  --on-secondary-container: #07201a;
+  --tertiary: #3f6375;
+  --tertiary-container: #c3e8fd;
+  --on-tertiary-container: #001f2a;
+  --error: #ba1a1a;
+  --on-error: #ffffff;
+  --error-container: #ffdad6;
+  --on-error-container: #410002;
+
+  /* Derived fills (alpha over the surface, so they work on any container tier) */
+  --hairline: rgba(23, 29, 26, .10);
+  --fill: rgba(23, 29, 26, .05);
+  --fill-2: rgba(23, 29, 26, .08);
+  --fill-3: rgba(23, 29, 26, .12);
+  --row-hover: rgba(23, 29, 26, .045);
+  --row-selected: var(--secondary-container);
+  --scrim: rgba(0, 0, 0, .32);
+  --veil: rgba(245, 251, 247, .75);          /* unanalyzed part of the timeline */
+  --hatch: repeating-linear-gradient(135deg, rgba(23, 29, 26, .22) 0 1.5px, transparent 1.5px 6px);
+
+  /* ---- The brand object: the listen button is the toolbar icon, alive ---- */
+  --ink: #10173a;
+  --ink-2: #1b2a5e;
+  --ink-rim: rgba(255, 255, 255, .14);
+  --mint: #5be4c7;
+  --mint-end: #f4fffb;
+  --halo: rgba(31, 164, 138, .55);
+
+  /* Shadows: only the artwork and floating menus cast one */
+  --shadow-art: 0 8px 24px rgba(0, 0, 0, .18), 0 0 0 .5px rgba(0, 0, 0, .08);
+  --shadow-menu: 0 8px 28px rgba(0, 0, 0, .18), 0 0 0 .5px rgba(0, 0, 0, .08);
+  --shadow-button: 0 6px 18px rgba(16, 23, 58, .32);
+
+  /* Per-scheme component fills, so components never need a scheme selector */
+  --surface-elevated: var(--surface-lowest);   /* menus, sheets */
+  --surface-group: var(--surface-lowest);      /* settings groups */
+  --seg-on: var(--surface-lowest);             /* selected segment / toggle */
+  --wash-opacity: .35;                         /* result hero wash */
+  --split-divider: rgba(255, 255, 255, .28);   /* line between the split button parts */
+
+  /* ---- Typography (system stack, the brief's choice; no bundled fonts) ---- */
+  --font: system-ui, -apple-system, "Segoe UI Variable", "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --fs-caption: 11px;  --lh-caption: 14px;
+  --fs-callout: 12px;  --lh-callout: 16px;
+  --fs-body: 13px;     --lh-body: 18px;
+  --fs-title: 15px;    --lh-title: 20px;     /* state line, section heads */
+  --fs-title-l: 20px;  --lh-title-l: 26px;   /* result title, narrow surfaces */
+  --fs-display: 26px;  --lh-display: 32px;   /* result title, app tab */
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+
+  /* ---- Spacing and shape ---- */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-12: 48px;
+  --r-xs: 4px;   /* ruler ticks, strip segments */
+  --r-s: 8px;    /* rows, small artwork */
+  --r-m: 12px;   /* artwork 120+, sheets, menus */
+  --r-l: 16px;   /* panels, large artwork */
+  --r-full: 999px;
+
+  /* Control sizes: desktop surfaces 32, touch surfaces 44+ (see .touch) */
+  --control: 32px;
+  --control-s: 28px;
+  --icon-button: 32px;
+  --listen: 96px;         /* popup */
+  --listen-panel: 80px;   /* side panel */
+  --listen-app: 112px;    /* app tab */
+  --trace-h: 96px;
+
+  /* ---- Motion: DESIGN §4.4 springs as linear() easings ---- */
+  --motion-hero: 410ms;
+  --ease-hero: linear(0, 0.047, 0.156, 0.292, 0.433, 0.564, 0.678, 0.773, 0.848, 0.905, 0.946, 0.975, 0.994, 1.006, 1.012, 1.015, 1.015, 1.014, 1.012, 1.01, 1.008, 1.006, 1.004, 1.003, 1.002);
+  --motion-fast: 350ms;
+  --ease-fast: linear(0, 0.071, 0.236, 0.438, 0.634, 0.803, 0.931, 1.019, 1.07, 1.092, 1.093, 1.082, 1.064, 1.045, 1.027, 1.013, 1.002, 0.996, 0.992, 0.991, 0.992, 0.993, 0.995, 0.996, 0.998);
+  --motion-slow: 560ms;
+  --ease-slow: var(--ease-hero);
+  --motion-standard: 220ms;
+  --ease-standard: linear(0, 0.025, 0.088, 0.171, 0.265, 0.36, 0.452, 0.537, 0.614, 0.682, 0.741, 0.792, 0.834, 0.869, 0.898, 0.922, 0.941, 0.956, 0.968, 0.977, 0.984, 0.989, 0.993, 0.996, 0.998);
+  --motion-effects: 160ms;
+  --ease-effects: cubic-bezier(.2, 0, 0, 1);
+
+  /* ---- Focus ---- */
+  --focus: var(--primary);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: #0f1512;
+    --surface-dim: #0f1512;
+    --surface-bright: #343b37;
+    --surface-lowest: #0a0f0d;
+    --surface-low: #171d1a;
+    --surface-container: #1b211e;
+    --surface-high: #252c28;
+    --surface-highest: #303633;
+    --on-surface: #dee4e0;
+    --on-surface-variant: #bfc9c4;
+    --outline: #89938e;
+    --outline-variant: #3f4945;
+    --inverse-surface: #dee4e0;
+    --inverse-on-surface: #2c322f;
+    --inverse-primary: #006b5a;
+    --primary: #5edbbf;
+    --on-primary: #003730;
+    --primary-container: #005145;
+    --on-primary-container: #7af2d4;
+    --secondary: #b1ccc3;
+    --on-secondary: #1d352e;
+    --secondary-container: #334b44;
+    --on-secondary-container: #cde8df;
+    --tertiary: #a7cce0;
+    --tertiary-container: #264b5c;
+    --on-tertiary-container: #c3e8fd;
+    --error: #ffb4ab;
+    --on-error: #690005;
+    --error-container: #93000a;
+    --on-error-container: #ffdad6;
+    --hairline: rgba(222, 228, 224, .12);
+    --fill: rgba(222, 228, 224, .06);
+    --fill-2: rgba(222, 228, 224, .10);
+    --fill-3: rgba(222, 228, 224, .15);
+    --row-hover: rgba(222, 228, 224, .06);
+    --scrim: rgba(0, 0, 0, .5);
+    --veil: rgba(15, 21, 18, .75);
+    --hatch: repeating-linear-gradient(135deg, rgba(222, 228, 224, .3) 0 1.5px, transparent 1.5px 6px);
+    --ink: #141d4a;
+    --ink-2: #22346f;
+    --ink-rim: rgba(255, 255, 255, .18);
+    --halo: rgba(94, 219, 191, .5);
+    --shadow-art: 0 8px 24px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(255, 255, 255, .08);
+    --shadow-menu: 0 8px 28px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(255, 255, 255, .1);
+    --shadow-button: 0 6px 18px rgba(0, 0, 0, .45);
+    --surface-elevated: var(--surface-high);
+    --surface-group: var(--surface-low);
+    --seg-on: var(--surface-bright);
+    --wash-opacity: .28;
+    --split-divider: rgba(0, 0, 0, .18);
+  }
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #0f1512;
+  --surface-dim: #0f1512;
+  --surface-bright: #343b37;
+  --surface-lowest: #0a0f0d;
+  --surface-low: #171d1a;
+  --surface-container: #1b211e;
+  --surface-high: #252c28;
+  --surface-highest: #303633;
+  --on-surface: #dee4e0;
+  --on-surface-variant: #bfc9c4;
+  --outline: #89938e;
+  --outline-variant: #3f4945;
+  --inverse-surface: #dee4e0;
+  --inverse-on-surface: #2c322f;
+    --inverse-primary: #006b5a;
+  --primary: #5edbbf;
+  --on-primary: #003730;
+  --primary-container: #005145;
+  --on-primary-container: #7af2d4;
+  --secondary: #b1ccc3;
+  --on-secondary: #1d352e;
+  --secondary-container: #334b44;
+  --on-secondary-container: #cde8df;
+  --tertiary: #a7cce0;
+  --tertiary-container: #264b5c;
+  --on-tertiary-container: #c3e8fd;
+  --error: #ffb4ab;
+  --on-error: #690005;
+  --error-container: #93000a;
+  --on-error-container: #ffdad6;
+  --hairline: rgba(222, 228, 224, .12);
+  --fill: rgba(222, 228, 224, .06);
+  --fill-2: rgba(222, 228, 224, .10);
+  --fill-3: rgba(222, 228, 224, .15);
+  --row-hover: rgba(222, 228, 224, .06);
+  --scrim: rgba(0, 0, 0, .5);
+  --veil: rgba(15, 21, 18, .75);
+  --hatch: repeating-linear-gradient(135deg, rgba(222, 228, 224, .3) 0 1.5px, transparent 1.5px 6px);
+  --ink: #141d4a;
+  --ink-2: #22346f;
+  --ink-rim: rgba(255, 255, 255, .18);
+  --halo: rgba(94, 219, 191, .5);
+  --shadow-art: 0 8px 24px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(255, 255, 255, .08);
+  --shadow-menu: 0 8px 28px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(255, 255, 255, .1);
+  --shadow-button: 0 6px 18px rgba(0, 0, 0, .45);
+    --surface-elevated: var(--surface-high);
+    --surface-group: var(--surface-low);
+    --seg-on: var(--surface-bright);
+    --wash-opacity: .28;
+    --split-divider: rgba(0, 0, 0, .18);
+}
+
+/* Increase contrast: outlines on capsules and tags, Likely tier at 75 % (DESIGN §8). */
+@media (prefers-contrast: more) {
+  :root {
+    --hairline: rgba(23, 29, 26, .3);
+    --outline-variant: var(--outline);
+    --likely-opacity: .75;
+  }
+}
+:root { --likely-opacity: .6; }
+
+/* Reduced motion: every morph and move becomes a 150 ms crossfade; the halo stops scaling;
+   the trace band still scrolls (it is content). */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-hero: 150ms; --ease-hero: linear;
+    --motion-fast: 150ms; --ease-fast: linear;
+    --motion-slow: 150ms; --ease-slow: linear;
+    --motion-standard: 150ms; --ease-standard: linear;
+  }
+}

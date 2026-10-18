@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- A SoundCloud-shaped track page: __sc_hydration, the play control, the now-playing
+     badge, and a detached `new Audio()` player (not in the DOM, like SoundCloud's). -->
+<meta name="mf-test-adapter" content="soundcloud">
+<title>Test Signal B by Music Fetch Test Signals | Listen online for free on SoundCloud</title>
+</head>
+<body>
+<button class="playControl" type="button">Play</button>
+<div class="playbackSoundBadge"><a class="playbackSoundBadge__titleLink" title="Test Signal B" href="/test/b"><span>Test Signal B</span></a><a class="playbackSoundBadge__lightLink" href="/test">Music Fetch Test Signals</a></div>
+<script>
+  window.__sc_hydration = [
+    { hydratable: 'user', data: { username: 'Music Fetch Test Signals' } },
+    { hydratable: 'sound', data: { title: 'Test Signal B', user: { username: 'Music Fetch Test Signals' }, duration: 32000, full_duration: 32000, permalink_url: 'https://soundcloud.com/test/b', description: 'A synthetic test song.' } }
+  ];
+  var audio = new Audio(new URLSearchParams(location.search).get('src') || '/media/song-b.wav');
+  audio.loop = true;
+  var control = document.querySelector('.playControl');
+  control.addEventListener('click', function () {
+    if (audio.paused) { audio.play(); control.classList.add('playing'); }
+    else { audio.pause(); control.classList.remove('playing'); }
+  });
+</script>
+</body>
+</html>
