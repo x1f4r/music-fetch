@@ -26,12 +26,12 @@ final class ScreenshotTests: XCTestCase {
     /// States shown at every size, and states where light and dark at 1180 are enough.
     static let fullStates = ["idle", "result", "candidates", "mix", "library", "library-selection", "session", "noMatch"]
     static let pairStates = [
-        "listening", "hum", "matching", "collection", "failed", "micDenied", "prePrompt", "captureSilent", "providers",
-        "lyrics", "melodyPrompt", "library-pinned", "settings-general", "settings-melody",
+        "listening", "hum", "hum-answers", "matching", "collection", "failed", "micDenied", "prePrompt", "captureSilent",
+        "providers", "lyrics", "melodyPrompt", "library-pinned", "settings-general", "settings-melody", "candidates-unsure",
     ]
     /// The idle stage hides the toolbar Listen button (the big button is the same action).
     static let statesWithoutToolbarListen: Set<String> = [
-        "idle", "noMatch", "failed", "micDenied", "prePrompt", "listening", "hum", "matching", "captureSilent",
+        "idle", "noMatch", "failed", "micDenied", "prePrompt", "listening", "hum", "hum-answers", "matching", "captureSilent",
         "providers", "melodyPrompt", "downloading", "lyrics",
     ]
 

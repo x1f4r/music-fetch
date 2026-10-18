@@ -83,6 +83,8 @@ extension Copy {
         case .openMicrophoneSettings: openSystemSettings
         case .stop: stop
         case .dismiss: ok
+        case .allowSpeech: continueAction
+        case .skipSpeech: notNow
         }
     }
 
@@ -153,6 +155,22 @@ extension Copy {
     // MARK: Candidates
 
     static let humAgain = String(localized: "Hum again")
+    /// Above the live answers while humming.
+    static let soundsLike = String(localized: "Sounds like")
+    static let liveAnswerHint = String(localized: "Stops listening and shows the matches")
+    /// The candidates screen when every answer is a long shot.
+    static let notSureHum = String(localized: "Not sure. Try humming the chorus.")
+    static let notSureLyrics = String(localized: "Not sure. Try different words.")
+
+    static func liveAnswerAccessibility(_ candidate: Candidate) -> String {
+        String(localized: "\(candidate.track.title) by \(candidate.track.artist), \(tier(candidate.tier))")
+    }
+
+    /// Announced once, when the final candidates replace the stage.
+    static func candidatesAnnouncement(_ candidates: [Candidate], kind: SessionKind) -> String {
+        guard CandidateConfidence(candidates) == .unsure, !candidates.isEmpty else { return possibleMatches(candidates) }
+        return kind == .lyrics ? notSureLyrics : notSureHum
+    }
     static let thisIsIt = String(localized: "This is it")
     static let notHere = String(localized: "Not here?")
     static let legendYou = String(localized: "You")
@@ -378,7 +396,8 @@ extension Copy {
     static let melodyFooter = String(localized: "Needed to recognize humming, whistling and singing. Stays on this Mac.")
     static let whileHumming = String(localized: "While humming")
     static let alsoSearchLyrics = String(localized: "Also search lyrics you sing")
-    static let autoStopAfterPause = String(localized: "Stop automatically after a pause")
+    static let autoStopAfterPause = String(localized: "Stop automatically")
+    static let autoStopFooter = String(localized: "After a pause, or as soon as the song is clear.")
     static let onDisk = String(localized: "On disk")
     static let cachedAudio = String(localized: "Cached audio")
     static let clearCache = String(localized: "Clear Cache")

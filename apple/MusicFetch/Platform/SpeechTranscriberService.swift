@@ -229,17 +229,11 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
         }
     }
 
+    /// Never asks from here: this runs on an engine thread in the middle of a session.
+    /// The Listen stage asks before the first hum (`SpeechModel`), Settings when the
+    /// user turns lyric search back on.
     private static func authorizeLegacyRecognizer() async -> Bool {
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized:
-            return true
-        case .notDetermined:
-            return await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
-            }
-        default:
-            return false
-        }
+        SFSpeechRecognizer.authorizationStatus() == .authorized
     }
 }
 

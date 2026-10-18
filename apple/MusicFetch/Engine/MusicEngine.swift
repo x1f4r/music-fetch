@@ -9,6 +9,9 @@ nonisolated protocol LiveSessionHandle: AnyObject, Sendable {
     /// The user stopped capture: analyze what was captured.
     func finish()
     func cancel()
+    /// What the on-device recognizer heard so far (sung words); each call replaces the
+    /// last. Cheap; any thread.
+    func pushTranscript(_ words: HeardWords)
 }
 
 /// A running analysis (link, file, lyric search, melody-index download).
@@ -22,6 +25,9 @@ nonisolated protocol AnalysisSessionHandle: AnyObject, Sendable {
 ///
 /// Methods marked "blocking" must not run on the main thread; use `offMain`.
 nonisolated protocol MusicEngine: AnyObject, Sendable {
+    /// Live sessions take the app's transcripts of sung words (`ListenOptions.transcripts`,
+    /// `LiveSessionHandle.pushTranscript`); otherwise the engine asks its speech service.
+    var acceptsTranscripts: Bool { get }
     func setCredentials(_ credentials: Credentials)
     /// Less CPU and memory for weaker Macs and Low Power Mode.
     func setLowPower(_ enabled: Bool)
@@ -80,6 +86,8 @@ nonisolated final class CoreEngine: MusicEngine {
     init(engine: Engine) {
         self.engine = engine
     }
+
+    var acceptsTranscripts: Bool { false }
 
     func setCredentials(_ credentials: Credentials) {
         engine.setCredentials(credentials: credentials)
@@ -192,6 +200,8 @@ nonisolated private final class CoreLiveSession: LiveSessionHandle {
     func cancel() {
         session.cancel()
     }
+
+    func pushTranscript(_ words: HeardWords) {}
 }
 
 nonisolated private final class CoreAnalysisSession: AnalysisSessionHandle {

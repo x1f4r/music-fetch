@@ -74,6 +74,8 @@ final class AppModel {
     @ObservationIgnored var listen: ListenModel!
     @ObservationIgnored var library: LibraryModel!
     @ObservationIgnored var settings: SettingsModel!
+    /// Sung lyrics: recognizer readiness and the speech-recognition permission.
+    @ObservationIgnored var speech: SpeechModel!
     let preview = PreviewPlayer()
     @ObservationIgnored let notifier = Notifier()
 
@@ -102,6 +104,7 @@ final class AppModel {
         listen = ListenModel(app: self)
         library = LibraryModel(app: self)
         settings = SettingsModel(app: self)
+        speech = SpeechModel(demoStatus: demo.map { Self.demoSpeechStatus($0.name) })
         notifier.onOpen = { [weak self] id, openInService in
             self?.openFromNotification(id, openInService: openInService)
         }
@@ -144,7 +147,33 @@ final class AppModel {
         await library.refresh()
         settings.refreshMelody()
         settings.refreshStorage()
+        if !isDemo {
+            Task { await speech.refresh() }
+            // System Settings may have changed the speech permission meanwhile.
+            activeObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let speech = self?.speech else { return }
+                    Task { await speech.refresh() }
+                }
+            }
+        }
         if let demo { await demo.apply(to: self) }
+    }
+
+    @ObservationIgnored private var activeObserver: NSObjectProtocol?
+
+    /// Whether the engine runs in low-power mode (weak Mac or Low Power Mode).
+    var isLowPower: Bool { lowPower.isEnabled }
+
+    /// The speech status a demo state shows.
+    nonisolated static func demoSpeechStatus(_ state: String) -> SpeechAccess.Status {
+        switch state {
+        case "speechPrePrompt": .needsPermission
+        case "settings-melody-speech-off": .denied
+        default: .ready
+        }
     }
 
     // MARK: - Navigation
