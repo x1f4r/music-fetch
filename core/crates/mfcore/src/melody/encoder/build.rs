@@ -37,6 +37,9 @@ pub struct BuildOptions {
     pub threads: usize,
     /// Stored in the file (META).
     pub version: String,
+    /// Keep the window embeddings here and reuse them when index, model and window
+    /// options match (another quantizer for the same windows costs seconds).
+    pub embeddings_cache: Option<std::path::PathBuf>,
 }
 
 impl Default for BuildOptions {
@@ -53,6 +56,7 @@ impl Default for BuildOptions {
             kmeans_iters: 20,
             threads: 4,
             version: String::new(),
+            embeddings_cache: None,
         }
     }
 }
@@ -145,12 +149,18 @@ pub fn build(
     // Embeddings, in window order: runs of whole tracks of about 256 windows, each
     // embedded in batches of 8 (the plans the app uses) into its own output slice.
     let started = Instant::now();
-    let mut emb = vec![0f32; total * dim];
+    let key = cache_key(index, onnx, o, total, dim);
+    let cached = o.embeddings_cache.as_deref().and_then(|p| read_cache(p, &key, total * dim));
+    if cached.is_some() {
+        progress("embeddings from the cache");
+    }
+    let fresh = cached.is_none();
+    let mut emb = cached.unwrap_or_else(|| vec![0f32; total * dim]);
     let mut work: Vec<(std::ops::Range<usize>, &mut [f32])> = Vec::new();
     {
         let mut rest: &mut [f32] = &mut emb;
         let mut t0 = 0;
-        while t0 < tracks {
+        while fresh && t0 < tracks {
             let mut t1 = t0;
             while t1 < tracks && (first[t1] - first[t0]) < 256 {
                 t1 += 1;
@@ -205,6 +215,9 @@ pub fn build(
     });
     for r in results {
         r?;
+    }
+    if fresh && let Some(path) = &o.embeddings_cache {
+        write_cache(path, &key, &emb).map_err(|e| fail(&format!("embedding cache: {e}")))?;
     }
     let embed_s = started.elapsed().as_secs_f64();
 
@@ -323,6 +336,43 @@ pub fn build(
         quantize_s,
     };
     Ok((bytes, stats))
+}
+
+/// What cached embeddings depend on.
+fn cache_key(index: &MelodyIndex, onnx: &[u8], o: &BuildOptions, windows: usize, dim: usize) -> Vec<u8> {
+    let mut key = b"MFENCEMB".to_vec();
+    for v in [
+        index.tracks_digest(),
+        crate::melody::index::fnv1a_bytes(onnx),
+        windows as u64,
+        dim as u64,
+        o.top_songs.map_or(0, |t| t as u64 + 1),
+        o.window as u64,
+        o.hop as u64,
+        o.min_voiced as u64,
+    ] {
+        key.extend_from_slice(&v.to_le_bytes());
+    }
+    key
+}
+
+fn read_cache(path: &Path, key: &[u8], len: usize) -> Option<Vec<f32>> {
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.len() != key.len() + 4 * len || &bytes[..key.len()] != key {
+        return None;
+    }
+    Some(bytes[key.len()..].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect())
+}
+
+fn write_cache(path: &Path, key: &[u8], emb: &[f32]) -> std::io::Result<()> {
+    let mut bytes = Vec::with_capacity(key.len() + 4 * emb.len());
+    bytes.extend_from_slice(key);
+    for x in emb {
+        bytes.extend_from_slice(&x.to_le_bytes());
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(tmp, path)
 }
 
 /// k-means with 16 centroids over `N`-dimensional sub-vectors, flattened.

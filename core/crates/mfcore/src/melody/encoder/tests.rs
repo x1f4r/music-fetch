@@ -290,3 +290,22 @@ fn an_encoder_hit_reaches_the_rerank() {
     assert_eq!(found.first().map(|m| m.song.id), Some(target.id), "{found:?}");
     assert!((found[0].key_shift - 7.0).abs() < 0.5);
 }
+
+#[test]
+fn cached_embeddings_give_the_same_file() {
+    let index = library(8, 30);
+    let path = std::env::temp_dir().join(format!("mfenc-cache-{}.bin", crate::util::new_id()));
+    let o = BuildOptions { embeddings_cache: Some(path.clone()), ..options() };
+    let said = std::sync::Mutex::new(Vec::<String>::new());
+    let log = |m: &str| said.lock().unwrap().push(m.to_string());
+    let (first, _) = build(&index, TINY, &o, &log).expect("build");
+    let (again, _) = build(&index, TINY, &o, &log).expect("build");
+    assert_eq!(first, again);
+    assert!(said.lock().unwrap().iter().any(|m| m.contains("from the cache")));
+    // Other windows (a different song cut) do not reuse it.
+    said.lock().unwrap().clear();
+    let other = BuildOptions { top_songs: Some(5), ..o.clone() };
+    build(&index, TINY, &other, &log).expect("build");
+    assert!(!said.lock().unwrap().iter().any(|m| m.contains("from the cache")));
+    let _ = std::fs::remove_file(path);
+}

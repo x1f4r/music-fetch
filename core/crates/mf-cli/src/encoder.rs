@@ -39,6 +39,9 @@ pub enum EncoderCommand {
         /// Version string stored in the file.
         #[arg(long, default_value = "")]
         version: String,
+        /// Reuse (or keep) the window embeddings in this file.
+        #[arg(long)]
+        embeddings_cache: Option<PathBuf>,
     },
     /// Print an encoder file's header after checking it against its index.
     Info {
@@ -66,7 +69,18 @@ pub enum EncoderCommand {
 
 pub fn run(cmd: EncoderCommand) -> anyhow::Result<()> {
     match cmd {
-        EncoderCommand::Build { index, model, out, top, sub_quantizers, hop, max_query_windows, threads, version } => {
+        EncoderCommand::Build {
+            index,
+            model,
+            out,
+            top,
+            sub_quantizers,
+            hop,
+            max_query_windows,
+            threads,
+            version,
+            embeddings_cache,
+        } => {
             let started = Instant::now();
             let index = MelodyIndex::open(&index)?;
             let onnx = std::fs::read(&model).with_context(|| format!("reading {}", model.display()))?;
@@ -77,6 +91,7 @@ pub fn run(cmd: EncoderCommand) -> anyhow::Result<()> {
                 max_query_windows,
                 threads,
                 version,
+                embeddings_cache,
                 ..BuildOptions::default()
             };
             let stats = build_file(&index, &onnx, &options, &out, &|m| eprintln!("{m}"))?;
