@@ -2,6 +2,8 @@
 //!
 //! The state lock is only held to reserve a slot; waiting happens without it, so
 //! `cooldown`, `success` and `throttled` never block behind a sleeping caller.
+//! [`RateLimiter::snapshot`] and [`RateLimiter::restore`] carry the state across
+//! a restart (the Shazam client persists it).
 
 use std::time::Duration;
 
@@ -10,6 +12,20 @@ use parking_lot::Mutex;
 use crate::error::{MfError, Result};
 use crate::util::cancel::CancelToken;
 use crate::util::rt::Instant;
+
+/// A limiter's state relative to the moment it was taken.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LimiterSnapshot {
+    /// Until the next slot opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_in_ms: Option<u64>,
+    /// Until the breaker closes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_for_ms: Option<u64>,
+    /// Throttles since the last success (the back-off exponent).
+    #[serde(default)]
+    pub failures: u32,
+}
 
 /// Serializes calls to one remote service with a minimum spacing.
 pub struct RateLimiter {
@@ -99,6 +115,33 @@ impl RateLimiter {
     pub fn cooldown(&self) -> Option<Duration> {
         self.state.lock().open_until.and_then(|t| t.checked_duration_since(Instant::now()))
     }
+
+    /// The state now, for [`restore`](Self::restore) after a restart.
+    pub fn snapshot(&self) -> LimiterSnapshot {
+        let state = self.state.lock();
+        let now = Instant::now();
+        let left = |t: Option<Instant>| {
+            t.and_then(|t| t.checked_duration_since(now)).filter(|d| !d.is_zero()).map(|d| d.as_millis() as u64)
+        };
+        LimiterSnapshot {
+            next_in_ms: left(state.next_at),
+            open_for_ms: left(state.open_until),
+            failures: state.failures,
+        }
+    }
+
+    /// Take over a snapshot taken `elapsed` ago. Waits only ever get longer: a
+    /// slot or breaker later than the restored one stays.
+    pub fn restore(&self, snapshot: &LimiterSnapshot, elapsed: Duration) {
+        let mut state = self.state.lock();
+        let now = Instant::now();
+        let at = |ms: Option<u64>| {
+            ms.and_then(|ms| Duration::from_millis(ms).checked_sub(elapsed)).filter(|d| !d.is_zero()).map(|d| now + d)
+        };
+        state.next_at = state.next_at.max(at(snapshot.next_in_ms));
+        state.open_until = state.open_until.max(at(snapshot.open_for_ms));
+        state.failures = state.failures.max(snapshot.failures);
+    }
 }
 
 #[cfg(test)]
@@ -120,6 +163,36 @@ mod tests {
         assert!(matches!(err, MfError::RateLimited { .. }));
         limiter.success();
         assert!(limiter.cooldown().is_none());
+    }
+
+    #[tokio::test]
+    async fn snapshot_restores_spacing_breaker_and_backoff() {
+        let limiter = RateLimiter::new(Duration::from_secs(20), Duration::ZERO);
+        let cancel = CancelToken::new();
+        limiter.acquire(&cancel, Duration::from_secs(1)).await.unwrap();
+        limiter.throttled(Duration::from_secs(30), Duration::from_secs(600), None);
+        let snap = limiter.snapshot();
+        assert_eq!(snap.failures, 1);
+        assert!(snap.next_in_ms.unwrap() > 19_000);
+        assert!(snap.open_for_ms.unwrap() >= 30_000);
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: LimiterSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, snap);
+
+        let fresh = RateLimiter::new(Duration::from_secs(20), Duration::ZERO);
+        fresh.restore(&back, Duration::from_secs(10));
+        let cooldown = fresh.cooldown().expect("breaker restored");
+        assert!(cooldown >= Duration::from_secs(19) && cooldown <= Duration::from_secs(24), "{cooldown:?}");
+        assert!(fresh.acquire(&cancel, Duration::from_secs(1)).await.is_err(), "still open");
+        // Exponential back-off continues where it was.
+        let wait = fresh.throttled(Duration::from_secs(30), Duration::from_secs(600), None);
+        assert!(wait >= Duration::from_secs(60), "{wait:?}");
+
+        // A snapshot older than its waits restores nothing but the failure count.
+        let later = RateLimiter::new(Duration::from_secs(20), Duration::ZERO);
+        later.restore(&back, Duration::from_secs(3600));
+        assert!(later.cooldown().is_none());
+        assert_eq!(later.snapshot(), LimiterSnapshot { failures: 1, ..Default::default() });
     }
 
     #[tokio::test]

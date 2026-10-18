@@ -65,6 +65,9 @@ pub struct EngineOptions {
     pub call_budget: Option<CallBudget>,
     /// Skip catalog enrichment (offline tests).
     pub offline_catalog: bool,
+    /// Installs header rules before requests that need a per-request variant
+    /// (the browser extension: the Shazam agent).
+    pub header_host: Option<Arc<dyn crate::util::http::HeaderRuleHost>>,
 }
 
 /// A running session in the registry.
@@ -581,6 +584,13 @@ impl Engine {
         if let Some(base) = options.shazam_base_url.as_deref() {
             shazam = shazam.with_base_url(base);
         }
+        if let Some(host) = options.header_host.clone() {
+            shazam = shazam.with_rule_host(host);
+        }
+        // The back-off and the budget outlive the engine: a restart never sends sooner.
+        let state: Arc<dyn crate::shazam::StateStore> = store.clone();
+        let shazam = shazam.with_state(state.clone());
+        let budget = options.call_budget.unwrap_or_default().with_state(state, shazam.base_url());
         let media = media.or_else(|| {
             config.media_tools.clone().map(|mut tools| {
                 // Keep yt-dlp's own cache inside the app's cache folder unless the app chose one.
@@ -604,7 +614,7 @@ impl Engine {
             http,
             store,
             shazam: Arc::new(shazam),
-            budget: options.call_budget.unwrap_or_default(),
+            budget,
             credentials: RwLock::new(Credentials::default()),
             melody: RwLock::new(None),
             pitch: OnceLock::new(),

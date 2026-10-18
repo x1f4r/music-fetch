@@ -3,7 +3,8 @@
 //! from "Artist - Topic" channels). The audio goes to the media backend.
 //!
 //! Requests ask for English (`hl=en`) so section titles are predictable and send
-//! the consent cookies EU visitors otherwise get a consent wall for.
+//! the consent cookies EU visitors otherwise get a consent wall for (the
+//! `youtube` header rule).
 
 use serde_json::Value;
 use url::Url;
@@ -14,9 +15,9 @@ use super::media_sites::{self, OEmbed};
 use super::{Ctx, Resolution, Site, canonical, dedup_tracks, finish_track, service_link, source_info};
 use crate::error::{MfError, Result};
 use crate::model::{Service, SourceInfo, Track};
+use crate::util::http::HeaderRuleId;
 
 const SITE: &str = "YouTube";
-const CONSENT_COOKIES: &str = "SOCS=CAI; CONSENT=YES+1";
 const TOPIC_SUFFIX: &str = " - Topic";
 
 /// The Shorts "sound" button.
@@ -56,7 +57,7 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url, site: Site, shorts: bool) 
     } else {
         format!("https://www.youtube.com/watch?v={id}&hl=en&persist_hl=1")
     };
-    let req = PageRequest::new(SITE).cookies(CONSENT_COOKIES).language("en-US,en;q=0.9");
+    let req = PageRequest::new(SITE).rule(HeaderRuleId::Youtube);
     match fetch::get_page(ctx.http, &page_url, &req, ctx.cancel).await {
         Ok(page) if page.status.is_success() => {
             let watch = parse_watch_page(&page.body);

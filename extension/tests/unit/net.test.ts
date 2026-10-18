@@ -131,10 +131,16 @@ describe('host permissions', () => {
       // Paid providers with the user's own keys (later, X11).
       'api.audd.io': 'keyed provider',
       'identify-eu-west-1.acrcloud.com': 'keyed provider',
+      // Amazon Music storefronts other than .com (optional permission) and the crawler
+      // header rule's prefix that covers them all (`https://music.amazon.`).
+      'music.amazon': 'header-rule prefix',
+      'music.amazon.de': 'optional',
+      'music.amazon.co.uk': 'optional',
       // Tests and docs.
       'schema.org': 'JSON-LD vocabulary',
     };
-    const TEST_HOST = /(^|\.)(example|example\.com|test|local|internal)$/;
+    // RFC 2606 names (`.invalid` is the stub recognizer's fixture host).
+    const TEST_HOST = /(^|\.)(example|example\.com|test|local|internal|invalid)$/;
     const root = join(process.cwd(), '..', 'core', 'crates', 'mfcore', 'src');
     let exists = true;
     try {

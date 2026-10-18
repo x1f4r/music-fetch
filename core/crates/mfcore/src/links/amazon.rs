@@ -5,11 +5,12 @@
 
 use url::Url;
 
-use super::fetch::{self, Agent, PageRequest};
+use super::fetch::{self, PageRequest};
 use super::html::{Document, year_of};
 use super::{Ctx, Resolution, Site, canonical, deezer, finish_track, service_link, source_info};
 use crate::error::{MfError, Result};
 use crate::model::{Service, Track};
+use crate::util::http::HeaderRuleId;
 
 const SITE: &str = "Amazon Music";
 
@@ -30,7 +31,7 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Resolution> {
 }
 
 async fn crawler_page(ctx: &Ctx<'_>, url: &str) -> Result<String> {
-    let page = fetch::get_page(ctx.http, url, &PageRequest::new(SITE).agent(Agent::Crawler), ctx.cancel).await?;
+    let page = fetch::get_page(ctx.http, url, &PageRequest::new(SITE).rule(HeaderRuleId::Crawler), ctx.cancel).await?;
     Ok(fetch::require_success(page, SITE)?.body)
 }
 

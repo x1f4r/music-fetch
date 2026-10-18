@@ -85,7 +85,7 @@ impl<'a> SessionServices<'a> {
     async fn fetch_preview(&self, url: &str) -> Result<Vec<i16>> {
         crate::links::ensure_public_url(url).await?;
         let cancel = &self.ctx.cancel;
-        let request = self.ctx.engine.http.get(url).timeout(PREVIEW_TIMEOUT).send();
+        let request = crate::util::http::prepare(self.ctx.engine.http.get(url).timeout(PREVIEW_TIMEOUT)).send();
         let response = tokio::select! {
             r = request => r?,
             _ = cancel.canceled() => return Err(MfError::Canceled),

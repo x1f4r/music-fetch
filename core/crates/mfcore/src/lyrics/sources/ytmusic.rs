@@ -5,6 +5,7 @@
 use serde_json::{Value, json};
 
 use super::{Hit, ParseError, non_empty};
+use crate::util::http::{HeaderRule, HeaderRuleId};
 use crate::util::now_ms;
 
 const URL: &str = "https://music.youtube.com/youtubei/v1/search?alt=json";
@@ -20,10 +21,8 @@ pub(crate) fn request(http: &reqwest::Client, query: &str, country: &str) -> req
         "query": query,
         "params": SONGS_FILTER,
     });
-    http.post(URL)
-        .header(reqwest::header::ORIGIN, ORIGIN)
-        .header(reqwest::header::REFERER, format!("{ORIGIN}/"))
-        .json(&body)
+    // Origin and Referer come from the `ytmusic` header rule (the extension installs it).
+    HeaderRule::new(HeaderRuleId::Ytmusic, "", 0).apply(http.post(URL), URL).json(&body)
 }
 
 /// `1.YYYYMMDD.01.00` for the UTC date of `unix_ms`, the version scheme of the web client.
