@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Run the runtime end-to-end tests on the Legion: a private Xvfb display and a private
+# PipeWire null sink (nothing reaches the laptop's screen or speakers), the e2e builds,
+# then Chromium and Firefox. Usage (from the extension dir): tests/e2e/legion-runtime.sh [vitest filter]
+set -uo pipefail
+source ~/mf/env.sh
+export PATH="$HOME/mf/tools/node-24/bin:$PATH"
+DISPLAY_NUM="${MF_RT_DISPLAY:-:93}"
+SINK="mf_rt_null"
+
+if ! xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1; then
+  Xvfb "$DISPLAY_NUM" -screen 0 1600x1000x24 -nolisten tcp -noreset >/dev/null 2>&1 &
+  XVFB_PID=$!
+  for _ in $(seq 1 50); do xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1 && break; sleep 0.1; done
+fi
+MODULE=$(pactl load-module module-null-sink sink_name="$SINK" sink_properties=device.description=mf-rt-null 2>/dev/null || true)
+cleanup() {
+  [[ -n "${MODULE:-}" ]] && pactl unload-module "$MODULE" 2>/dev/null
+  [[ -n "${XVFB_PID:-}" ]] && kill "$XVFB_PID" 2>/dev/null
+}
+trap cleanup EXIT
+
+unset WAYLAND_DISPLAY WAYLAND_SOCKET
+export DISPLAY="$DISPLAY_NUM" XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 MOZ_ENABLE_WAYLAND=0 PULSE_SINK="$SINK"
+npm run build:e2e >/dev/null || { echo "build failed"; exit 1; }
+nice -n 10 npx vitest run --config vitest.e2e.config.ts "${1:-tests/e2e/runtime-}"
+code=$?
+echo "E2E-DONE $code"
+exit $code

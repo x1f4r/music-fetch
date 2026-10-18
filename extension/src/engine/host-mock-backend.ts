@@ -1,8 +1,9 @@
 import { levelOf, type PcmChunk } from '../audio/types';
 import { addCoverage, coverageGaps, coveredMs, type CaptureEvent, type CaptureHost, type Coverage } from '../capture/types';
-import type { ActiveSession, EngineInfo, EngineListener } from './client';
+import { EngineError, type ActiveSession, type EngineInfo, type EngineListener } from './client';
 import { isTerminal } from './events';
-import type { BackendEnv, EngineBackend, LiveInput } from './host-backend';
+import { engineFetch } from '../net/fetch';
+import type { BackendEnv, EngineBackend, LiveInput, NetProbeResult } from './host-backend';
 import type { Kv } from './host-idb';
 import {
   matchTones,
@@ -395,6 +396,8 @@ export class MockBackend implements EngineBackend {
 
   async analyze(input: string, mode: AnalyzeMode, page: PageContext | null): Promise<string> {
     const href = extractUrl(input.trim());
+    const hold = import.meta.env.MODE === 'e2e' && href ? Number(new URL(href).searchParams.get('mf-e2e-hold')) : 0;
+    if (hold > 0) return this.holdSession(href!, hold);
     const directive = (page?.facts?.mockDirective as string | undefined) ?? null;
     if (href && page?.tab_id != null && !directive && !new URL(href).searchParams.has('mf-mock') && this.wantsCapture(new URL(href), mode)) {
       const url = href;
@@ -483,6 +486,22 @@ export class MockBackend implements EngineBackend {
 
   async shutdown(): Promise<void> {
     await this.persistence.flush?.();
+  }
+
+  async netProbe(url: string, init: { method?: string; body?: string }): Promise<NetProbeResult> {
+    if (import.meta.env.MODE !== 'e2e') throw new EngineError('InvalidInput', 'Only test builds probe the network.');
+    const response = await engineFetch(url, { method: init.method ?? 'GET', ...(init.body ? { body: init.body, headers: { 'content-type': 'application/json' } } : {}) }, { allowHttp: true, allowPrivate: true });
+    return { status: response.status, url: response.url, body: await response.text() };
+  }
+
+  /** e2e builds only: a link session that runs `ms` with no capture and no network (the keepalive test). */
+  private holdSession(input: string, ms: number): string {
+    const session = this.engine.startExternal('Link', 'Holding', input, () => undefined);
+    session.emit({ Phase: { phase: 'Resolving', fraction: null } });
+    setTimeout(() => {
+      if (session.running) session.emit({ Finished: { outcome: { NoMatch: { reason: 'NotFound' } } } });
+    }, ms);
+    return session.id;
   }
 }
 

@@ -27,6 +27,17 @@ export interface EngineBackend extends EngineClient {
   captureEvent(sessionId: string, event: CaptureEvent): Promise<void>;
   /** Close cleanly before the Worker is terminated: finish writes, close the database. */
   shutdown(): Promise<void>;
+  /**
+   * e2e builds only: fetch `url` the way the engine does (from the Worker, with the fetch
+   * policy) and return what came back, so tests can see the header rules on the wire.
+   */
+  netProbe(url: string, init: { method?: string; body?: string }): Promise<NetProbeResult>;
+}
+
+export interface NetProbeResult {
+  status: number;
+  url: string;
+  body: string;
 }
 
 export interface LiveInput {
@@ -41,7 +52,7 @@ export interface LiveInput {
 }
 
 /** Every `EngineBackend` method the Worker serves to the host. */
-export const BACKEND_METHODS = [...ENGINE_METHODS, 'startLive', 'captureEnded', 'captureEvent', 'shutdown'] as const satisfies readonly (keyof EngineBackend)[];
+export const BACKEND_METHODS = [...ENGINE_METHODS, 'startLive', 'captureEnded', 'captureEvent', 'shutdown', 'netProbe'] as const satisfies readonly (keyof EngineBackend)[];
 
 /** What the Worker knows about its surroundings (structured-cloneable, sent at spawn). */
 export interface BackendConfig {

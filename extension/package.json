@@ -20,7 +20,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "npm run build && vitest run --config vitest.e2e.config.ts",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "build:e2e": "wxt build -b chrome --mode e2e && wxt build -b firefox --mv3 --mode e2e",
+    "e2e:runtime": "npm run build:e2e && vitest run --config vitest.e2e.config.ts tests/e2e/runtime-"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",

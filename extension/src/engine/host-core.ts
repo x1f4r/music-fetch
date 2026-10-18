@@ -12,7 +12,7 @@ import {
 } from '../messaging/protocol';
 import { ENGINE_METHODS, EngineError, type ActiveSession, type EngineApi, type EngineInfo } from './client';
 import { isTerminal } from './events';
-import type { BackendConfig, EngineBackend } from './host-backend';
+import type { BackendConfig, EngineBackend, NetProbeResult } from './host-backend';
 import type { SessionRegistry, RegistryEntry } from './host-registry';
 import { WorkerEngine, type WorkerLike, type WorkerState } from './host-worker-client';
 import type { AnalyzeMode, CaptureSource, ListenMode, ListenOptions, PageContext, SessionEvent, SessionKind } from './types';
@@ -96,9 +96,14 @@ export interface HostApi {
   recycle(): Promise<HostState>;
   /** Frames and sample rate of the live sources. */
   sources(): Promise<{ sessionId: string; kind: string; via: string; frames: number }[]>;
+  /** e2e builds: fetch through the engine (see `EngineBackend.netProbe`). */
+  netProbe(url: string, init: { method?: string; body?: string }): Promise<NetProbeResult>;
 }
 
 export interface HostState {
+  /** Random per host instance: a new value means the context was restarted (Firefox suspended the event page). */
+  instance: string;
+  startedAt: number;
   worker: WorkerState;
   workerStarts: number;
   sessions: string[];
@@ -108,7 +113,7 @@ export interface HostState {
   lowPower: boolean;
 }
 
-const HOST_METHODS = ['state', 'recycle', 'sources'] as const satisfies readonly (keyof HostApi)[];
+const HOST_METHODS = ['state', 'recycle', 'sources', 'netProbe'] as const satisfies readonly (keyof HostApi)[];
 
 interface LiveCapture {
   source: AudioSource;
@@ -147,6 +152,8 @@ export class EngineHost {
   private interrupted: RegistryEntry[] = [];
   private closed = false;
   private readonly ready: Promise<void>;
+  private readonly instance = crypto.randomUUID();
+  private readonly startedAt = Date.now();
 
   constructor(private readonly options: EngineHostOptions) {
     const { platform } = options;
@@ -227,12 +234,15 @@ export class EngineHost {
         return this.state();
       },
       sources: async () => [...this.live.entries()].map(([sessionId, l]) => ({ sessionId, kind: l.source.kind, via: l.via, frames: l.frames })),
+      netProbe: (url, init) => this.call('netProbe', [url, init]) as Promise<NetProbeResult>,
     };
   }
 
   async state(): Promise<HostState> {
     await this.ready;
     return {
+      instance: this.instance,
+      startedAt: this.startedAt,
       worker: this.worker.state,
       workerStarts: this.worker.starts,
       sessions: this.worker.sessions,
