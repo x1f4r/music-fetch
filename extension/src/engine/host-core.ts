@@ -119,6 +119,12 @@ export interface HostApi {
   netProbe(url: string, init: { method?: string; body?: string }): Promise<NetProbeResult>;
   /** e2e builds: what the host did lately (`host-debug.ts`). */
   log(): Promise<string[]>;
+  /**
+   * What the page in `tabId` says about its music (the site adapter's facts and its media
+   * elements), for "Analyze this page" before it starts. Injects the capture agent, so
+   * call it only when the user asked about that tab.
+   */
+  pageFacts(tabId: number): Promise<Record<string, unknown> | null>;
   /** For the background's notifications (it is no surface, so it doesn't use `ENGINE_PORT`). */
   session(id: string): Promise<SessionDetail | null>;
   setPinned(id: string, pinned: boolean): Promise<void>;
@@ -137,7 +143,7 @@ export interface HostState {
   lowPower: boolean;
 }
 
-const HOST_METHODS = ['state', 'recycle', 'sources', 'netProbe', 'session', 'setPinned', 'log'] as const satisfies readonly (keyof HostApi)[];
+const HOST_METHODS = ['state', 'recycle', 'sources', 'netProbe', 'session', 'setPinned', 'log', 'pageFacts'] as const satisfies readonly (keyof HostApi)[];
 
 interface LiveCapture {
   source: AudioSource;
@@ -266,6 +272,7 @@ export class EngineHost {
       sources: async () => [...this.live.entries()].map(([sessionId, l]) => ({ sessionId, kind: l.source.kind, via: l.via, frames: l.frames })),
       netProbe: (url, init) => this.call('netProbe', [url, init]) as Promise<NetProbeResult>,
       log: async () => hostLogEntries(),
+      pageFacts: async (tabId) => (await this.options.platform.pageFacts?.(tabId).catch(() => null)) ?? null,
       session: (id) => this.call('session', [id]) as Promise<SessionDetail | null>,
       setPinned: (id, pinned) => this.call('setPinned', [id, pinned]) as Promise<void>,
     };

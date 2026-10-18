@@ -85,10 +85,16 @@ export function startPageScript(win: Window & typeof globalThis, doc: Document, 
 
   const server = servePage(win, nonce, {
     hello: () => ({ adapter: adapter.id, version: adapter.version }),
-    facts: (): PageFacts & { site: SiteFacts } => ({
-      ...readPageFacts(doc, win.navigator.mediaSession),
-      site: { ...emptyFacts(adapter.id, adapter.version), ...adapter.facts(win, doc) },
-    }),
+    facts: (): PageFacts & { site: SiteFacts } => {
+      const page = readPageFacts(doc, win.navigator.mediaSession);
+      const site = { ...emptyFacts(adapter.id, adapter.version), ...adapter.facts(win, doc) };
+      // During an ad the element holds the ad: give it the content's length the site knows.
+      if (site.durationMs && (adapter.ad?.(win, doc) ?? false)) {
+        const player = adapter.element(win, doc, played);
+        page.media = page.media.map((m, i) => (doc.querySelectorAll('audio, video')[i] === player ? { ...m, duration: site.durationMs! / 1000 } : m));
+      }
+      return { ...page, site, nowPlaying: page.nowPlaying ?? site.nowPlaying };
+    },
     mark: async (): Promise<MarkedPlayer> => {
       let el = element();
       if (!el && adapter.reveal?.(win, doc)) {

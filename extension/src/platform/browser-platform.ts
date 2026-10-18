@@ -1,7 +1,8 @@
 import { browser } from 'wxt/browser';
+import { tabPageFacts } from '../engine/host-client';
 import type { Platform } from '../ui/context';
 import { probeCapabilities, TARGET, type ProbeApi } from './capabilities';
-import { activeTab, openApp, openPanel } from './surfaces';
+import { activeTab, isAnalyzablePage, openApp, openPanel } from './surfaces';
 
 /** The real browser behind `Platform`, for the popup, side panel, sidebar and app tab. */
 export function browserPlatform(): Platform {
@@ -9,8 +10,8 @@ export function browserPlatform(): Platform {
   return {
     capabilities,
     activeTab,
-    // The capture coordinator (task X4) reads facts in the page; until then nothing is known.
-    pageFacts: async () => null,
+    // The capture coordinator reads them in the page (its site adapter and media elements).
+    pageFacts: async (tab) => (tab.id !== undefined && isAnalyzablePage(tab.url) ? tabPageFacts(tab.id) : null),
     async hostAccess(url) {
       try {
         const origin = `${new URL(url).origin}/*`;
