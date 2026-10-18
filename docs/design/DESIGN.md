@@ -155,7 +155,7 @@ Pinned
 
 **Theme.** `MaterialExpressiveTheme(colorScheme = dynamic (API 31+) else seed #1FA48A, motionScheme = MotionScheme.expressive())`. Lists, navigation chrome and dialogs are wrapped in a nested `MaterialTheme(motionScheme = MotionScheme.standard())`. `enableEdgeToEdge()`; inset with `WindowInsets.safeDrawing`. Predictive back is on (target 36).
 
-**Navigation.** `NavigationSuiteScaffold` with two destinations: Listen (contour mark icon) and Library (`Icons.Outlined.VideoLibrary`-style stack). Compact: `ShortNavigationBar`; expanded (sw ≥ 600): `WideNavigationRail`. Navigation 3 back stacks per destination; detail screens (result, candidates, mix, lyric search) push inside their destination and keep the navigation bar visible. On expanded screens Library and Mix use `ListDetailPaneScaffold`.
+**Navigation.** `NavigationSuiteScaffold` with two destinations: Listen (contour mark icon) and Library (`Icons.Outlined.VideoLibrary`-style stack). Compact: `ShortNavigationBar`; expanded (sw ≥ 600): `WideNavigationRail`; phones in landscape (width ≥ 600dp, height < 480dp, not tabletop) also get the collapsed rail, since height is what they lack. Navigation 3 back stacks per destination; detail screens (result, candidates, mix, lyric search) push inside their destination and keep the navigation bar visible. On expanded screens Library and Mix use `ListDetailPaneScaffold`. Selecting the current destination again returns to its root, or scrolls the Library to the top when it is already there. One `SnackbarHost` for the whole app sits above the navigation bar (and above a screen's own bottom bar), so "Deleted · Undo" follows the user wherever the deletion started.
 
 | Route | Screen |
 |---|---|
@@ -170,7 +170,8 @@ Pinned
 - **Share sheet** — `ShareIdentifyActivity` (translucent theme, `ACTION_SEND` for `text/plain`, `audio/*`, `video/*`). Opens as a `ModalBottomSheet` over the source app (§6.11).
 - **Quick Settings tile** — `TOGGLEABLE_TILE`, label "Music Fetch" (≤ 18 chars), 24dp white vector of the mark. Tap → `startActivityAndCollapse(PendingIntent)` → translucent `ListenOverlayActivity` which starts the microphone foreground service (§6.11). Offer `requestAddTileService()` once, after the second successful listen.
 - **Widgets** — Glance `SizeMode.Responsive`: 2×2 (the button), 4×2 (button + last result). Widget tap starts the microphone service (exempt from while-in-use restriction) and opens the overlay for feedback.
-- **Notifications** — background mix progress (`Notification.ProgressStyle`, segments per identified track, Stop action; never requested as a Live Update) and background results ("Houdini — Dua Lipa", actions: Open in Spotify).
+- **Notifications** — background mix progress (`Notification.ProgressStyle`, segments per identified track, Stop action; never requested as a Live Update) and background results ("Houdini — Dua Lipa", actions: Open in Spotify · Pin; Pin turns into Unpin in place). No-match results offer Try again · Hum it (a hum: Hum again). Seeing a session in the app dismisses its result notification.
+- **Starting a listen from elsewhere** — "Listen again", "Hum it" (share sheet, notifications, mix rows) and `musicfetch://listen?source=mic|phone|hum` all open the Listen stage and start there, through the stage's microphone permission, phone-audio pre-prompt and consent.
 - **Predictive back** on the Listen stage while listening: `PredictiveBackHandler` scrubs the button to 0.85 scale and the halo to 0; committing cancels the session (`cancel()`), releasing springs back.
 
 ---
@@ -301,7 +302,7 @@ macOS uses SF Symbols: `mic`, `macbook`, the custom contour mark (`contour.mark`
 Three options, always in this order: **Microphone · This Mac / Phone · Hum**. Selecting Hum sets `ListenMode::Hum` with the microphone; Microphone and This Mac/Phone use `ListenMode::Auto` (the core detects humming on its own, so humming into "Microphone" also works). While a session runs the toggles are disabled at 45 % opacity, never hidden.
 
 - macOS: three `Toggle`s with `.toggleStyle(.button)` and `.buttonStyle(.glass)` in a `GlassEffectContainer(spacing: 12)`; 28pt tall; symbol + label. They are on the stage in **every** state, so the method can change after any result. Choosing one never starts listening; after a no-match, an error or a prompt it returns the stage to idle ("Identify what's playing") for the new method.
-- Android: `ButtonGroup` (connected) of three `ToggleButton`s, 40dp, `connectedLeading/Middle/TrailingButtonShapes()`, icon 20dp + label.
+- Android: `ButtonGroup` (connected) of three `ToggleButton`s, 40dp, `connectedLeading/Middle/TrailingButtonShapes()`, icon 20dp + label (icons only from 400dp width at font scale ≤ 1.15). The same three appear as actions in the "Listen again" dock (§6.3).
 
 ### 5.3 State line
 
@@ -312,6 +313,13 @@ A single `.title3` / `titleMedium` line centered under the button. Fixed height 
 macOS: the **recovery row**, a 28pt slot under the source toggles, holds up to three actions after a no-match, an error or a prompt, as accent text buttons (`.borderless`, medium weight) so they read as actions rather than more toggles: Try again (the same method, or the same link or file again), Hum it (only when the last try wasn't a hum), Type a lyric, Use Microphone, Continue, Open System Settings, OK, Stop. It is empty otherwise but keeps its slot.
 
 Android: the slot under the state line (40dp tall) holds either the source toggles or, after a no-match, up to three actions of the same height (`FilledTonalButton` + `TextButton`s). Never both.
+
+Android: the toggles stay after failures, offline saves and failed links; the message stays on the state line until the next toggle, button tap or link, and the button retries with the selected source (no [Try again] or [OK]). Only these replace the toggles: link running [Stop] · microphone off [Open settings] · phone-audio pre-prompt [Continue] [Use microphone] · silent phone audio [Use microphone] · rate limited [Stop] · no match (suggestions below). Every suggestion starts at once, most useful first; actions that don't fit the width are left out from the end.
+
+| Last source | `NotFound` | `TooQuiet` / `Noisy` / `MostlySpeech` | `TooShort` | `CaptureSilent` |
+|---|---|---|---|---|
+| Microphone / Phone | Try again · Hum it · Type a lyric | Try again · Hum it | Try again · Hum it | Use microphone · Hum it |
+| Hum | Hum again · Type a lyric · Use microphone | Hum again · Use microphone | Hum again · Type a lyric | — |
 
 ### 5.5 Link field
 
@@ -347,7 +355,7 @@ Capsule 18pt tall (`.subheadline` medium) on macOS; `AssistChip`-sized 22dp tag 
 
 - macOS: a split capsule on accent-tinted glass ("Open in Spotify" | chevron menu), 28pt tall like the large glass buttons beside it, joined to the listen button's glass morph. The primary part opens the default service (Settings › General); the chevron lists every available `ServiceLink` in the order Spotify, Apple Music, YouTube Music, YouTube, Deezer, Tidal, Amazon Music, SoundCloud, Shazam, then "Search the web". Links with `is_search` are suffixed "(search)".
 - Android: `SplitButton` (filled): leading "Open in Spotify", trailing chevron → `DropdownMenu` with the same list.
-- Beside it on macOS: `ShareLink` and Copy as `.glass` icon buttons (28pt). On Android, Share and the overflow (Copy title and artist, Copy link, Pin, Delete) live in the top app bar.
+- Beside it on macOS: `ShareLink` and Copy as `.glass` icon buttons (28pt). On Android, Pin (a toggle: outlined pin → filled `primary` pin), Share and the overflow (Copy title and artist, Copy link, Delete) live in the top app bar.
 
 ### 5.12 Timeline strip
 
@@ -438,7 +446,13 @@ States mirror §6.1 with these platform differences:
 - `Notice::MelodyIndexMissing` → `AlertDialog` with the same copy and buttons.
 - Matching uses `LoadingIndicator(color = onPrimary)` (48dp) in place of the glyph; the state line reads "Matching" without an extra spinner.
 - Back gesture while listening cancels (§3.2).
-- Offline: state line "You're offline. Saved to identify later." and a `Snackbar` is not shown (the state line is enough).
+- Offline: state line "You're offline. Saved to identify later." and a `Snackbar` is not shown (the state line is enough). The toggles stay (§5.4).
+- Idle state line follows the selected source: Microphone "Identify what's playing", Phone "Identify what's playing on this phone", Hum "Hum, whistle or sing".
+- Short stages (budget phones with three-button navigation, the recent card shown): when the band would reach the link field, the action row is anchored 8dp above the stage bottom and the slots stack above it; the button shrinks (down to 0.7) and the band (down to 48dp) until the band starts 8dp below the link field.
+- Short and wide stages (phones in landscape, ≥ 480dp wide and ≥ 1.6 × as wide as tall): side by side. The button is centered at 28 % of the width, as large as the height allows (8dp margins); a column from 46 % of the width to 24dp from the end edge holds the band on top (48–96dp, its place kept while idle), then the state line (12dp below) and the action row (64dp below the state line), centered as a group. The clipboard suggestion sits at the column's start. Mirrored in RTL.
+- Phone audio asks for notifications first on Android 13+ (its result usually arrives while another app is in front), then for the capture consent.
+- The "add tile" offer waits until the stage has been idle for a second, never over a listen the user just asked for.
+- A tile or widget match while the stage is on screen opens the session there instead of notifying.
 
 ### 6.3 Result (matched track) — both platforms
 
@@ -457,7 +471,7 @@ artwork 240 × 240, radius 12, shadow (0, 10, 28, 22 %)
 
 Toolbar: [Listen ▸] [Inspector]. Inspector per §3.1. Keyboard: ⌘↩ opens, Space previews (30 s `Track.preview_url`; the artwork shows a 2pt accent progress ring while playing), ⌘C copies "Artist – Title".
 
-**Android**: transparent `TopAppBar` (back; Share; More). Content scrolls:
+**Android**: transparent `TopAppBar` (back; Pin; Share; More); once content scrolls beneath it the bar takes `surfaceContainer` and shows the track title when the hero title has left. Content scrolls:
 
 ```
 wash: primaryContainer → transparent, 440dp, 55 % (content-based scheme active for this screen only)
@@ -470,7 +484,11 @@ artwork 240dp, radius 20, elevation 16dp shadow, top at 128dp from the status ba
 40  "Lyrics" titleSmall + bodyLarge onSurfaceVariant (only if lyrics exist)
 ```
 
-Preview playback: tapping the artwork toggles the 30 s preview; a 3dp `primary` ring draws progress around the artwork's rounded rect.
+Preview playback: tapping the artwork toggles the 30 s preview; a 40dp play/pause badge (`secondaryContainer`) sits 12dp inside its bottom-end corner, and a 3dp `primary` ring draws progress around the artwork's rounded rect.
+
+**Listen again (Android).** Results, candidates and no-match sessions on the Listen destination end with a dock: Microphone · Phone · Hum as a connected group of tonal buttons (48dp, `surfaceContainerHigh` with `primary` labels, icons from 400dp), centered, 16dp margins, over a fade from transparent to `surface` (no bar of its own; content scrolls under the fade). A tap returns to the stage and starts that source at once (§3.2); the group is disabled while another listen runs. Group label "Listen again". Not shown on the Library destination, on mixes, or while a session runs. On short screens and at large font sizes the artwork shrinks (down to 120dp) so the "Open in" button is clear of the dock at first sight. Beside a navigation rail the dock keeps clear of the gesture handle.
+
+**Landscape (Android).** When the screen is ≥ 560dp wide and < 480dp tall, the artwork (between the bar and the dock, 120–240dp) sits beside a start-aligned column of title, artist, meta, context and "Open in" (max 440dp), 32dp apart and centered as a row. Lyrics are at most 640dp wide.
 
 ### 6.4 Hum candidates — both platforms
 
@@ -491,12 +509,12 @@ Selecting a row updates the inspector (§5.7 overlay + details). "This is it" �
 **Android**:
 
 ```
-top bar: back · [Hum again] text button (trailing)
+top bar: back · [Hum again] text button (Library only; the dock offers it on Listen) · Pin · More (Delete)
 hum row  64dp: trace (fills, 48dp) · "Your hum · 11 s" labelMedium onSurfaceVariant
 cards    8dp gap, 16dp margins, radius 16, surfaceContainerLow; expanded card surfaceContainer
          head: artwork 56 · titleMedium + bodyMedium · tag (· [▶] IconButton when collapsed)
          expanded: overlay 96dp + legend · actions: [▶] FilledTonalIconButton … [This is it] Button(filled)
-footer   "Not here?" bodyMedium + [Type a lyric] TextButton
+footer   "Not here?" bodyMedium + [Type a lyric] TextButton (wraps at large font sizes)
 ```
 
 The first card is expanded by default. Tapping a collapsed card expands it (`animateContentSize`, hero spring) and collapses the other.
@@ -547,12 +565,15 @@ Empty result: a single line in the list area, "No songs with that lyric." + [Try
 
 Grouped by day (Today, Yesterday, then "Sunday, October 11" via `Date.FormatStyle(date: .complete)` without the year in the current year). Filter: All · Heard · Hummed · Links · Mixes · Pinned (`SessionKind` → Heard = Listen + SystemAudio, Hummed = Hum, Links = Link + File + Lyrics, Mixes = sessions with ≥ 2 segments or `AnalyzeMode::Mix`, Pinned = pinned sessions). Search matches title, artist, source title and host.
 
-**Pin is the one way to keep sessions** (there is no separate favorite): pinned sessions are listed in the sidebar like a playlist, keep their audio (Settings › Storage) and ask before deleting.
+**Pin is the one way to keep sessions** (there is no separate favorite): pinned sessions are listed in the sidebar like a playlist (Android: in the Pinned section at the top of the Library), keep their audio (Settings › Storage) and ask before deleting.
 
 Row (56pt / 72dp): artwork 40 / 56 (video thumbnail for mixes, collection art for playlists, hatched tile for unresolved) · title · subtitle = kind symbol + artist / "8 tracks so far" / "a-ha · 4 candidates" / "Sabrina Carpenter · tiktok.com" / "Waiting for connection" · trailing time (monospaced) · pin symbol if pinned · small spinner while Running.
 
 - macOS: toolbar per §3.1; the filter is a one-click scope bar pinned above the list (`Picker(.segmented)`, a menu when the column is too narrow); `List(selection:)` with multiple selection (⌘-click, ⇧-click, ⌘A); day headers `.headline` secondary. The row's pin is a button: `pin.fill` while pinned, an outline `pin` in tertiary on hover or selection. Pin and unpin work on any selection — context menu (Pin when any is unpinned, Unpin when any is pinned, both for mixed selections, like Finder's tags), ⌘⇧P, the toolbar's Pin, the inspector, a leading swipe (orange) — update at once and undo with ⌘Z. Context menu for one row: Open, Open in ‹service› ▸, Pin/Unpin, Export ▸, Delete; for several: Pin/Unpin, Delete. Trailing swipe deletes. ⌫ deletes. Space previews the selected row. Empty Pinned scope: "Nothing pinned yet" / "Pin songs and mixes to keep them here and in the sidebar."
-- Android: `AppBarWithSearch` ("Search") with a Settings action; `FilterChip` row (32dp, 8dp gap) beneath; `LazyColumn` with `stickyHeader` day headers (`titleSmall` primary); swipe start→end pins, end→start deletes.
+- Android: `AppBarWithSearch` ("Search") with a Settings action; `FilterChip` row (32dp, 8dp gap) beneath, which scrolls the selected chip fully into view; `LazyColumn` with `stickyHeader` day headers (`titleSmall` primary); swipe start→end pins (the row springs back, "Pinned · Undo"), end→start deletes. TalkBack gets Pin/Unpin and Delete as custom actions. Back clears a search before it leaves the Library.
+- Android pinned section: with no search and at least one pinned session, a sticky "Pinned" header (same style as the day headers) comes first; pinned sessions are not repeated under their day. More than 5 pinned make the header collapsible (count + chevron). The Pinned filter lists only pinned sessions, by day.
+- Android selection: long-press selects a row (haptic); while selecting, a tap toggles a row. The selected row's artwork turns into a 56dp `primary` circle with a check and its background `secondaryContainer`; swipes are off. The search field turns into the selection bar in place (`secondaryContainer`, 28dp radius): Close · "3 selected" · Pin (Unpin when every selected session is pinned) · Share · Delete · More › Select all (on narrow screens with large fonts Share moves into More, so the count stays readable). Chips are disabled while selecting. Pin shows "3 pinned · Undo"; Share sends "Title — Artist" and the best link per track, the tracklist for mixes and collections; Delete confirms when a mix or a pinned session is selected ("Delete 3 sessions?" / "Their tracklists and saved audio will be removed."), otherwise "3 deleted · Undo". Back, a filter change, reselecting the destination or leaving it ends the selection; rotation keeps it.
+- Empty filters say what is missing ("Nothing hummed yet", "Nothing pinned yet" + "Pin a song to keep it at the top of your library."); "No matches" is only for searches.
 
 Delete semantics: Heard/Hummed/Link sessions delete immediately with Undo (⌘Z for 10 s / `Snackbar` "Deleted" + Undo, 5 s). Mixes and pinned sessions confirm first: title "Delete “‹title›”?", message "The tracklist and its saved audio will be removed.", [Delete] destructive / [Cancel].
 
@@ -597,7 +618,7 @@ After a match the result row updates in place and the button returns to idle (no
 handle
 source row: link icon + "youtube.com/shorts/x9Zk3pQ7lTw" bodyMedium onSurfaceVariant (the shared content, confirmable; for files: the file name)
 state      while working: LinearWavyProgressIndicator + "Downloading" / "Matching" / "Analyzing · about 2 min left" + [Stop]
-result     artwork 64 · titleLargeEmphasized title · bodyLarge artist · bodyMedium meta
+result     artwork 64 · titleLargeEmphasized title · bodyLarge artist · bodyMedium meta · Pin toggle (trailing; the session is already in the library)
            SplitButton xl "Open in Spotify" | ▾
            [Open in Music Fetch] TextButton
 mix        after the first segment: "3 tracks found so far" + [Open in Music Fetch] (analysis continues in the foreground service)
@@ -621,6 +642,7 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | Key | String |
 |---|---|
 | state.idle | Identify what's playing |
+| state.idle.phone.android | Identify what's playing on this phone |
 | state.listening | Listening |
 | state.moveCloser | Move closer to the sound |
 | state.humStart | Hum, whistle or sing |
@@ -652,6 +674,8 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | source.thisMac | This Mac |
 | source.phone | Phone |
 | source.hum | Hum |
+| listenAgain.android | Listen again (group label) |
+| action.humAgain | Hum again |
 | field.link | Paste a link |
 | field.linkSuggestion.android | %@ — Identify |
 
@@ -770,6 +794,15 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | library.empty.title | Nothing identified yet |
 | library.empty.message | Songs you identify will show up here. |
 | session.pin / unpin | Pin / Unpin |
+| session.pinned / notPinned | Pinned / Not pinned (pin toggle state) |
+| library.filter.pinned | Pinned |
+| library.selected.android | %d selected |
+| library.pinnedN / unpinnedN / deletedN | %d pinned / %d unpinned / %d deleted (one session: Pinned / Unpinned / Deleted) |
+| library.deleteN.title | Delete %d sessions? |
+| library.deleteN.message | Their tracklists and saved audio will be removed. |
+| library.selectAll / select / closeSelection | Select all / Select / Done selecting |
+| library.empty.heard / hummed / links / mixes / pinned | Nothing heard yet / Nothing hummed yet / No links or files yet / No mixes yet / Nothing pinned yet |
+| library.empty.pinned.message | Pin a song to keep it at the top of your library. |
 | session.delete | Delete |
 | session.deleted | Deleted |
 | session.undo | Undo |
@@ -823,6 +856,7 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 - **Hit targets**: §4.3.
 - **VoiceOver on the trace**: the band reports "Your pitch, ‹n› seconds hummed"; the overlay reports "Your hum compared with ‹title›: matches ‹n› of ‹m› notes" (the core supplies the aligned note count).
 - **TalkBack on the strip**: `invisibleToUser`; the list rows read "‹cue›, ‹title› by ‹artist›, ‹tier›".
+- **TalkBack in the Android library**: rows offer "Pin"/"Unpin" and "Delete" as custom actions and "Select" as the long-press label; selected rows report `selected`; the selection count is a polite live region. The session Pin toggle reads "Pin, Pinned" / "Pin, Not pinned".
 - **Color contrast**: all text pairs follow system/M3 roles (≥ 4.5:1); the glass button's white glyph sits on accent at ≥ 85 % opacity; in the content-based scheme the `SplitButton` uses `primary`/`onPrimary` which M3 guarantees.
 
 ---

@@ -32,6 +32,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import app.musicfetch.ui.common.devTestTagsRoot
+import app.musicfetch.ui.common.tag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -81,7 +83,7 @@ fun ProviderPanel(model: ProviderModel = viewModel()) {
         showProblem = false
     }
 
-    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize()) {
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize().devTestTagsRoot()) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -160,7 +162,7 @@ fun ProviderPanel(model: ProviderModel = viewModel()) {
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp, vertical = 16.dp),
             ) {
-                TextButton(onClick = model::skip, modifier = Modifier.heightIn(min = 48.dp)) {
+                TextButton(onClick = model::skip, modifier = Modifier.heightIn(min = 48.dp).tag("provider.skip")) {
                     Text(stringResource(R.string.provider_skip))
                 }
                 Button(
@@ -172,7 +174,7 @@ fun ProviderPanel(model: ProviderModel = viewModel()) {
                         }
                     },
                     enabled = selected != null,
-                    modifier = Modifier.heightIn(min = 48.dp),
+                    modifier = Modifier.heightIn(min = 48.dp).tag("provider.continue"),
                 ) {
                     Text(stringResource(R.string.action_continue))
                 }

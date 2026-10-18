@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -53,13 +55,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.musicfetch.R
-import app.musicfetch.appGraph
-import app.musicfetch.capture.ListenOrigin
 import app.musicfetch.core.Candidate
-import app.musicfetch.core.CaptureSource
-import app.musicfetch.core.ListenMode
 import app.musicfetch.core.SessionKind
+import app.musicfetch.platform.ListenSource
+import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.common.PreviewPlayer
+import app.musicfetch.ui.common.tag
 import app.musicfetch.ui.components.Artwork
 import app.musicfetch.ui.components.CandidateTierTag
 import app.musicfetch.ui.components.ContourMark
@@ -68,9 +69,13 @@ import app.musicfetch.ui.components.FrozenTrace
 import app.musicfetch.ui.navigation.LocalNavigator
 import app.musicfetch.ui.navigation.LyricsRoute
 
-/** Ranked hum or lyric candidates (docs/design/DESIGN.md §6.4, Android). */
+/**
+ * Ranked hum or lyric candidates (docs/design/DESIGN.md §6.4, Android). [listenAgain]: on the
+ * Listen destination the "Listen again" dock replaces the bar's "Hum again".
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun CandidatesContent(view: SessionView.Candidates, viewModel: SessionViewModel, onBack: () -> Unit) {
+internal fun CandidatesContent(view: SessionView.Candidates, viewModel: SessionViewModel, onBack: () -> Unit, listenAgain: Boolean) {
     val context = LocalContext.current
     val navigator = LocalNavigator.current
     val haptics = LocalHapticFeedback.current
@@ -81,11 +86,8 @@ internal fun CandidatesContent(view: SessionView.Candidates, viewModel: SessionV
     Scaffold(
         topBar = {
             BackBar(onBack, actions = {
-                if (isHum) {
-                    TextButton(onClick = {
-                        context.appGraph.listen.start(CaptureSource.MICROPHONE, ListenMode.HUM, ListenOrigin.App)
-                        navigator.showListen()
-                    }) {
+                if (isHum && !listenAgain) {
+                    TextButton(onClick = { AppIntents.listenNow(ListenSource.Hum, navigator) }, modifier = Modifier.tag("cand.humAgain")) {
                         Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
                             ContourMark(MaterialTheme.colorScheme.primary, width = 18.dp, strokeWidth = 2.dp)
                         }
@@ -93,12 +95,15 @@ internal fun CandidatesContent(view: SessionView.Candidates, viewModel: SessionV
                         Text(stringResource(R.string.cand_hum_again))
                     }
                 }
+                // An unconfirmed guess isn't shared; it can be pinned and deleted.
+                SessionActions(view.entry, viewModel, withShare = false)
             })
         },
+        bottomBar = { if (listenAgain) ListenAgainDock() },
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 24.dp),
+            contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             val contour = view.humContour
@@ -130,12 +135,13 @@ internal fun CandidatesContent(view: SessionView.Candidates, viewModel: SessionV
                         PreviewPlayer.stop()
                         viewModel.confirm(candidate)
                     },
-                    modifier = Modifier.padding(horizontal = 16.dp).animateItem(),
+                    modifier = Modifier.padding(horizontal = 16.dp).animateItem().tag("cand.card.$index"),
                 )
             }
             item(key = "footer") {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                // Wraps at large font sizes instead of running off a narrow screen.
+                FlowRow(
+                    itemVerticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
                 ) {
                     Text(
@@ -143,7 +149,9 @@ internal fun CandidatesContent(view: SessionView.Candidates, viewModel: SessionV
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TextButton(onClick = { navigator.push(LyricsRoute) }) { Text(stringResource(R.string.action_type_lyric)) }
+                    TextButton(onClick = { navigator.push(LyricsRoute) }, modifier = Modifier.tag("cand.typeLyric")) {
+                        Text(stringResource(R.string.action_type_lyric))
+                    }
                     if (isHum && googleHumSearchAvailable(context)) {
                         TextButton(onClick = { askGoogle(context) }) { Text(stringResource(R.string.action_ask_google)) }
                     }
@@ -230,7 +238,9 @@ private fun CandidateCard(
                         }
                     }
                     Spacer(Modifier.weight(1f))
-                    Button(onClick = onConfirm, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cand_this_is_it)) }
+                    Button(onClick = onConfirm, modifier = Modifier.heightIn(min = 48.dp).tag("cand.confirm")) {
+                        Text(stringResource(R.string.cand_this_is_it))
+                    }
                 }
             }
         }

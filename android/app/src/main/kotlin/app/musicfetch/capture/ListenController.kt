@@ -78,6 +78,18 @@ class ListenController(
     private var service: CaptureService? = null
     private var userCanceled = false
 
+    /** The Listen stage is on screen: tile and widget matches open there instead of notifying. */
+    @Volatile
+    var stageShown = false
+
+    /** The current phone-audio session replays a development file (no MediaProjection). */
+    @Volatile
+    internal var replayingPhone = false
+        private set
+
+    /** Development builds: a phone-audio replay file is present (see [DevFiles.PHONE_CAPTURE_WAV]). */
+    fun canReplayPhone(): Boolean = DevFiles.find(app, DevFiles.PHONE_CAPTURE_WAV) != null
+
     /**
      * Start listening. Returns false when a session is already running or the capture service
      * could not be started. [grant] is required for [CaptureSource.SYSTEM_AUDIO].
@@ -94,7 +106,9 @@ class ListenController(
             if (ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 return false
             }
-            if (source == CaptureSource.SYSTEM_AUDIO && grant == null) return false
+            val replay = source == CaptureSource.SYSTEM_AUDIO && grant == null && canReplayPhone()
+            if (source == CaptureSource.SYSTEM_AUDIO && grant == null && !replay) return false
+            replayingPhone = replay
             generation++
             pendingGrant = grant
             userCanceled = false
@@ -252,9 +266,8 @@ class ListenController(
     }
 
     private fun openAudio(svc: CaptureService, source: CaptureSource, grant: ProjectionGrant?): PcmSource? {
-        if (source == CaptureSource.MICROPHONE) {
-            DevFiles.find(app, DevFiles.CAPTURE_WAV)?.let { replay -> WavReplay.open(replay)?.let { return it } }
-        }
+        val devFile = if (source == CaptureSource.MICROPHONE) DevFiles.CAPTURE_WAV else DevFiles.PHONE_CAPTURE_WAV
+        DevFiles.find(app, devFile)?.let { replay -> WavReplay.open(replay)?.let { return it } }
         if (ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             return null
         }
@@ -380,7 +393,10 @@ class ListenController(
             }
             val prefs = settings.current()
             val visible = app.appGraph.isAppVisible
-            val wanted = state.origin != ListenOrigin.App || (!visible && prefs.notifyInBackground)
+            // A tile or widget match while the stage is in front opens on the stage instead.
+            val answered = result is ListenResult.Matched || result is ListenResult.Candidates
+            val shownInApp = visible && stageShown && answered
+            val wanted = !shownInApp && (state.origin != ListenOrigin.App || (!visible && prefs.notifyInBackground))
             if (wanted) Notifications.postListenResult(app, state, result, settings.preference())
             if (result is ListenResult.Matched || result is ListenResult.Candidates) ListenWidget.refresh(app)
         }
