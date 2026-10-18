@@ -149,9 +149,13 @@ pub enum EvalCommand {
         /// Encoder song score: sum or max (overrides the budget).
         #[arg(long)]
         encoder_pooling: Option<String>,
-        /// Also pool the index's votes for the encoder's tracks (a second, restricted retrieval).
+        /// Also pool the index's votes for the encoder's tracks (in retrieval's one pass).
         #[arg(long)]
         encoder_votes: bool,
+        /// The score model's encoder terms instead of the fitted ones:
+        /// "w_best,w_hit,none,a,b" (weights, "none" shift, calibration).
+        #[arg(long)]
+        encoder_model: Option<String>,
         /// The encoder's first N hits always reach the full rerank (overrides the budget).
         #[arg(long)]
         encoder_reserve: Option<usize>,
@@ -233,10 +237,16 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             encoder_offsets,
             encoder_pooling,
             encoder_votes,
+            encoder_model,
             encoder_reserve,
             encoder_recall_only,
         }) => {
             let mut options = MatchOptions { popularity_weight: popularity, ..MatchOptions::default() };
+            if let Some(spec) = encoder_model {
+                let v: Vec<f32> = spec.split(',').map(|x| x.trim().parse()).collect::<Result<_, _>>()?;
+                let [w_best, w_hit, none, a, b] = v[..] else { bail!("--encoder-model takes 5 numbers") };
+                options.encoder_model = matcher::EncoderModel { weights: [w_best, w_hit], none, calibration: (a, b) };
+            }
             if let Some(p) = probe {
                 options.probe = p;
             }

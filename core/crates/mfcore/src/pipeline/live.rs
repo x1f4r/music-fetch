@@ -619,12 +619,12 @@ impl Live {
         if self.voiced_ms() < SEARCH_MIN_VOICED_MS {
             return;
         }
-        let Some(index) = self.ctx.engine.melody_index() else { return };
+        let Some(searcher) = hum::MelodySearcher::installed(&self.ctx.engine) else { return };
         let every = if self.ctx.engine.is_low_power() { SEARCH_EVERY_LOW_POWER_MS } else { SEARCH_EVERY_MS };
         self.next_search_ms = elapsed + every;
         let frames = self.details.clone();
         let n = frames.len();
-        let task = self.ctx.engine.runtime.spawn_blocking(move || hum::search_frames(&index, &frames));
+        let task = self.ctx.engine.runtime.spawn_blocking(move || searcher.search_frames(&frames));
         self.search = Some((n, task));
     }
 
