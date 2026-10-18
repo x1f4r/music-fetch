@@ -331,13 +331,26 @@ class SessionViewModel(app: Application, private val id: String) : AndroidViewMo
 
     fun stop() = graph.analyses.cancel(id)
 
+    /** Pin or unpin at once; the engine catches up, and a failure puts the toggle back. */
     fun setPinned(pinned: Boolean) {
+        val before = _detail.value?.entry?.pinned ?: return
+        if (before == pinned) return
+        showPinned(pinned)
         viewModelScope.launch {
-            val engine = runCatching { graph.engineHost.engine() }.getOrNull() ?: return@launch
-            withContext(Dispatchers.IO) { runCatching { engine.setPinned(id, pinned) } }
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { graph.engineHost.engine().setPinned(id, pinned) }.isSuccess
+            }
+            if (!ok) {
+                showPinned(before)
+                _messages.value = getApplication<Application>().getString(R.string.error_generic)
+            }
             graph.notifyLibraryChanged()
-            load()
         }
+    }
+
+    private fun showPinned(pinned: Boolean) {
+        _detail.update { d -> d?.copy(entry = d.entry.copy(pinned = pinned)) }
+        rebuild()
     }
 
     /** Delete with Undo (heard, hummed and link sessions). */

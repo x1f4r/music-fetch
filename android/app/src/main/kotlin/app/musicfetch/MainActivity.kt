@@ -1,8 +1,6 @@
 package app.musicfetch
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -24,9 +22,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.musicfetch.capture.ListenOrigin
-import app.musicfetch.core.CaptureSource
-import app.musicfetch.core.ListenMode
 import app.musicfetch.notify.Notifications
 import app.musicfetch.platform.LocalLowPower
 import app.musicfetch.ui.AppAction
@@ -43,10 +38,10 @@ private enum class Stage { Loading, ChooseProvider, App }
 /**
  * The app's one activity. Deep links: `musicfetch://session/<id>` opens a session,
  * `musicfetch://analyze?url=<link>` identifies a link, `musicfetch://listen` shows the
- * Listen stage (`?mode=hum` starts humming), `musicfetch://lyrics` opens the lyric search.
+ * Listen stage (`?mode=hum` or `?source=mic|phone|hum` starts listening), `musicfetch://lyrics` opens the lyric search.
  *
  * Until the user chose where songs open (or skipped), the first-launch provider panel
- * replaces the app (docs/APPS.md, "Opening links"); links wait for it.
+ * replaces the app (docs/APPS.md, "Opening links"); links are opened behind it and shown after.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,11 +62,12 @@ class MainActivity : ComponentActivity() {
                 MusicFetchTheme {
                     val (navigator, stacks) = rememberNavigator()
                     val pending by AppIntents.pending.collectAsStateWithLifecycle()
-                    LaunchedEffect(pending, stage) {
+                    // Navigate at once, even behind the provider panel: the app then opens on the
+                    // linked screen instead of showing the Listen stage first.
+                    LaunchedEffect(pending) {
                         val action = pending ?: return@LaunchedEffect
-                        if (stage != Stage.App) return@LaunchedEffect
                         if (action is AppAction.OpenSession) Notifications.dismissResult(this@MainActivity, action.id)
-                        AppIntents.consume(action, navigator, startHum = ::startHum)
+                        AppIntents.consume(action, navigator)
                     }
                     CompositionLocalProvider(LocalNavigator provides navigator) {
                         AnimatedContent(
@@ -101,11 +97,5 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         AppIntents.offer(intent)
-    }
-
-    private fun startHum() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            appGraph.listen.start(CaptureSource.MICROPHONE, ListenMode.HUM, ListenOrigin.App)
-        }
     }
 }
