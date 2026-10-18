@@ -9,13 +9,19 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
+import android.speech.RecognitionSupport
+import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import androidx.annotation.RequiresApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Locale
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -32,6 +38,18 @@ data class SungTranscript(
     val isFinal: Boolean,
 )
 
+/** The on-device speech pack that reads sung words in the phone's language. */
+data class SpeechPack(
+    /** BCP-47 tag of the pack ("en-US"). */
+    val language: String,
+    val state: State,
+) {
+    enum class State { Installed, Downloading, Available, Unsupported }
+
+    /** The language to give the recognizer, once the pack is there. */
+    val recognizerLanguage: String? get() = language.takeIf { state == State.Installed }
+}
+
 /**
  * Sung lyrics of a hum: Android's on-device speech recognizer listens to the capture while the
  * user sings, so the engine can match the words (docs/CORE_API.md, "Sung words").
@@ -45,10 +63,93 @@ data class SungTranscript(
  */
 class SungLyrics(context: Context) {
     private val appContext = context.applicationContext
+    private val main = Handler(Looper.getMainLooper())
+
+    private val _speechPack = MutableStateFlow<SpeechPack?>(null)
+
+    /**
+     * The on-device speech pack for the phone's language, after [refresh]; null until known or
+     * where the phone can't read sung words at all.
+     */
+    val speechPack: StateFlow<SpeechPack?> = _speechPack.asStateFlow()
 
     /** Whether this phone can read sung words on the device. Cheap; may be called often. */
     fun isAvailable(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && SpeechRecognizer.isOnDeviceRecognitionAvailable(appContext)
+
+    /** False only when the phone's speech pack is known to be missing (not worth starting). */
+    fun mayHaveSpeechPack(): Boolean = _speechPack.value.let { it == null || it.state == SpeechPack.State.Installed }
+
+    /**
+     * The language to read sung words in: the phone's own when its speech pack is installed,
+     * else an installed pack of the same language ("de-DE" for "de-AT"); the phone's own while
+     * that is not known yet.
+     */
+    fun language(): String {
+        val device = Locale.getDefault().toLanguageTag()
+        return _speechPack.value?.recognizerLanguage ?: device
+    }
+
+    /** Ask the recognizer which speech packs it has (Android 13+). Any thread. */
+    fun refresh() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !isAvailable()) return
+        main.post { checkSupport() }
+    }
+
+    /**
+     * Have the system download the speech pack for the phone's language (Android 13+). The
+     * system's speech service fetches it, as it does for Live Caption; [speechPack] follows on the
+     * next [refresh].
+     */
+    fun downloadSpeechPack() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !isAvailable()) return
+        val language = _speechPack.value?.language ?: Locale.getDefault().toLanguageTag()
+        main.post {
+            runCatching {
+                val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext)
+                recognizer.triggerModelDownload(recognizerIntent(language))
+                recognizer.destroy()
+                _speechPack.value = _speechPack.value?.copy(state = SpeechPack.State.Downloading)
+            }.onFailure { Log.w(TAG, "speech pack download not started", it) }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun checkSupport() {
+        val device = Locale.getDefault().toLanguageTag()
+        val recognizer = runCatching { SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext) }.getOrNull() ?: return
+        val finish = { pack: SpeechPack? ->
+            _speechPack.value = pack
+            runCatching { recognizer.destroy() }
+            Unit
+        }
+        runCatching {
+            recognizer.checkRecognitionSupport(
+                recognizerIntent(device),
+                appContext.mainExecutor,
+                object : RecognitionSupportCallback {
+                    override fun onSupportResult(support: RecognitionSupport) {
+                        finish(
+                            speechPack(
+                                device,
+                                installed = support.installedOnDeviceLanguages,
+                                pending = support.pendingOnDeviceLanguages,
+                                supported = support.supportedOnDeviceLanguages,
+                            ),
+                        )
+                    }
+
+                    override fun onError(error: Int) {
+                        Log.i(TAG, "speech pack check failed ($error)")
+                        finish(null)
+                    }
+                },
+            )
+        }.onFailure {
+            Log.w(TAG, "speech pack check failed", it)
+            finish(null)
+        }
+    }
 
     /**
      * A recognition for one capture in [language] (BCP-47) that keeps what is [Session.write]n
@@ -92,6 +193,9 @@ class SungLyrics(context: Context) {
 
         // Main thread only.
         private var recognizer: SpeechRecognizer? = null
+
+        /** The pipe's read end, open until the recognizer is released (it is parceled later). */
+        private var source: ParcelFileDescriptor? = null
 
         private val segments = mutableListOf<List<String>>()
         private var segmentConfidence: Float? = null
@@ -219,6 +323,9 @@ class SungLyrics(context: Context) {
                 runCatching { source.close() }
                 return
             }
+            // startListening parcels the intent later, on the recognizer's handler: the read
+            // end must stay open until the session is released.
+            this.source = source
             try {
                 val r = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
                 recognizer = r
@@ -240,9 +347,6 @@ class SungLyrics(context: Context) {
             } catch (e: RuntimeException) {
                 Log.w(TAG, "on-device recognizer failed to start", e)
                 deliverFinal()
-            } finally {
-                // The recognizer holds its own duplicate of the read end.
-                runCatching { source.close() }
             }
         }
 
@@ -276,12 +380,14 @@ class SungLyrics(context: Context) {
             override fun onError(error: Int) {
                 // No speech at all (humming, whistling) is the common case, not a failure.
                 if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                    Log.i(TAG, "on-device recognizer error $error")
+                    Log.i(TAG, "on-device recognizer error $error after ${segments.size} segments")
                 }
                 deliverFinal()
             }
 
-            override fun onReadyForSpeech(params: Bundle?) = Unit
+            override fun onReadyForSpeech(params: Bundle?) {
+                Log.i(TAG, "on-device recognizer reading ($language)")
+            }
             override fun onBeginningOfSpeech() = Unit
             override fun onRmsChanged(rmsdB: Float) = Unit
             override fun onBufferReceived(buffer: ByteArray?) = Unit
@@ -316,10 +422,33 @@ class SungLyrics(context: Context) {
                 runCatching { it.destroy() }
             }
             recognizer = null
+            source?.let { runCatching { it.close() } }
+            source = null
         }
     }
 
     internal companion object {
+        /**
+         * Which speech pack serves [device] given the recognizer's [installed], [pending]
+         * (downloading) and [supported] on-device languages: the device's own tag, else one of
+         * the same language; [SpeechPack.State.Unsupported] when it has none for that language.
+         */
+        fun speechPack(device: String, installed: List<String>, pending: List<String>, supported: List<String>): SpeechPack {
+            fun match(list: List<String>): String? {
+                list.firstOrNull { it.equals(device, ignoreCase = true) }?.let { return it }
+                val primary = device.substringBefore('-').lowercase()
+                return list.firstOrNull { it.substringBefore('-').lowercase() == primary }
+            }
+            match(installed)?.let { return SpeechPack(it, SpeechPack.State.Installed) }
+            match(pending)?.let { return SpeechPack(it, SpeechPack.State.Downloading) }
+            match(supported)?.let { return SpeechPack(it, SpeechPack.State.Available) }
+            return SpeechPack(device, SpeechPack.State.Unsupported)
+        }
+
+        fun recognizerIntent(language: String): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
+
         const val TAG = "SungLyrics"
         const val RATE = 16_000
         const val MAX_RESULTS = 5

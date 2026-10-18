@@ -307,6 +307,9 @@
     <string name="settings_while_humming">While humming</string>
     <string name="settings_auto_stop">Stop automatically after a pause</string>
     <string name="settings_sung_lyrics">Also search lyrics you sing</string>
+    <string name="settings_speech_pack_needed">Needs the %1$s speech pack on this phone</string>
+    <string name="settings_speech_pack_downloading">Downloading the %1$s speech pack</string>
+    <string name="settings_speech_pack_download">Download speech pack</string>
     <string name="state_offline">You\'re offline. Saved to identify later.</string>
     <string name="library_waiting">Waiting for connection</string>
     <string name="session_waiting_message">It will be identified when you\'re back online.</string>

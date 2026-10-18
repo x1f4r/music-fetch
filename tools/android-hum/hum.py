@@ -16,6 +16,8 @@ Scenarios:
   google                           on the candidates screen: Try Google opens Google's song search
   nomatch_google wav=<file.wav>    a hum that finds nothing; Try Google from the stage
   settings                         the melody library section of Settings
+  melody_download manifest=<url>   remove the index, download it from <url> (index + encoder)
+  melody_encoder manifest=<url>    an installed index whose encoder is new: just the encoder
 """
 import json
 import os
@@ -64,11 +66,24 @@ def index(d, index=None):
     print("index installed", flush=True)
 
 
+def launch(d, ready):
+    """Start the app; answer the system's "add tile" dialog (offered once after the second answer)."""
+    d.launch()
+    for _ in range(3):
+        if d.exists("Do not add tile"):
+            d.tap("Do not add tile")
+        if d.exists(ready):
+            return
+        time.sleep(1)
+    d.wait(ready, 60)
+
+
 def to_hum_stage(d):
-    d.launch(ready="nav.listen")
+    # A fresh process: an earlier no-match would show its suggestions instead of the toggles.
+    d.stop_app()
+    launch(d, "nav.listen")
     ux.to_listen_root(d)
     d.wait("listen.button")
-    # After the second answer the stage offers its Quick Settings tile once.
     time.sleep(1.5)
     if d.exists("Do not add tile"):
         d.tap("Do not add tile")
@@ -156,16 +171,71 @@ def nomatch_google(d, wav=None):
 
 @scenario
 def settings(d):
-    d.launch(ready="nav.library")
+    to_melody_settings(d)
+    d.shot("settings-melody")
+    scroll_to(d, "settings.autoStop")
+    d.shot("settings-while-humming")
+    d.back()
+
+
+def to_melody_settings(d):
+    launch(d, "nav.library")
     ux.to_library_root(d)
     d.tap("library.settings")
-    d.wait("Melody library", 20)
-    d.shot("settings-melody")
-    for _ in range(3):
-        if d.exists("settings.sungLyrics"):
+    scroll_to(d, "Melody library")
+
+
+def scroll_to(d, key, swipes=6):
+    """Scroll a list down until [key] is on screen (lazy lists hold only what is visible)."""
+    for _ in range(swipes):
+        if d.exists(key):
+            return
+        d.swipe(*ux._mid(d, 0.5, 0.75), *ux._mid(d, 0.5, 0.45), 400)
+    d.wait(key, 5)
+
+
+def use_manifest(d, url):
+    """Point the app at a melody-index manifest (DevFiles); restarts the app."""
+    d.stop_app()
+    local = os.path.join(d.out, "manifest-url.txt")
+    with open(local, "w") as f:
+        f.write(url + "\n")
+    d.dev_file(local, "debug-melody-manifest-url.txt")
+
+
+@scenario
+def melody_download(d, manifest=None, label="melody"):
+    """No index installed: Settings offers the download (index and encoder), then shows it installed."""
+    use_manifest(d, manifest)
+    d.sh(f"run-as {PKG} sh -c 'rm -rf files/engine/melody'")
+    to_melody_settings(d)
+    time.sleep(3)
+    d.shot(f"{label}-offer")
+    d.tap("Download")
+    for i in range(6):
+        d.shot(f"{label}-downloading-{i}", settle=0.8)
+        if d.exists("Remove"):
             break
-        d.swipe(*ux._mid(d, 0.5, 0.7), *ux._mid(d, 0.5, 0.4), 400)
-    d.shot("settings-while-humming")
+    d.wait("Remove", 300)
+    d.shot(f"{label}-installed")
+    d.back()
+
+
+@scenario
+def melody_encoder(d, manifest=None, label="encoder"):
+    """The index is current but its encoder is new: Settings offers just the encoder."""
+    use_manifest(d, manifest)
+    to_melody_settings(d)
+    if d.exists("Check for updates"):
+        d.tap("Check for updates")
+    time.sleep(3)
+    d.shot(f"{label}-offer")
+    if d.exists("melody.update"):
+        d.tap("melody.update")
+        for i in range(4):
+            d.shot(f"{label}-downloading-{i}", settle=0.8)
+        d.wait("Check for updates", 300)
+        d.shot(f"{label}-installed")
     d.back()
 
 

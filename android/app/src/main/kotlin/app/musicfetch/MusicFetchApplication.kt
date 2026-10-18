@@ -17,6 +17,7 @@ import app.musicfetch.platform.LowPower
 import app.musicfetch.platform.ProviderPreference
 import app.musicfetch.platform.Providers
 import app.musicfetch.platform.SettingsStore
+import app.musicfetch.platform.SungLyrics
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -50,6 +51,8 @@ class MusicFetchApplication :
         Notifications.createChannels(this)
         // Engine creation runs off the main thread so it doesn't delay the first frame.
         graph.engineHost.start()
+        // Which speech pack reads sung words (a quick question to the system's recognizer).
+        graph.sungLyrics.refresh()
         // Python and yt-dlp take a few seconds and tens of MB to start. Phones with plenty of
         // headroom start them now so the first link is fast; on the low-power path they start
         // when a link is about to be identified.
@@ -88,8 +91,10 @@ class AppGraph(val app: Application) {
     val sungLyricsEnabled: StateFlow<Boolean> = settings.settings.map { it.sungLyrics }
         .distinctUntilChanged()
         .stateIn(scope, SharingStarted.Eagerly, true)
-    val engineHost = EngineHost(app, scope, credentials, lowPower) { sungLyricsEnabled.value }
-    val listen = ListenController(app, scope, engineHost, settings)
+    /** Sung words on the device (Android 13+ with an on-device recognizer). */
+    val sungLyrics = SungLyrics(app)
+    val engineHost = EngineHost(app, scope, credentials, lowPower, sungLyrics) { sungLyricsEnabled.value }
+    val listen = ListenController(app, scope, engineHost, settings, sungLyrics)
     val analyses = AnalysisController(app, scope, engineHost, settings)
     val melody = MelodyLibrary(scope, engineHost)
     val deletions = Deletions(scope, engineHost) { notifyLibraryChanged() }

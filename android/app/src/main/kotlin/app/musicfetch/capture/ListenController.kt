@@ -27,11 +27,14 @@ import app.musicfetch.core.Phase
 import app.musicfetch.core.SessionEvent
 import app.musicfetch.core.SessionKind
 import app.musicfetch.core.SessionObserver
+import app.musicfetch.core.SpeechTranscript
 import app.musicfetch.engine.EngineHost
 import app.musicfetch.engine.EngineUnavailableException
 import app.musicfetch.notify.Notifications
 import app.musicfetch.platform.DevFiles
 import app.musicfetch.platform.SettingsStore
+import app.musicfetch.platform.SungLyrics
+import app.musicfetch.platform.SungTranscript
 import app.musicfetch.widget.ListenWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +62,8 @@ class ListenController(
     private val scope: CoroutineScope,
     private val engineHost: EngineHost,
     private val settings: SettingsStore,
+    /** Sung words of hum and microphone listens (Android 13+ with an on-device recognizer). */
+    private val sungLyrics: SungLyrics,
 ) {
     private val _state = MutableStateFlow(ListenState())
     val state: StateFlow<ListenState> = _state.asStateFlow()
@@ -75,6 +80,10 @@ class ListenController(
     private var session: LiveSession? = null
     private var capture: PcmSource? = null
     private var projection: MediaProjection? = null
+    private var words: SungLyrics.Session? = null
+
+    /** The recognizer finishing after capture; once the session ended, nothing waits for it. */
+    private var finishingWords: SungLyrics.Session? = null
     private var service: CaptureService? = null
     private var userCanceled = false
 
@@ -166,7 +175,7 @@ class ListenController(
             userCanceled = true
             session
         }
-        stopCapture()
+        stopCapture(discardWords = true)
         if (current != null) {
             runCatching { current.cancel() }
             // The engine answers with Canceled, which resets the state.
@@ -232,8 +241,14 @@ class ListenController(
             return
         }
         // Microphone listens may turn into humming: their progressive melody search shows its
-        // answer so far under the listening UI (ListenState.preview). Phone audio never hums.
-        val options = ListenOptions(autoStop = settings.current().autoStop, liveCandidates = source == CaptureSource.MICROPHONE)
+        // answer so far under the listening UI (ListenState.preview), and the on-device recognizer
+        // reads sung words from the same audio (docs/CORE_API.md, "Sung words"). Phone audio
+        // never hums.
+        val prefs = settings.current()
+        val microphone = source == CaptureSource.MICROPHONE
+        val language = sungLyrics.language()
+        val listenForWords = microphone && prefs.sungLyrics && sungLyrics.isAvailable() && sungLyrics.mayHaveSpeechPack()
+        val options = ListenOptions(autoStop = prefs.autoStop, liveCandidates = microphone, transcripts = listenForWords)
         val live = try {
             engine.startListeningWith(source, mode, options, Observer(gen))
         } catch (e: MfException) {
@@ -242,23 +257,32 @@ class ListenController(
             fail(gen, ErrorCode.INTERNAL, e.message ?: "Couldn't start listening.")
             return
         }
+        // A hum is read from its first second; a microphone listen keeps its audio until it
+        // turns out to be singing (Notice.ImpressionDetected).
+        val tap = if (listenForWords) sungLyrics.prepare(language) { transcript -> pushWords(gen, live, transcript) } else null
         val keep = synchronized(lock) {
             if (gen != generation || !_state.value.isCapturing) {
                 false
             } else {
                 session = live
                 capture = audio
+                words = tap
                 true
             }
         }
         if (!keep) {
             audio.stop()
+            tap?.cancel()
             runCatching { live.cancel() }
             return
         }
-        Log.i(TAG, "capturing ${audio.description} at ${audio.sampleRate} Hz × ${audio.channels}")
+        if (mode == ListenMode.HUM) tap?.begin()
+        Log.i(TAG, "capturing ${audio.description} at ${audio.sampleRate} Hz × ${audio.channels}${if (tap != null) ", reading words" else ""}")
         audio.start(
-            sink = { buffer: ByteBuffer, rate: Int, channels: Int -> live.pushPcm(buffer, rate.toUInt(), channels.toUInt()) },
+            sink = { buffer: ByteBuffer, rate: Int, channels: Int ->
+                live.pushPcm(buffer, rate.toUInt(), channels.toUInt())
+                tap?.write(buffer, rate, channels)
+            },
             onError = { message ->
                 Log.w(TAG, "capture error: $message")
                 // Analyze what was captured so far.
@@ -366,7 +390,11 @@ class ListenController(
         when (notice) {
             is Notice.ProviderUnavailable -> Log.i(TAG, "provider unavailable: ${notice.provider}")
             is Notice.MelodyIndexMissing -> _state.update { it.copy(melodyIndexMissing = true) }
-            is Notice.ImpressionDetected -> _state.update { it.copy(impression = true, notice = notice) }
+            is Notice.ImpressionDetected -> {
+                // Singing after all: read its words, from the start of the capture.
+                synchronized(lock) { words }?.begin()
+                _state.update { it.copy(impression = true, notice = notice) }
+            }
             else -> _state.update { it.copy(notice = notice) }
         }
         updateNotification()
@@ -391,7 +419,7 @@ class ListenController(
             session = null
             userCanceled
         }
-        stopCapture()
+        stopCapture(discardWords = true)
         finishCapture()
         lastCandidates = emptyList()
         finalCandidates = false
@@ -432,15 +460,43 @@ class ListenController(
         end(synchronized(lock) { generation }, ListenResult.Failed(_state.value.sessionId, code, message))
     }
 
-    private fun stopCapture() {
-        val (audio, mp) = synchronized(lock) {
-            val pair = capture to projection
+    /**
+     * Release the audio source. The word recognizer finishes what it heard and sends its final
+     * transcript (the engine waits up to 2 s for it), unless [discardWords].
+     */
+    private fun stopCapture(discardWords: Boolean = false) {
+        val (audio, mp, tap) = synchronized(lock) {
+            val held = Triple(capture, projection, words)
             capture = null
             projection = null
-            pair
+            words = null
+            if (discardWords) {
+                finishingWords?.cancel()
+                finishingWords = null
+            } else if (held.third != null) {
+                finishingWords = held.third
+            }
+            held
         }
         audio?.stop()
         mp?.let { runCatching { it.stop() } }
+        if (discardWords) tap?.cancel() else tap?.end()
+    }
+
+    /** Hand the recognizer's latest transcript to the session it belongs to (main thread). */
+    private fun pushWords(gen: Long, live: LiveSession, transcript: SungTranscript) {
+        if (synchronized(lock) { gen != generation }) return
+        runCatching {
+            live.pushTranscript(
+                SpeechTranscript(
+                    text = transcript.text,
+                    alternatives = transcript.alternatives,
+                    language = transcript.language,
+                    confidence = transcript.confidence,
+                    isFinal = transcript.isFinal,
+                ),
+            )
+        }.onFailure { Log.w(TAG, "transcript not taken", it) }
     }
 
     private fun finishCapture() {

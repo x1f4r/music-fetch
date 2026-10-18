@@ -55,6 +55,20 @@ class SungLyricsTest {
     }
 
     @Test
+    fun `the phone's own speech pack first, then one of its language`() {
+        val supported = listOf("en-US", "de-DE", "es-ES", "fr-FR")
+        assertEquals(SpeechPack("en-US", SpeechPack.State.Installed), SungLyrics.speechPack("en-US", listOf("en-US"), emptyList(), supported))
+        // Austrian German reads with the German pack.
+        assertEquals(SpeechPack("de-DE", SpeechPack.State.Installed), SungLyrics.speechPack("de-AT", listOf("en-US", "de-DE"), emptyList(), supported))
+        assertEquals(SpeechPack("en-US", SpeechPack.State.Downloading), SungLyrics.speechPack("en-US", emptyList(), listOf("en-US"), supported))
+        assertEquals(SpeechPack("en-US", SpeechPack.State.Available), SungLyrics.speechPack("en-US", emptyList(), emptyList(), supported))
+        assertEquals(SpeechPack.State.Unsupported, SungLyrics.speechPack("fi-FI", listOf("en-US"), emptyList(), supported).state)
+        // Only an installed pack is handed to the recognizer.
+        assertEquals("de-DE", SpeechPack("de-DE", SpeechPack.State.Installed).recognizerLanguage)
+        assertNull(SpeechPack("de-DE", SpeechPack.State.Available).recognizerLanguage)
+    }
+
+    @Test
     fun `nothing heard is an empty transcript`() {
         val t = SungLyrics.joinSegments(emptyList(), "", "en-US", null, true)
         assertEquals("", t.text)

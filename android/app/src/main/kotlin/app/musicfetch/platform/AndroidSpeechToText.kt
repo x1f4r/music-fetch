@@ -1,6 +1,5 @@
 package app.musicfetch.platform
 
-import android.content.Context
 import android.util.Log
 import app.musicfetch.core.PlatformException
 import app.musicfetch.core.SpeechToText
@@ -22,12 +21,10 @@ import java.util.concurrent.TimeoutException
  * has no on-device recognizer (or runs Android 12 or older) there are no hypotheses: lyrics are an
  * optional signal and nothing is sent to a server.
  */
-class AndroidSpeechToText(context: Context, private val isEnabled: () -> Boolean) : SpeechToText {
-    private val sungLyrics = SungLyrics(context)
-
+class AndroidSpeechToText(private val sungLyrics: SungLyrics, private val isEnabled: () -> Boolean) : SpeechToText {
     override fun transcribe(wavPath: String, language: String, task: TaskHandle): List<String> {
         if (task.isCanceled()) throw PlatformException.Canceled()
-        if (!isEnabled() || !sungLyrics.isAvailable()) return emptyList()
+        if (!isEnabled() || !sungLyrics.isAvailable() || !sungLyrics.mayHaveSpeechPack()) return emptyList()
         val pcm = try {
             readPcm16Mono(File(wavPath))
         } catch (e: IOException) {
@@ -36,7 +33,10 @@ class AndroidSpeechToText(context: Context, private val isEnabled: () -> Boolean
         }
         if (pcm.data.isEmpty()) return emptyList()
         val result = CompletableFuture<SungTranscript>()
-        val session = sungLyrics.start(language) { if (it.isFinal) result.complete(it) } ?: return emptyList()
+        // The engine asks in the phone's language; an installed pack of that language reads it.
+        val session = sungLyrics.start(sungLyrics.speechPack.value?.recognizerLanguage ?: language) {
+            if (it.isFinal) result.complete(it)
+        } ?: return emptyList()
         session.writePcm16(pcm.data, pcm.sampleRate)
         session.end(FINAL_TIMEOUT_MS)
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(FINAL_TIMEOUT_MS + 500)

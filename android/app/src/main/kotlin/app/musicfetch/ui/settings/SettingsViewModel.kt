@@ -9,7 +9,6 @@ import app.musicfetch.core.coreVersion
 import app.musicfetch.platform.AppSettings
 import app.musicfetch.platform.CredentialField
 import app.musicfetch.platform.ProviderPreference
-import app.musicfetch.platform.SungLyrics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -55,11 +54,18 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Whether this phone can read sung words on the device (Android 13+ with an on-device recognizer). */
-    val sungLyricsAvailable: Boolean = SungLyrics(app).isAvailable()
+    val sungLyricsAvailable: Boolean = graph.sungLyrics.isAvailable()
+
+    /** The speech pack for the phone's language; null until known. */
+    val speechPack = graph.sungLyrics.speechPack
 
     fun setSungLyrics(on: Boolean) {
         viewModelScope.launch { graph.settings.setSungLyrics(on) }
     }
+
+    fun refreshSpeechPack() = graph.sungLyrics.refresh()
+
+    fun downloadSpeechPack() = graph.sungLyrics.downloadSpeechPack()
 
     fun setAutoStop(on: Boolean) {
         viewModelScope.launch { graph.settings.setAutoStop(on) }

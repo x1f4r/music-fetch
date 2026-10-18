@@ -14,6 +14,7 @@ import app.musicfetch.platform.CredentialStore
 import app.musicfetch.platform.DevFiles
 import app.musicfetch.platform.LowPower
 import app.musicfetch.platform.MediaCodecDecoder
+import app.musicfetch.platform.SungLyrics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,8 +48,9 @@ class EngineHost(
     private val scope: CoroutineScope,
     private val credentials: CredentialStore,
     private val lowPower: LowPower,
+    private val sungLyrics: SungLyrics,
     /** Settings, "Also search lyrics you sing". */
-    private val sungLyricsEnabled: () -> Boolean = { true },
+    private val sungLyricsEnabled: () -> Boolean,
 ) {
     private val appContext = context.applicationContext
     private val _state = MutableStateFlow<EngineState>(EngineState.Starting)
@@ -110,7 +112,7 @@ class EngineHost(
             melodyIndexManifestUrl = melodyManifestUrl(),
         )
         // Android 13+ can give the on-device recognizer a recording (SungLyrics).
-        val speech = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) AndroidSpeechToText(appContext, sungLyricsEnabled) else null
+        val speech = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) AndroidSpeechToText(sungLyrics, sungLyricsEnabled) else null
         return Engine(config, mediaBackend, MediaCodecDecoder(), speech)
     }
 
