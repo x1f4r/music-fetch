@@ -44,7 +44,10 @@ def summary(rows):
         k = max((e.get("hits", 0) for e in enc if e), default=0)
         for kk in (1, 10, 100, 200, 500):
             s[f"enc@{kk}"] = sum(x is not None and x <= kk for x in er) / n
-        s["union"] = sum((r.get("trace") or [None])[0] is not None or x is not None for r, x in zip(rows, er)) / n
+        ret = [(r.get("trace") or [None])[0] is not None for r in rows]
+        s["union"] = sum(a or x is not None for a, x in zip(ret, er)) / n
+        for kk in (100, 200, 500):
+            s[f"union@{kk}"] = sum(a or (x is not None and x <= kk) for a, x in zip(ret, er)) / n
         s["enc_songs_max"] = k
         win = [e for e in enc if e and e.get("windows")]
         if win:
@@ -73,7 +76,7 @@ def main():
     for name, rows in runs.items():
         report[name] = {k: summary(v) for k, v in subsets(rows, songs).items()}
         for k, s in report[name].items():
-            keys = ["n", "top1", "top10", "retrieved", "enc@10", "enc@200", "enc@500", "union", "search_ms_p50", "encode_ms_p50", "scan_ms_p50"]
+            keys = ["n", "top1", "top10", "retrieved", "enc@1", "enc@10", "enc@200", "enc@500", "union@200", "union@500", "search_ms_p50", "encode_ms_p50", "scan_ms_p50"]
             print(name, k, " ".join(f"{x}={round(s[x] * 100, 1) if isinstance(s[x], float) and x not in ('search_ms_p50', 'encode_ms_p50', 'scan_ms_p50') else round(s[x], 1)}" for x in keys if x in s))
     if a.base and a.base in runs:
         base = {r["wav"]: r for r in runs[a.base]}

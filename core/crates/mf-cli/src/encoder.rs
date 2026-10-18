@@ -1,7 +1,7 @@
 //! Learned-encoder companion files: `mf index encoder build|info` and the
 //! encoder side of `mf eval qbsh --encoder`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, bail};
@@ -45,6 +45,22 @@ pub enum EncoderCommand {
         mfe: PathBuf,
         #[arg(long)]
         index: PathBuf,
+    },
+    /// Time encoder searches on one thread with excerpts of the index's own
+    /// references as queries (transposed, 10 s), and count how often the source song
+    /// comes first.
+    Bench {
+        mfe: PathBuf,
+        #[arg(long)]
+        index: PathBuf,
+        #[arg(long, default_value_t = 100)]
+        queries: usize,
+        /// android, mac or low-power.
+        #[arg(long, default_value = "android")]
+        budget: String,
+        /// Use the portable fast-scan kernel instead of the SIMD one.
+        #[arg(long)]
+        scalar: bool,
     },
 }
 
@@ -106,7 +122,76 @@ pub fn run(cmd: EncoderCommand) -> anyhow::Result<()> {
             println!("opened in {opened:.2} ms");
             Ok(())
         }
+        EncoderCommand::Bench { mfe, index, queries, budget, scalar } => bench(&mfe, &index, queries, &budget, scalar),
     }
+}
+
+fn bench(mfe: &Path, index: &Path, queries: usize, budget: &str, scalar: bool) -> anyhow::Result<()> {
+    let index = MelodyIndex::open(index)?;
+    let args = EncoderArgs {
+        path: mfe.to_path_buf(),
+        budget: budget.into(),
+        songs: None,
+        offsets: None,
+        pooling: None,
+        votes: false,
+        recall_only: true,
+    };
+    let mut eval = EncoderEval::open(&args, &index)?;
+    if scalar {
+        eval.encoder.set_kernel(mfcore::melody::encoder::scan::Kernel::Scalar);
+    }
+    let tracks: Vec<u32> = (0..index.track_count()).filter(|&t| eval.encoder.track_windows(t).len() >= 4).collect();
+    if tracks.is_empty() {
+        bail!("no track has enough windows");
+    }
+    let mut rng = 0x2545_f491_4f6c_dd1du64;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    let (mut encode, mut scan, mut first) = (Vec::new(), Vec::new(), 0usize);
+    let started = Instant::now();
+    // The first search loads the model and builds its plans.
+    let mut load_ms = None;
+    for _ in 0..queries {
+        let t = tracks[(next() % tracks.len() as u64) as usize];
+        let Some(track) = index.track(t) else { continue };
+        let len = track.contour.len();
+        let start = (next() % len.saturating_sub(200).max(1) as u64) as usize;
+        let contour: Vec<f32> = track.contour[start..(start + 200).min(len)].iter().map(|x| x + 3.0).collect();
+        let voiced = contour.iter().filter(|x| x.is_finite()).count() as u32;
+        if voiced < 60 {
+            continue;
+        }
+        let query = MelodyQuery { contour, notes: Vec::new(), voiced_ms: voiced * 50 };
+        let t0 = Instant::now();
+        let (hits, timing) = eval.encoder.search_timed(&index, &query, &eval.budget)?;
+        if load_ms.is_none() {
+            load_ms = Some(t0.elapsed().as_secs_f64() * 1e3);
+            continue;
+        }
+        encode.push(timing.encode_ms / timing.windows.max(1) as f64);
+        scan.push(timing.scan_ms / timing.windows.max(1) as f64);
+        first += usize::from(hits.first().map(|h| h.song) == Some(track.song));
+    }
+    let n = encode.len();
+    for v in [&mut encode, &mut scan] {
+        v.sort_by(f64::total_cmp);
+    }
+    let med = |v: &[f64]| v.get(v.len() / 2).copied().unwrap_or(0.0);
+    println!(
+        "{n} queries: per query window encode {:.2} ms, scan {:.2} ms (medians, one thread); first search {:.0} ms; \
+         source song first {:.1} %; {:.1} s",
+        med(&encode),
+        med(&scan),
+        load_ms.unwrap_or(0.0),
+        100.0 * first as f64 / n.max(1) as f64,
+        started.elapsed().as_secs_f64()
+    );
+    Ok(())
 }
 
 /// The encoder as one evaluation run uses it.
