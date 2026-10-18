@@ -14,6 +14,7 @@ import app.musicfetch.platform.CredentialStore
 import app.musicfetch.platform.DevFiles
 import app.musicfetch.platform.LowPower
 import app.musicfetch.platform.MediaCodecDecoder
+import app.musicfetch.platform.SungLyrics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +48,9 @@ class EngineHost(
     private val scope: CoroutineScope,
     private val credentials: CredentialStore,
     private val lowPower: LowPower,
+    private val sungLyrics: SungLyrics,
+    /** Settings, "Also search lyrics you sing". */
+    private val sungLyricsEnabled: () -> Boolean,
 ) {
     private val appContext = context.applicationContext
     private val _state = MutableStateFlow<EngineState>(EngineState.Starting)
@@ -107,7 +111,8 @@ class EngineHost(
             mediaTools = null,
             melodyIndexManifestUrl = melodyManifestUrl(),
         )
-        val speech = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) AndroidSpeechToText(appContext) else null
+        // Android 13+ can give the on-device recognizer a recording (SungLyrics).
+        val speech = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) AndroidSpeechToText(sungLyrics, sungLyricsEnabled) else null
         return Engine(config, mediaBackend, MediaCodecDecoder(), speech)
     }
 
@@ -128,10 +133,11 @@ class EngineHost(
 
         /**
          * Manifest of the downloadable melody index for the format this core reads (format 2
-         * since 1.1; docs/CORE_API.md, "Melody index"). Each format has its own release tag;
-         * 1.0.x keeps reading `melody-index-1`.
+         * since 1.1; docs/CORE_API.md, "Melody index"), phone tier: the index and its learned
+         * encoder sized for phones. Each format has its own release tag; 1.0.x keeps reading
+         * `melody-index-1`.
          */
         const val MELODY_MANIFEST_URL =
-            "https://github.com/x1f4r/music-fetch/releases/download/melody-index-2/manifest.json"
+            "https://github.com/x1f4r/music-fetch/releases/download/melody-index-2/manifest-android.json"
     }
 }

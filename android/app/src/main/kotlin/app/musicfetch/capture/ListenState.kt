@@ -73,6 +73,11 @@ data class ListenState(
     val startedAtWallMs: Long = 0,
     /** The engine reported that the melody library is missing during this session. */
     val melodyIndexMissing: Boolean = false,
+    /**
+     * The progressive melody search's latest candidates while humming (`Candidates { is_final:
+     * false }`): a preview under the listening UI, never the result. Empty when there are none.
+     */
+    val preview: List<Candidate> = emptyList(),
 ) {
     val isActive: Boolean
         get() = phase is ListenPhase.Starting || phase is ListenPhase.Listening || phase is ListenPhase.Matching

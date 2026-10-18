@@ -21,6 +21,7 @@
     <string name="state_move_closer">Move closer to the sound</string>
     <string name="state_hum_start">Hum, whistle or sing</string>
     <string name="state_keep_going">Keep going</string>
+    <string name="state_not_sure_yet">Not sure yet, keep going</string>
     <string name="state_matching">Matching</string>
     <string name="state_resolving">Resolving link</string>
     <string name="state_downloading">Downloading</string>
@@ -41,7 +42,7 @@
     <string name="action_continue">Continue</string>
     <string name="action_open_settings">Open settings</string>
     <string name="action_stop">Stop</string>
-    <string name="action_ask_google">Ask Google</string>
+    <string name="action_try_google">Try Google</string>
     <string name="source_microphone">Microphone</string>
     <string name="source_phone">Phone</string>
     <string name="source_hum">Hum</string>
@@ -62,6 +63,7 @@
     <string name="melody_status_not_installed">Not installed · %1$s</string>
     <string name="melody_status_not_installed_unknown">Not installed</string>
     <string name="melody_status_update_available">Update available · %1$s</string>
+    <string name="melody_status_encoder_available">Better matching available · %1$s</string>
     <string name="melody_status_downloading">%1$s of %2$s</string>
     <string name="melody_status_preparing">Preparing download</string>
     <string name="melody_error">Couldn\'t download. Check your connection.</string>
@@ -99,6 +101,11 @@
     <string name="cand_not_here">Not here?</string>
     <string name="cand_legend_you">You</string>
     <string name="cand_overlay_description">Your hum compared with %1$s</string>
+
+    <!-- While humming: the progressive search's answer so far -->
+    <string name="hum_sounds_like">Sounds like</string>
+    <string name="hum_preview_description">Sounds like %1$s by %2$s, %3$s</string>
+    <string name="hum_preview_stop">Stop listening</string>
     <string name="lyrics_prompt">Type a lyric you remember</string>
     <string name="lyrics_empty">No songs with that lyric.</string>
     <string name="lyrics_try_different">Try different words</string>
@@ -300,6 +307,10 @@
     <!-- Low power, offline, segment edits -->
     <string name="settings_while_humming">While humming</string>
     <string name="settings_auto_stop">Stop automatically after a pause</string>
+    <string name="settings_sung_lyrics">Also search lyrics you sing</string>
+    <string name="settings_speech_pack_needed">Needs the %1$s speech pack on this phone</string>
+    <string name="settings_speech_pack_downloading">Downloading the %1$s speech pack</string>
+    <string name="settings_speech_pack_download">Download speech pack</string>
     <string name="state_offline">You\'re offline. Saved to identify later.</string>
     <string name="library_waiting">Waiting for connection</string>
     <string name="session_waiting_message">It will be identified when you\'re back online.</string>

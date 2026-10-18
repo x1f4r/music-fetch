@@ -2,6 +2,8 @@ package app.musicfetch.ui.listen
 
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.musicfetch.core.Candidate
+import app.musicfetch.core.CandidateTier
 import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ListenMode
 import app.musicfetch.core.NoMatchReason
@@ -9,23 +11,26 @@ import app.musicfetch.core.SessionKind
 import app.musicfetch.platform.ListenSource
 
 /** What the action row offers after a listen found nothing; every suggestion starts at once. */
-enum class Suggestion { TryAgain, HumAgain, HumIt, TypeLyric, UseMicrophone }
+enum class Suggestion { TryAgain, HumAgain, HumIt, TypeLyric, UseMicrophone, TryGoogle }
 
 /**
  * The no-match actions for [reason] after listening with [last] (docs/design/DESIGN.md §5.4),
  * most useful first. A hum is retried as a hum; the other sources offer humming instead. Never
- * two actions that do the same thing.
+ * two actions that do the same thing. [google]: Google's own song search can be opened
+ * ([app.musicfetch.platform.GoogleSongSearch]); it is the second choice after a hum that found
+ * nothing.
  */
-fun suggestions(reason: NoMatchReason, last: ListenSource): List<Suggestion> {
+fun suggestions(reason: NoMatchReason, last: ListenSource, google: Boolean = false): List<Suggestion> {
     if (last == ListenSource.Hum) {
-        return when (reason) {
+        val actions = when (reason) {
             NoMatchReason.NOT_FOUND -> listOf(Suggestion.HumAgain, Suggestion.TypeLyric, Suggestion.UseMicrophone)
             NoMatchReason.TOO_QUIET, NoMatchReason.NOISY, NoMatchReason.MOSTLY_SPEECH ->
                 listOf(Suggestion.HumAgain, Suggestion.UseMicrophone)
             NoMatchReason.TOO_SHORT -> listOf(Suggestion.HumAgain, Suggestion.TypeLyric)
             // The microphone is never silenced by another app.
-            NoMatchReason.CAPTURE_SILENT -> listOf(Suggestion.HumAgain)
+            NoMatchReason.CAPTURE_SILENT -> return listOf(Suggestion.HumAgain)
         }
+        return if (google) actions.take(1) + Suggestion.TryGoogle + actions.drop(1) else actions
     }
     return when (reason) {
         NoMatchReason.NOT_FOUND -> listOf(Suggestion.TryAgain, Suggestion.HumIt, Suggestion.TypeLyric)
@@ -35,12 +40,29 @@ fun suggestions(reason: NoMatchReason, last: ListenSource): List<Suggestion> {
     }
 }
 
-/** The source a finished live session used. */
-fun sourceOf(source: CaptureSource, mode: ListenMode): ListenSource = when {
+/**
+ * The source a finished live session used. A microphone listen that turned into humming or
+ * singing ([impression]) counts as a hum, so its suggestions are a hum's.
+ */
+fun sourceOf(source: CaptureSource, mode: ListenMode, impression: Boolean = false): ListenSource = when {
     source == CaptureSource.SYSTEM_AUDIO -> ListenSource.Phone
-    mode == ListenMode.HUM -> ListenSource.Hum
+    mode == ListenMode.HUM || impression -> ListenSource.Hum
     else -> ListenSource.Microphone
 }
+
+/**
+ * What the Listen stage shows of the interim candidates while someone hums (docs/CORE_API.md,
+ * "Humming, whistling, singing"): the top one when it is a Strong or Possible answer. A long
+ * shot is right about once in fifteen, so it is not named before the hum ends.
+ */
+fun humPreview(candidates: List<Candidate>): Candidate? =
+    candidates.firstOrNull()?.takeIf { it.tier == CandidateTier.STRONG || it.tier == CandidateTier.POSSIBLE }
+
+/** The progressive search answered while humming, but with nothing better than a long shot. */
+fun onlyLongShots(candidates: List<Candidate>): Boolean = candidates.isNotEmpty() && humPreview(candidates) == null
+
+/** Google's song search is offered as a second opinion when a hum's best answer is not Strong. */
+fun offersGoogle(candidates: List<Candidate>): Boolean = candidates.firstOrNull()?.tier != CandidateTier.STRONG
 
 /** The source that repeats a stored live session; null for links, files and lyric searches. */
 fun sourceOf(kind: SessionKind): ListenSource? = when (kind) {

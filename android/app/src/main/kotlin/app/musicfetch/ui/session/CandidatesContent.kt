@@ -1,9 +1,5 @@
 package app.musicfetch.ui.session
 
-import android.content.ActivityNotFoundException
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -51,12 +47,14 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.musicfetch.R
 import app.musicfetch.core.Candidate
 import app.musicfetch.core.SessionKind
+import app.musicfetch.platform.GoogleSongSearch
 import app.musicfetch.platform.ListenSource
 import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.common.PreviewPlayer
@@ -67,6 +65,8 @@ import app.musicfetch.ui.components.ContourMark
 import app.musicfetch.ui.components.ContourOverlay
 import app.musicfetch.ui.components.FrozenTrace
 import app.musicfetch.ui.navigation.LocalNavigator
+import app.musicfetch.ui.listen.offersGoogle
+import app.musicfetch.ui.listen.rememberGoogleSongSearch
 import app.musicfetch.ui.navigation.LyricsRoute
 
 /**
@@ -83,6 +83,7 @@ internal fun CandidatesContent(view: SessionView.Candidates, viewModel: SessionV
     DisposableEffect(Unit) { onDispose { PreviewPlayer.stop() } }
     var expanded by rememberSaveable(view.entry.id) { mutableIntStateOf(0) }
     val isHum = view.entry.kind == SessionKind.HUM || view.entry.kind == SessionKind.LISTEN
+    val googleAvailable = rememberGoogleSongSearch()
     Scaffold(
         topBar = {
             BackBar(onBack, actions = {
@@ -152,8 +153,11 @@ internal fun CandidatesContent(view: SessionView.Candidates, viewModel: SessionV
                     TextButton(onClick = { navigator.push(LyricsRoute) }, modifier = Modifier.tag("cand.typeLyric")) {
                         Text(stringResource(R.string.action_type_lyric))
                     }
-                    if (isHum && googleHumSearchAvailable(context)) {
-                        TextButton(onClick = { askGoogle(context) }) { Text(stringResource(R.string.action_ask_google)) }
+                    // Google's song search as a second opinion, unless the answer is Strong.
+                    if (isHum && googleAvailable && offersGoogle(view.candidates)) {
+                        TextButton(onClick = { GoogleSongSearch.open(context) }, modifier = Modifier.tag("cand.tryGoogle")) {
+                            Text(stringResource(R.string.action_try_google))
+                        }
                     }
                 }
             }
@@ -184,10 +188,16 @@ private fun CandidateCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Artwork(track.artworkUrl, 56.dp, corner = 8.dp)
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                    Text(track.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // Titles keep their own direction ("99 Luftballons" in a right-to-left UI).
+                    Text(
+                        track.title,
+                        style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     Text(
                         track.artist,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content),
                         color = colors.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -219,7 +229,7 @@ private fun CandidateCard(
                         Swatch(colors.outlineVariant)
                         Text(
                             track.title,
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelMedium.copy(textDirection = TextDirection.Content),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(start = 6.dp),
@@ -228,7 +238,14 @@ private fun CandidateCard(
                 }
                 candidate.sources.firstNotNullOfOrNull { it.detail?.takeIf { d -> d.isNotBlank() } }?.let { detail ->
                     Spacer(Modifier.height(8.dp))
-                    Text(detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    // Often a sung line, in the song's language and direction.
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content),
+                        color = colors.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -250,19 +267,4 @@ private fun CandidateCard(
 @Composable
 private fun Swatch(color: androidx.compose.ui.graphics.Color) {
     Box(Modifier.size(width = 14.dp, height = 4.dp).background(color, RoundedCornerShape(2.dp)))
-}
-
-private const val GOOGLE_APP = "com.google.android.googlequicksearchbox"
-private const val MUSIC_SEARCH = "com.google.android.googlequicksearchbox.MUSIC_SEARCH"
-
-/** Google's own "hum to search", as a second opinion. */
-private fun googleHumSearchAvailable(context: Context): Boolean =
-    context.packageManager.resolveActivity(Intent(MUSIC_SEARCH).setPackage(GOOGLE_APP), PackageManager.MATCH_DEFAULT_ONLY) != null
-
-private fun askGoogle(context: Context) {
-    try {
-        context.startActivity(Intent(MUSIC_SEARCH).setPackage(GOOGLE_APP).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    } catch (_: ActivityNotFoundException) {
-        // The Google app went away meanwhile.
-    }
 }

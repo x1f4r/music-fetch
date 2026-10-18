@@ -36,16 +36,16 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -54,6 +54,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.musicfetch.BuildConfig
@@ -62,14 +64,17 @@ import app.musicfetch.capture.PhoneAudioTileService
 import app.musicfetch.capture.SongTileService
 import app.musicfetch.engine.MelodyDownload
 import app.musicfetch.platform.CredentialField
+import app.musicfetch.platform.SpeechPack
 import app.musicfetch.ui.common.Formatters
 import app.musicfetch.ui.common.ListRow
+import app.musicfetch.ui.common.tag
 import app.musicfetch.ui.navigation.LicensesRoute
 import app.musicfetch.ui.navigation.LocalNavigator
 import app.musicfetch.ui.navigation.ProviderRoute
 import app.musicfetch.ui.session.BackBar
 import app.musicfetch.ui.theme.StandardMotion
 import app.musicfetch.widget.ListenWidgetReceiver
+import java.util.Locale
 
 /** Settings (docs/design/DESIGN.md §6.9, Android). */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,6 +88,9 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     val download by viewModel.melodyDownload.collectAsStateWithLifecycle()
     val checkFailed by viewModel.melodyCheckFailed.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
+    val speechPack by viewModel.speechPack.collectAsStateWithLifecycle()
+    // A speech pack may have finished downloading meanwhile.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshSpeechPack() }
     val engineVersion by viewModel.engineVersion.collectAsStateWithLifecycle()
     val preference by viewModel.preference.collectAsStateWithLifecycle()
     var clearDialog by rememberSaveable { mutableStateOf(false) }
@@ -151,6 +159,10 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                         version = melody?.version,
                         updateVersion = melody?.availableVersion,
                         downloadBytes = melody?.downloadBytes?.toLong(),
+                        // The index is current; only its learned encoder is still to come.
+                        encoderOnly = melody?.let {
+                            it.installed && !it.encoderInstalled && it.availableVersion != null && it.availableVersion == it.version
+                        } == true,
                         download = download,
                         checkFailed = checkFailed,
                         onDownload = viewModel::downloadMelody,
@@ -160,12 +172,40 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                     )
                 }
                 item { Header(R.string.settings_while_humming) }
+                // Only where the phone can read sung words on the device (Android 13+) in its
+                // language; a missing speech pack can be fetched by the system.
+                if (viewModel.sungLyricsAvailable && speechPack?.state != SpeechPack.State.Unsupported) {
+                    item {
+                        val on = settings?.sungLyrics ?: true
+                        val pack = speechPack
+                        val language = pack?.let { Locale.forLanguageTag(it.language).displayLanguage }.orEmpty()
+                        Column {
+                            ListRow(
+                                headline = stringResource(R.string.settings_sung_lyrics),
+                                supporting = when (pack?.state) {
+                                    SpeechPack.State.Available -> stringResource(R.string.settings_speech_pack_needed, language)
+                                    SpeechPack.State.Downloading -> stringResource(R.string.settings_speech_pack_downloading, language)
+                                    else -> null
+                                },
+                                trailing = { Switch(checked = on, onCheckedChange = null) },
+                                modifier = Modifier.semantics { role = Role.Switch }.tag("settings.sungLyrics"),
+                                onClick = { viewModel.setSungLyrics(!on) },
+                            )
+                            if (on && pack?.state == SpeechPack.State.Available) {
+                                OutlinedButton(
+                                    onClick = viewModel::downloadSpeechPack,
+                                    modifier = Modifier.padding(start = 16.dp, bottom = 8.dp).tag("settings.speechPack"),
+                                ) { Text(stringResource(R.string.settings_speech_pack_download)) }
+                            }
+                        }
+                    }
+                }
                 item {
                     val on = settings?.autoStop ?: true
                     ListRow(
                         headline = stringResource(R.string.settings_auto_stop),
                         trailing = { Switch(checked = on, onCheckedChange = null) },
-                        modifier = Modifier.semantics { role = Role.Switch },
+                        modifier = Modifier.semantics { role = Role.Switch }.tag("settings.autoStop"),
                         onClick = { viewModel.setAutoStop(!on) },
                     )
                 }
@@ -314,6 +354,7 @@ private fun MelodySection(
     version: String?,
     updateVersion: String?,
     downloadBytes: Long?,
+    encoderOnly: Boolean,
     download: MelodyDownload,
     checkFailed: Boolean,
     onDownload: () -> Unit,
@@ -334,6 +375,8 @@ private fun MelodySection(
                 }
             }
             download is MelodyDownload.Failed -> stringResource(R.string.melody_error)
+            installed && encoderOnly && downloadBytes != null ->
+                stringResource(R.string.melody_status_encoder_available, Formatters.bytes(context, downloadBytes))
             installed && updateVersion != null && downloadBytes != null ->
                 stringResource(R.string.melody_status_update_available, Formatters.bytes(context, downloadBytes))
             installed -> stringResource(R.string.melody_status_installed, "%,d".format(songs), Formatters.bytes(context, sizeBytes))
@@ -361,7 +404,9 @@ private fun MelodySection(
                 download is MelodyDownload.Running -> OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.session_cancel)) }
                 download is MelodyDownload.Failed -> FilledTonalButton(onClick = onDownload) { Text(stringResource(R.string.melody_try_again)) }
                 installed && updateVersion != null -> {
-                    FilledTonalButton(onClick = onDownload) { Text(stringResource(R.string.melody_update)) }
+                    FilledTonalButton(onClick = onDownload, modifier = Modifier.tag("melody.update")) {
+                        Text(stringResource(if (encoderOnly) R.string.melody_download else R.string.melody_update))
+                    }
                     OutlinedButton(onClick = onRemove) { Text(stringResource(R.string.melody_remove)) }
                 }
                 installed -> {

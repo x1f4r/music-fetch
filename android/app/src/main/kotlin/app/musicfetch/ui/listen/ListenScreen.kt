@@ -19,6 +19,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -75,6 +76,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -110,12 +112,14 @@ import app.musicfetch.capture.ListenResult
 import app.musicfetch.capture.ListenState
 import app.musicfetch.capture.ProjectionGrant
 import app.musicfetch.capture.SongTileService
+import app.musicfetch.core.Candidate
 import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ListenMode
 import app.musicfetch.core.Notice
 import app.musicfetch.core.Phase
 import app.musicfetch.engine.MelodyDownload
 import app.musicfetch.notify.Notifications
+import app.musicfetch.platform.GoogleSongSearch
 import app.musicfetch.platform.ListenSource
 import app.musicfetch.platform.LocalLowPower
 import app.musicfetch.ui.AppIntents
@@ -374,7 +378,7 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
                     viewModel.selectSource(it)
                 },
                 onSuggestion = { suggestion ->
-                    val last = sourceOf(state.source, state.mode)
+                    val last = sourceOf(state.source, state.mode, state.impression)
                     when (suggestion) {
                         Suggestion.TryAgain -> startListening(last)
                         Suggestion.HumAgain, Suggestion.HumIt -> startListening(ListenSource.Hum)
@@ -383,6 +387,8 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
                             viewModel.dismissResult()
                             navigator.push(LyricsRoute)
                         }
+                        // The no-match stays on the stage for when the user comes back.
+                        Suggestion.TryGoogle -> GoogleSongSearch.open(context)
                     }
                 },
                 onUseMicrophone = { startListening(ListenSource.Microphone) },
@@ -491,6 +497,8 @@ private fun Stage(
     }
     val stateLine = stateLine(state, activeSource, link, linkState, linkActive, micOff, phonePrePrompt)
     val stateActive = state.isActive || linkActive
+    // The answer so far while humming; the final list opens the candidates screen instead.
+    val preview = if (state.isActive && !linkActive) humPreview(state.preview) else null
 
     val side = slots.side
     Box(modifier) {
@@ -598,7 +606,11 @@ private fun Stage(
                         Text(stringResource(R.string.action_stop))
                     }
                 }
-                done is ListenResult.NoMatch -> SuggestionRow(suggestions(done.reason, sourceOf(state.source, state.mode)), onSuggestion)
+                preview != null -> HumPreviewRow(preview, onStop = { if (state.isCapturing) viewModel.stop() })
+                done is ListenResult.NoMatch -> {
+                    val google = rememberGoogleSongSearch()
+                    SuggestionRow(suggestions(done.reason, sourceOf(state.source, state.mode, state.impression), google), onSuggestion)
+                }
                 else -> SourceToggles(
                     selected = when {
                         state.isActive && state.source == CaptureSource.SYSTEM_AUDIO -> ListenSource.Phone
@@ -662,8 +674,12 @@ private fun stateLine(
             is Notice.CaptureSilent -> stringResource(R.string.state_capture_silent)
             is Notice.MoveCloser -> stringResource(R.string.state_move_closer)
             is Notice.RateLimited -> rateLimitedLine(notice.retryInMs.toLong())
-            is Notice.ImpressionDetected, is Notice.KeepGoing -> stringResource(R.string.state_keep_going)
-            else -> if (state.mode == ListenMode.HUM) {
+            is Notice.ImpressionDetected, is Notice.KeepGoing ->
+                if (notSureYet(state)) stringResource(R.string.state_not_sure_yet) else stringResource(R.string.state_keep_going)
+            else -> if (notSureYet(state)) {
+                // The progressive search ran but only has long shots: honest, and a reason to go on.
+                stringResource(R.string.state_not_sure_yet)
+            } else if (state.mode == ListenMode.HUM) {
                 stringResource(R.string.state_hum_start)
             } else if (state.impression) {
                 stringResource(R.string.state_keep_going)
@@ -681,6 +697,8 @@ private fun stateLine(
         }
     }
 }
+
+private fun notSureYet(state: ListenState): Boolean = onlyLongShots(state.preview)
 
 @Composable
 private fun rateLimitedLine(retryMs: Long): String {
@@ -703,6 +721,32 @@ private fun ActionRow(content: @Composable () -> Unit) {
     ) { content() }
 }
 
+/**
+ * The progressive search's answer so far, in place of the (disabled) source toggles. Fades in and
+ * cross-fades when the answer changes; still on the low-power path.
+ */
+@Composable
+private fun HumPreviewRow(candidate: Candidate, onStop: () -> Unit) {
+    val lowPower = LocalLowPower.current
+    val modifier = Modifier.padding(horizontal = 16.dp)
+    if (lowPower) {
+        HumPreviewChip(candidate, onStop, modifier)
+        return
+    }
+    val shown = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { shown.animateTo(1f, tween(150)) }
+    AnimatedContent(
+        targetState = candidate,
+        contentKey = { it.track.identityKey.ifEmpty { it.track.title + it.track.artist } to it.tier },
+        transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
+        contentAlignment = Alignment.Center,
+        label = "humPreview",
+        modifier = Modifier.graphicsLayer { alpha = shown.value },
+    ) { shownCandidate ->
+        HumPreviewChip(shownCandidate, onStop, modifier)
+    }
+}
+
 /** No-match suggestions: the first is tonal, the rest are text buttons; those that don't fit are left out. */
 @Composable
 private fun SuggestionRow(suggestions: List<Suggestion>, onSuggestion: (Suggestion) -> Unit) {
@@ -715,6 +759,7 @@ private fun SuggestionRow(suggestions: List<Suggestion>, onSuggestion: (Suggesti
                     Suggestion.HumIt -> R.string.action_hum_it
                     Suggestion.TypeLyric -> R.string.action_type_lyric
                     Suggestion.UseMicrophone -> R.string.action_use_microphone
+                    Suggestion.TryGoogle -> R.string.action_try_google
                 },
             )
             val tag = "listen.action." + suggestion.name.replaceFirstChar { it.lowercase() }

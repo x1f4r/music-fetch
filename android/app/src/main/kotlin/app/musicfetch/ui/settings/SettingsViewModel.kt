@@ -53,6 +53,20 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { graph.settings.setNotifyInBackground(on) }
     }
 
+    /** Whether this phone can read sung words on the device (Android 13+ with an on-device recognizer). */
+    val sungLyricsAvailable: Boolean = graph.sungLyrics.isAvailable()
+
+    /** The speech pack for the phone's language; null until known. */
+    val speechPack = graph.sungLyrics.speechPack
+
+    fun setSungLyrics(on: Boolean) {
+        viewModelScope.launch { graph.settings.setSungLyrics(on) }
+    }
+
+    fun refreshSpeechPack() = graph.sungLyrics.refresh()
+
+    fun downloadSpeechPack() = graph.sungLyrics.downloadSpeechPack()
+
     fun setAutoStop(on: Boolean) {
         viewModelScope.launch { graph.settings.setAutoStop(on) }
     }
