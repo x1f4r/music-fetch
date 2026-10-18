@@ -229,7 +229,7 @@ private fun CandidateCard(
                         Swatch(colors.outlineVariant)
                         Text(
                             track.title,
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelMedium.copy(textDirection = TextDirection.Content),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(start = 6.dp),
@@ -238,7 +238,14 @@ private fun CandidateCard(
                 }
                 candidate.sources.firstNotNullOfOrNull { it.detail?.takeIf { d -> d.isNotBlank() } }?.let { detail ->
                     Spacer(Modifier.height(8.dp))
-                    Text(detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    // Often a sung line, in the song's language and direction.
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content),
+                        color = colors.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
