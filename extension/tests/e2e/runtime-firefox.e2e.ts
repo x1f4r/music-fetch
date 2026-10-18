@@ -123,6 +123,18 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     expect(Math.abs(result.segments[1]!.end_ms - 40_000)).toBeLessThanOrEqual(2000);
   });
 
+  it('finds SoundCloud’s detached player through the page script and identifies it', async () => {
+    const url = `${server.origin}/pages/soundcloud.html`;
+    await openTab(url);
+    await sleep(1500);
+    // Nothing plays yet and the player is a detached `new Audio()`: the adapter presses
+    // the page's play control, the page script catches the element and hands it over.
+    const id = await rpc<string>(tab, 'mf-engine', 'startListening', ['Tab', 'Auto', { auto_stop: true }]).catch((e: Error) => `failed: ${e.message}`);
+    expect(id).not.toMatch(/^failed/);
+    const result = await waitForSession(tab, id, (s) => s !== 'Running', 45_000);
+    expect(result, await eventsOf(tab, id)).toMatchObject({ status: 'Matched', title: 'Test Signal B' });
+  });
+
   it('keeps the event page alive through a job with no traffic', async () => {
     const before = await rpc<{ instance: string }>(tab, 'mf-host', 'state');
     const session = await rpc<string>(tab, 'mf-engine', 'analyze', [`${server.origin}/blank?mf-e2e-hold=75000`, 'Auto', null]);

@@ -282,6 +282,19 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     await page.close();
   });
 
+  it('checks a SoundCloud-like page with survey windows through its detached player', async () => {
+    const url = `${server.origin}/pages/soundcloud.html`;
+    const page = await browser.newPage();
+    await page.goto(url);
+    const popup = await openPopup(page);
+    await popup.close();
+    const tabId = await tabIdOf(url);
+    const session = await rpc<string>(app, 'mf-engine', 'analyze', [url, 'Auto', { tab_id: tabId, url, title: 'Test Signal B', facts: null }]);
+    const result = await waitForSession(app, session, (s) => s !== 'Running', 90_000);
+    expect(result.segments.map((s) => s.title), `${JSON.stringify(result.segments)} ${await eventsOf(app, session)}`).toEqual(['Test Signal B']);
+    await page.close();
+  });
+
   it('refuses browser pages with the capture reason', async () => {
     const page = await browser.newPage();
     await page.goto('chrome://version');
