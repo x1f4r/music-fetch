@@ -2,6 +2,7 @@ import { browser } from 'wxt/browser';
 import type { HostActivity } from '../messaging/protocol';
 import { startNotifier, type Notifier, type NotifierApi } from '../notify/notifier';
 import { appUrl, openApp } from '../platform/surfaces';
+import { recordNotification } from '../triggers/e2e-record';
 import type { EngineClient, EngineListener } from './client';
 
 /** What the background asks the host for when it builds a notification. */
@@ -37,6 +38,7 @@ export class BackgroundNotifications {
       openSession: (id) => void browser.tabs.create({ url: appUrl(`/session/${id}`) }),
       openUrl: (url) => void browser.tabs.create({ url }),
       tryAgain: () => void openApp('/listen'),
+      openListen: () => void openApp('/listen'),
     });
   }
 
@@ -63,6 +65,7 @@ export function browserNotifierApi(): NotifierApi {
       void browser.action?.setBadgeText({ text }).catch(() => undefined);
     },
     notify(id, content) {
+      if (import.meta.env.MODE === 'e2e') recordNotification(id, content);
       void browser.notifications
         ?.create(id, {
           type: 'basic',

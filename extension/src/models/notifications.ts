@@ -1,4 +1,4 @@
-import type { LibraryEntry, Outcome } from '../engine/types';
+import type { LibraryEntry, Outcome, Track } from '../engine/types';
 import type { Message } from '../i18n';
 
 /**
@@ -14,13 +14,26 @@ export interface NotificationContent {
   action: 'openInProvider' | 'openSession' | 'tryAgain';
 }
 
+/**
+ * The one song a notification is about: a match, or a link that resolved to a single
+ * song. Null for candidates, collections and mixes.
+ */
+export function notifiedTrack(entry: LibraryEntry, outcome: Outcome): Track | null {
+  if (typeof outcome !== 'object') return null;
+  if ('Matched' in outcome) return outcome.Matched.track;
+  if ('Completed' in outcome && outcome.Completed.total === 1 && outcome.Completed.identified === 1 && entry.track) return entry.track;
+  return null;
+}
+
 /** `providerName` is the default provider's display name ("Spotify"). */
 export function resultNotification(entry: LibraryEntry, outcome: Outcome, providerName: string): NotificationContent | null {
   if (outcome === 'Waiting') {
     return { title: { key: 'notify.offline' }, message: entry.title, buttons: [], action: 'openSession' };
   }
-  if ('Matched' in outcome) {
-    const { title, artist, album } = outcome.Matched.track;
+  const single = notifiedTrack(entry, outcome);
+  if (single) {
+    // A song, or a link to one song (the core ends those as "1 of 1 identified").
+    const { title, artist, album } = single;
     return {
       title: { key: 'notify.matched', args: [title, artist] },
       message: album ?? '',

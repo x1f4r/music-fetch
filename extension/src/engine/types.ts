@@ -13,7 +13,7 @@
  * This file adds what only the browser has and the helpers the UI uses.
  */
 
-import type { CaptureSource as CoreCaptureSource } from './types.gen';
+import type { CaptureSource as CoreCaptureSource, MelodyIndexStatus as CoreMelodyIndexStatus } from './types.gen';
 
 export type {
   AnalyzeMode,
@@ -32,7 +32,6 @@ export type {
   LyricLine,
   Lyrics,
   MelodyAlignment,
-  MelodyIndexStatus,
   NoMatchReason,
   Notice,
   Outcome,
@@ -61,6 +60,9 @@ import type { LibraryQuery, Track } from './types.gen';
  * the engine hears it as `SystemAudio` (a recording of what plays).
  */
 export type CaptureSource = CoreCaptureSource | 'Tab';
+
+/** The core's status; `encoder_bytes` (the encoder file's own size) is the UI's until the core reports it. */
+export type MelodyIndexStatus = CoreMelodyIndexStatus & { encoder_bytes?: number | null };
 
 /** What the page told us (extension plan §2.8 `PageContext`); filled by the page adapters. */
 export interface PageContext {

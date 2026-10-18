@@ -2,6 +2,8 @@ import type { CaptureStatus } from '../../engine/client';
 import { humScript, matchScript, noMatchScript } from '../../engine/mock/scripts';
 import type { SessionDetail, SessionEvent, SessionKind } from '../../engine/types';
 import type { PageFacts } from '../../page/facts';
+import type { ProviderId, StoredKeys } from '../../platform/secrets';
+import type { CheckResult } from '../settings/services-check';
 import { MIX_LENGTH, MIX_TITLE, MIX_URL, TRACKS, humCandidates, mixSession, playlistSession } from './library';
 
 /**
@@ -62,7 +64,15 @@ export interface DemoState {
   settings?: Record<string, unknown>;
   tab?: DemoTab | null;
   sessions?: 'all' | 'none' | (() => SessionDetail[]);
-  melody?: 'none' | 'installed' | 'update';
+  melody?: 'none' | 'installed' | 'update' | 'encoder';
+  /** The melody library download fails (Settings › Melody, failed). */
+  melodyFails?: boolean;
+  /** Paid providers' keys (Settings › Services); kept in memory like the settings. */
+  secrets?: StoredKeys;
+  /** What "Check" answers per provider (no request leaves a demo). Default: works. */
+  checks?: Partial<Record<ProviderId, CheckResult>>;
+  /** The browser's storage estimate for Settings › Storage. */
+  storage?: { usage: number; quota: number };
   live?: DemoLive;
   running?: Record<string, DemoRunning>;
   /** The mock directive for the next live session (e.g. `busy`). */
@@ -91,6 +101,12 @@ export const DECIDED = {
   'local:micGrant': 'granted',
   'local:lastSource': 'Tab',
 } as const;
+
+/** Demo keys for Settings › Services: obviously not real, never sent anywhere. */
+const DEMO_KEYS: StoredKeys = {
+  acrHumming: { host: 'identify-eu-west-1.acrcloud.com', accessKey: 'demo-access-key-4f2a', accessSecret: 'demo-access-secret' },
+  audd: { token: 'demo-api-token' },
+};
 
 const YOUTUBE_SONG: DemoTab = {
   url: 'https://www.youtube.com/watch?v=demo-song',
@@ -386,6 +402,86 @@ export const DEMO_STATES: DemoState[] = [
   { ...APP, id: 'app-settings-privacy', title: 'Settings · privacy', route: '/settings/privacy', settings: DECIDED },
   { ...APP, id: 'app-settings-shortcuts', title: 'Settings · shortcuts', route: '/settings/shortcuts', settings: DECIDED },
   { ...APP, id: 'app-settings-about', title: 'Settings · about', route: '/settings/about', settings: DECIDED },
+  { ...APP, id: 'app-settings-about-license', title: 'Settings · about, a license open', route: '/settings/about', settings: DECIDED, actions: [{ waitFor: '.licenses .license .btn' }, { click: '.licenses .license .btn' }] },
+  { ...APP, id: 'app-settings-melody-encoder', title: 'Settings · melody, installed with the hum encoder', route: '/settings/melody', settings: DECIDED, melody: 'encoder' },
+  {
+    ...APP,
+    id: 'app-settings-melody-failed',
+    title: 'Settings · melody, the download failed',
+    route: '/settings/melody',
+    settings: DECIDED,
+    melody: 'none',
+    melodyFails: true,
+    actions: [{ click: '.melody-row .btn.filled' }, { waitFor: '.melody-row .problem' }],
+    prototype: 'app-settings-melody',
+  },
+  {
+    ...APP,
+    id: 'app-settings-melody-current',
+    title: 'Settings · melody, checked: up to date',
+    route: '/settings/melody',
+    settings: DECIDED,
+    actions: [{ waitFor: '.melody-row .btn:not(.text)' }, { click: '.melody-row .btn:not(.text)' }, { wait: 120 }],
+  },
+  { ...APP, id: 'app-settings-storage-low', title: 'Settings · storage, little room left', route: '/settings/storage', settings: DECIDED, storage: { usage: 1_930_000_000, quota: 2_000_000_000 } },
+  { ...APP, id: 'app-settings-listening-low-power', title: 'Settings · listening, low power on', route: '/settings/listening', settings: { ...DECIDED, 'sync:lowPower': 'on' } },
+  { ...APP, id: 'app-settings-services', title: 'Settings · services, nothing set up', route: '/settings/services', settings: DECIDED },
+  {
+    ...APP,
+    id: 'app-settings-services-typing',
+    title: 'Settings · services, entering ACRCloud humming keys',
+    route: '/settings/services',
+    settings: DECIDED,
+    actions: [
+      { click: '#svc-acrHumming-title ~ .group .add-keys' },
+      { type: 'identify-eu-west-1.acrcloud.com', into: '#svc-acrHumming-host' },
+      { type: 'demo-access-key-4f2a', into: '#svc-acrHumming-key' },
+      { type: 'demo-access-secret', into: '#svc-acrHumming-secret' },
+    ],
+  },
+  {
+    ...APP,
+    id: 'app-settings-services-set',
+    title: 'Settings · services: humming works, the AudD token was rejected',
+    route: '/settings/services',
+    settings: { ...DECIDED, 'local:providerChecks': { acrHumming: { state: 'ok', at: 0 }, audd: { state: 'rejected', code: 900, at: 0 } } },
+    secrets: DEMO_KEYS,
+  },
+  {
+    ...APP,
+    id: 'app-settings-services-saved',
+    title: 'Settings · services, saved and checked',
+    route: '/settings/services',
+    settings: DECIDED,
+    actions: [
+      { click: '#svc-acrHumming-title ~ .group .add-keys' },
+      { type: 'identify-eu-west-1.acrcloud.com', into: '#svc-acrHumming-host' },
+      { type: 'demo-access-key-4f2a', into: '#svc-acrHumming-key' },
+      { type: 'demo-access-secret', into: '#svc-acrHumming-secret' },
+      { click: '.svc form .btn.filled' },
+      { waitFor: '.svc-status.ok' },
+    ],
+  },
+  {
+    ...APP,
+    id: 'app-settings-services-permission',
+    title: 'Settings · services, the browser refused the host',
+    route: '/settings/services',
+    settings: { ...DECIDED, 'local:providerChecks': { acrHumming: { state: 'permission', at: 0 } } },
+    secrets: { acrHumming: DEMO_KEYS.acrHumming },
+  },
+  { ...APP, id: 'app-settings-privacy-services', title: 'Settings · privacy, with paid services', route: '/settings/privacy', settings: DECIDED, secrets: DEMO_KEYS },
+  {
+    ...APP,
+    id: 'app-narrow-settings-services',
+    title: 'App tab, narrow · settings: entering keys',
+    width: 390,
+    height: 780,
+    route: '/settings/services',
+    settings: DECIDED,
+    actions: [{ click: '#svc-acrHumming-title ~ .group .add-keys' }, { type: 'identify-eu-west-1.acrcloud.com', into: '#svc-acrHumming-host' }],
+  },
+  { ...APP, id: 'app-settings-privacy-firefox', title: 'Firefox settings · privacy and data consent', route: '/settings/privacy', settings: DECIDED, browser: 'firefox' },
   { ...APP, id: 'app-welcome', title: 'Welcome · where do you listen?', route: '/welcome', settings: {}, sessions: 'none', prototype: 'app-welcome' },
   { ...APP, id: 'app-welcome-custom', title: 'Welcome · more services and a custom link', route: '/welcome', settings: {}, sessions: 'none', actions: [{ click: '.opt.more' }, { click: '.opt.custom' }] },
   { ...APP, id: 'app-welcome-shortcut', title: 'Welcome · the shortcut', route: '/welcome', settings: { ...DECIDED, 'local:welcomeStep': 2 }, sessions: 'none' },
@@ -411,6 +507,14 @@ export const DEMO_STATES: DemoState[] = [
   { ...MOBILE_APP, id: 'mobile-welcome', title: 'Firefox for Android · welcome: where do you listen?', route: '/welcome', settings: {}, sessions: 'none' },
   { ...MOBILE_APP, id: 'mobile-welcome-find', title: 'Firefox for Android · welcome: where to find it', route: '/welcome', settings: { ...DECIDED, 'local:welcomeStep': 2 }, sessions: 'none' },
   { ...MOBILE_APP, id: 'mobile-settings-listening', title: 'Firefox for Android · settings: listening', route: '/settings/listening', settings: DECIDED },
+  {
+    ...MOBILE_APP,
+    id: 'mobile-settings-services',
+    title: 'Firefox for Android · settings: services',
+    route: '/settings/services',
+    settings: { ...DECIDED, 'local:providerChecks': { acrHumming: { state: 'ok', at: 0 } } },
+    secrets: { acrHumming: DEMO_KEYS.acrHumming },
+  },
 ];
 
 export function demoState(id: string): DemoState | undefined {

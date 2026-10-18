@@ -78,6 +78,17 @@ export type ManifestFields = Record<string, unknown>;
  */
 export const E2E_HOST_PERMISSIONS = ['http://127.0.0.1/*', 'http://localhost/*'];
 
+/**
+ * Keyboard shortcuts (extension plan §3.4): the popup, identify this tab without opening
+ * anything (a notification answers), and hum in the side panel or sidebar. The browser
+ * lets people change them; Settings › Shortcuts shows what they are now.
+ */
+export const COMMANDS = {
+  _execute_action: { suggested_key: { default: 'Alt+Shift+M' } },
+  'identify-tab': { suggested_key: { default: 'Alt+Shift+I' }, description: 'Identify music in this tab' },
+  hum: { suggested_key: { default: 'Alt+Shift+H' }, description: 'Hum to find a song' },
+};
+
 /** WXT fills `version` from package.json, the entrypoints and the icons. */
 export function buildManifest({ browser, mode }: ManifestInput): ManifestFields {
   const firefox = browser === 'firefox';
@@ -89,9 +100,7 @@ export function buildManifest({ browser, mode }: ManifestInput): ManifestFields 
     optional_host_permissions: OPTIONAL_HOST_PERMISSIONS,
     content_security_policy: { extension_pages: EXTENSION_PAGES_CSP },
     action: { default_title: 'Music Fetch' },
-    commands: {
-      _execute_action: { suggested_key: { default: 'Alt+Shift+M' } },
-    },
+    commands: COMMANDS,
   };
   if (firefox) {
     return {

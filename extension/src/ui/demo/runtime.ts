@@ -58,6 +58,14 @@ export class DemoEngine extends MockEngine {
   }
 
   override async installMelodyIndex(): Promise<string> {
+    if (this.state.melodyFails) {
+      const id = 'demo-melody-download';
+      setTimeout(
+        () => this.replay(id, [{ Started: { session_id: id, kind: 'Hum' } }, { Phase: { phase: 'Downloading', fraction: 0.08 } }, { Failed: { code: 'Network', message: "Couldn't reach the server." } }]),
+        0,
+      );
+      return id;
+    }
     const hold = this.state.holdDownload;
     if (hold === undefined) return super.installMelodyIndex();
     // A still picture of the download: it stops part-way until cancelled.
@@ -170,6 +178,12 @@ export function demoPlatform(state: DemoState, base: Platform | null): Platform 
     },
     close() {
       toast('close');
+    },
+    async storageEstimate() {
+      return state.storage ?? { usage: 57_400_000, quota: 12_000_000_000 };
+    },
+    async checkProvider(id) {
+      return state.checks?.[id] ?? { state: 'ok' };
     },
   };
 }

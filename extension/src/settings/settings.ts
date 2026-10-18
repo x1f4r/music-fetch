@@ -47,6 +47,17 @@ export type MicGrant = 'unknown' | 'granted' | 'denied' | 'session';
  */
 export type AnalyzeChoice = 'whole' | 'quick' | 'check' | 'listen';
 
+/**
+ * The last check of a paid provider's keys (Settings › Services): the outcome and when.
+ * No key material; the keys themselves are in `platform/secrets.ts`.
+ */
+export interface ProviderCheck {
+  state: 'ok' | 'rejected' | 'quota' | 'network' | 'host' | 'permission' | 'failed';
+  /** The provider's error code, for "failed". */
+  code?: number;
+  at: number;
+}
+
 /** One stored preference. The same shape as WXT's storage items, so either backs it. */
 export interface Setting<T> {
   readonly key: string;
@@ -124,6 +135,8 @@ export const settings = {
   lastSource: defineSetting<ListenChoice | null>('local:lastSource', null),
   /** The welcome flow's next step (0 = provider, 1 = microphone, 2 = shortcut tip, 3 = done). */
   welcomeStep: defineSetting<number>('local:welcomeStep', 0),
+  /** Settings › Services: the last check per provider (`acrHumming`, `acr`, `audd`). Local: keys never sync. */
+  providerChecks: defineSetting<Partial<Record<'acrHumming' | 'acr' | 'audd', ProviderCheck>>>('local:providerChecks', {}),
 };
 
 /** The provider Skip stores. */

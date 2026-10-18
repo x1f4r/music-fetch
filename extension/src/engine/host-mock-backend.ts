@@ -1,3 +1,4 @@
+import type { Credentials } from '../platform/secrets';
 import { levelOf, type PcmChunk } from '../audio/types';
 import { addCoverage, coverageGaps, coveredMs, type CaptureEvent, type CaptureHost, type Coverage } from '../capture/types';
 import { EngineError, type ActiveSession, type EngineInfo, type EngineListener } from './client';
@@ -502,6 +503,13 @@ export class MockBackend implements EngineBackend {
 
   async shutdown(): Promise<void> {
     await this.persistence.flush?.();
+  }
+
+  /** Which paid providers have keys. The mock never calls them; tests check that the keys arrive. */
+  providers = { audd: false, acr: false, acrHumming: false };
+
+  async setCredentials(credentials: Credentials): Promise<void> {
+    this.providers = { audd: Boolean(credentials.audd_token), acr: Boolean(credentials.acr_fingerprint), acrHumming: Boolean(credentials.acr_humming) };
   }
 
   async netProbe(url: string, init: { method?: string; body?: string }): Promise<NetProbeResult> {
