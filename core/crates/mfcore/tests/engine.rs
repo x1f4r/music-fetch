@@ -617,6 +617,30 @@ fn progressive_search_answers_while_humming_and_stops_when_confident() {
 }
 
 #[test]
+fn humming_uses_the_installed_encoder() {
+    let server = shazam_server(NO_MATCH_JSON);
+    let plain = engine_with_hum_index(&server);
+    let melody = melody_dir(&plain);
+    let index = std::fs::read(melody.join("melody-index.mfi")).unwrap();
+    std::fs::write(melody.join("melody-encoder.mfe"), encoder_for(&index)).unwrap();
+    let home = plain.dir.0.clone();
+    let Fixture { engine, dir } = plain;
+    drop(engine);
+    let fx = engine_in(home, &server, "/manifest.json", Duration::from_secs(5));
+    std::mem::forget(dir);
+    assert!(fx.engine.melody_index_status().encoder_installed);
+    let recorder = Arc::new(Recorder::default());
+    let options = ListenOptions { auto_stop: true, live_candidates: true, ..ListenOptions::default() };
+    let session =
+        fx.engine.start_listening_with(CaptureSource::Microphone, ListenMode::Hum, options, recorder.clone()).unwrap();
+    feed(&session, &hum(25.0), 16_000, 1);
+    let events = recorder.wait_terminal();
+    assert!(matches!(check_contract(&events), SessionEvent::Finished { outcome: Outcome::Candidates { .. } }));
+    let finals = candidate_lists(&events, true);
+    assert_eq!(finals[0][0].track.title, "Hummed Tune", "{finals:?}");
+}
+
+#[test]
 fn a_tiny_hum_asks_to_keep_going_instead_of_answering() {
     let server = shazam_server(NO_MATCH_JSON);
     let fx = engine_with_hum_index(&server);

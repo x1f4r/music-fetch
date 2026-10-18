@@ -13,6 +13,7 @@ path = "src/main.rs"
 mfcore = { path = "../mfcore" }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "process", "io-util", "fs", "net"] }
 serde_json.workspace = true
+sha2 = "0.11"
 serde.workspace = true
 parking_lot = "0.12"
 anyhow.workspace = true

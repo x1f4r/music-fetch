@@ -24,13 +24,14 @@ use crate::audio::wav::{encode_wav, write_wav};
 use crate::error::{MfError, Result};
 use crate::identity::{self, normalize_artists, normalize_title};
 use crate::lyrics::{self, LyricMatch};
+use crate::melody::encoder::{EncoderBudget, EncoderHit, EncoderIndex};
 use crate::melody::pitch::FrameDetail;
 use crate::melody::{MelodyIndex, MelodyMatch, MelodyQuery, SongMeta, matcher, notes};
 use crate::model::{
     Candidate, CandidateSource, CandidateSourceKind, CandidateTier, MelodyAlignment, NoMatchReason, Notice, Outcome,
     Phase, SpeechTranscript, Track,
 };
-use crate::pipeline::ctx::SessionCtx;
+use crate::pipeline::ctx::{EngineCtx, SessionCtx};
 use crate::platform::SpeechToText;
 use crate::providers::ProviderMatch;
 use crate::providers::acrcloud::AcrCloud;
@@ -90,12 +91,55 @@ pub struct MelodySearch {
     pub matches: Vec<MelodyMatch>,
 }
 
-/// Build a query from pitch frames and search the index (CPU-bound: run it off
-/// the async workers). `None` when the frames hold too little melody.
-pub fn search_frames(index: &MelodyIndex, frames: &[FrameDetail]) -> Option<MelodySearch> {
-    let query = notes::query_from_details(frames)?;
-    let matches = matcher::search(index, &query, MELODY_TOP_K);
-    Some(MelodySearch { query, matches })
+/// What a melody search runs on: the installed index and, when its learned
+/// encoder is installed too, the encoder with this device's budget.
+#[derive(Clone)]
+pub struct MelodySearcher {
+    pub index: Arc<MelodyIndex>,
+    pub encoder: Option<(Arc<EncoderIndex>, EncoderBudget)>,
+}
+
+impl MelodySearcher {
+    /// The engine's installed index and encoder (`None` without an index). The
+    /// budget follows the device and low-power mode at the time of the call.
+    pub fn installed(engine: &EngineCtx) -> Option<Self> {
+        let index = engine.melody_index()?;
+        let encoder = engine.melody_encoder(&index).map(|e| (e, EncoderBudget::for_device(engine.is_low_power())));
+        Some(Self { index, encoder })
+    }
+
+    /// The index alone.
+    pub fn index_only(index: Arc<MelodyIndex>) -> Self {
+        Self { index, encoder: None }
+    }
+
+    /// Build a query from pitch frames and search (CPU-bound: run it off the
+    /// async workers). `None` when the frames hold too little melody.
+    pub fn search_frames(&self, frames: &[FrameDetail]) -> Option<MelodySearch> {
+        let query = notes::query_from_details(frames)?;
+        let matches = self.search(&query);
+        Some(MelodySearch { query, matches })
+    }
+
+    /// The best matches for a query: the encoder's hits join the matcher's own
+    /// retrieval, and its evidence the score model.
+    pub fn search(&self, query: &MelodyQuery) -> Vec<MelodyMatch> {
+        let index = &self.index;
+        let Some((encoder, budget)) = &self.encoder else {
+            return matcher::search(index, query, MELODY_TOP_K);
+        };
+        match encoder.search(index, query, budget) {
+            Ok(hits) => {
+                let hints: Vec<_> = hits.iter().map(EncoderHit::hint).collect();
+                let options = matcher::MatchOptions::default();
+                matcher::search_with_hints(index, query, MELODY_TOP_K, &options, &hints, &budget.hints)
+            }
+            Err(e) => {
+                tracing::warn!("melody encoder failed ({e}); searching without it");
+                matcher::search(index, query, MELODY_TOP_K)
+            }
+        }
+    }
 }
 
 /// Candidates from melody matches alone (progressive results while humming).
@@ -132,7 +176,9 @@ pub async fn run_impression_detailed(
 
     type SourceFuture<'a> = Pin<Box<dyn Future<Output = Answer> + Send + 'a>>;
     let mut sources: FuturesUnordered<SourceFuture<'_>> = FuturesUnordered::new();
-    sources.push(Box::pin(melody_source(ctx, audio, melody, index.clone())));
+    let searcher =
+        MelodySearcher::installed(&ctx.engine).filter(|s| index.as_ref().is_some_and(|i| Arc::ptr_eq(i, &s.index)));
+    sources.push(Box::pin(melody_source(ctx, audio, melody, searcher)));
     match speech {
         SpeechInput::Pushed { transcripts, wait } => {
             sources.push(Box::pin(crate::util::rt::sendable(pushed_lyrics_source(ctx, transcripts, wait))))
@@ -262,12 +308,12 @@ async fn melody_source(
     ctx: &SessionCtx,
     audio: &[f32],
     melody: MelodyInput,
-    index: Option<Arc<MelodyIndex>>,
+    searcher: Option<MelodySearcher>,
 ) -> Answer {
     let empty = || Answer::Melody { query: None, matches: Vec::new() };
     // Without an index the query is only needed to score lyric candidates, which
     // also need the index: nothing to do.
-    let Some(index) = index else { return empty() };
+    let Some(searcher) = searcher else { return empty() };
     let frames = match melody {
         MelodyInput::Searched(search) => return Answer::Melody { query: Some(search.query), matches: search.matches },
         MelodyInput::Frames(frames) => frames,
@@ -288,7 +334,7 @@ async fn melody_source(
             }
         }
     };
-    match blocking("melody search", move || search_frames(&index, &frames)).await {
+    match blocking("melody search", move || searcher.search_frames(&frames)).await {
         Some(Some(search)) => Answer::Melody { query: Some(search.query), matches: search.matches },
         _ => empty(),
     }
@@ -444,8 +490,7 @@ async fn transcribe(ctx: &SessionCtx, speech: Arc<dyn SpeechToText>, audio: &[f3
 
 async fn acr_source(ctx: &SessionCtx, audio: &[f32]) -> Answer {
     let Some(creds) = ctx.credentials.acr_humming.clone() else { return Answer::Acr(Vec::new()) };
-    let newest = &audio[audio.len().saturating_sub(ACR_CLIP_MS * SAMPLE_RATE as usize / 1000)..];
-    let wav = encode_wav(&f32_to_i16(&downsample_half(newest)), ACR_RATE);
+    let wav = acr_humming_clip(audio);
     let client = AcrCloud::new(ctx.engine.http.clone(), creds);
     match crate::util::rt::timeout(ACR_TIMEOUT, client.recognize_humming(wav, &ctx.cancel)).await {
         Ok(Ok(matches)) => Answer::Acr(matches),
@@ -573,23 +618,62 @@ impl Fusion {
 
     /// Fuse everything collected so far.
     async fn candidates(&mut self, index: Option<&Arc<MelodyIndex>>) -> Vec<Candidate> {
-        let others: Vec<(CandidateSourceKind, Track, f32, Option<String>)> = self
-            .lyrics
+        let others = self.others();
+        if let Some(index) = index {
+            let missing = self.missing_songs(&others);
+            if !missing.is_empty() {
+                let keys: Vec<String> = missing.iter().map(|(k, _, _)| k.clone()).collect();
+                let index = index.clone();
+                match blocking("melody index lookup", move || find_songs(&index, missing)).await {
+                    Some(found) => self.songs.extend(found),
+                    None => self.songs.extend(keys.into_iter().map(|k| (k, None))),
+                }
+            }
+            if let Some(query) = self.query.clone() {
+                let ids = self.support_ids(&others);
+                if !ids.is_empty() {
+                    let (index, wanted) = (index.clone(), ids.clone());
+                    match blocking("melody scoring", move || score_songs(&index, &query, wanted)).await {
+                        Some(scored) => self.support.extend(scored),
+                        None => self.support.extend(ids.into_iter().map(|id| (id, None))),
+                    }
+                }
+            }
+        }
+        self.assemble(others)
+    }
+
+    /// [`candidates`](Self::candidates) on the calling thread.
+    fn candidates_now(&mut self, index: Option<&MelodyIndex>) -> Vec<Candidate> {
+        let others = self.others();
+        if let Some(index) = index {
+            let missing = self.missing_songs(&others);
+            self.songs.extend(find_songs(index, missing));
+            if let Some(query) = self.query.clone() {
+                let ids = self.support_ids(&others);
+                self.support.extend(score_songs(index, &query, ids));
+            }
+        }
+        self.assemble(others)
+    }
+
+    /// Lyric and ACR answers as (kind, track, score, detail).
+    fn others(&self) -> Vec<Other> {
+        self.lyrics
             .iter()
             .map(|m| (CandidateSourceKind::Lyrics, m.track.clone(), m.score, m.matched_line.clone()))
             .chain(self.acr.iter().map(|m| (CandidateSourceKind::AcrHumming, m.track.clone(), m.score, None)))
-            .collect();
-        if let Some(index) = index {
-            self.lookup_songs(index, &others).await;
-            self.score_support(index, &others).await;
-        }
+            .collect()
+    }
 
+    /// Evidence from every answer, plus melody support for lyric/ACR candidates
+    /// the melody search did not return, fused into candidates.
+    fn assemble(&self, others: Vec<Other>) -> Vec<Candidate> {
         let mut evidence: Vec<Evidence> = self.melody.iter().map(melody_evidence).collect();
         for (kind, track, score, detail) in others {
             let song = self.songs.get(&identity::identity_key(&track)).copied().flatten();
             evidence.push(Evidence { kind, track, song, score, detail, alignment: None });
         }
-        // Melody evidence for lyric/ACR candidates the melody search did not return.
         let found: Vec<u32> = self.melody.iter().map(|m| m.song.id).collect();
         let mut supported: Vec<u32> = evidence.iter().filter_map(|e| e.song).filter(|id| !found.contains(id)).collect();
         supported.sort_unstable();
@@ -602,42 +686,17 @@ impl Fusion {
         fuse(evidence)
     }
 
-    /// Find lyric/ACR tracks in the melody index (cached per identity).
-    async fn lookup_songs(
-        &mut self,
-        index: &Arc<MelodyIndex>,
-        others: &[(CandidateSourceKind, Track, f32, Option<String>)],
-    ) {
-        let missing: Vec<(String, String, String)> = others
+    /// Lyric/ACR tracks not yet looked up in the index: (identity key, title, artist).
+    fn missing_songs(&self, others: &[Other]) -> Vec<(String, String, String)> {
+        others
             .iter()
             .map(|(_, t, _, _)| (identity::identity_key(t), t.title.clone(), t.artist.clone()))
             .filter(|(key, _, _)| !self.songs.contains_key(key))
-            .collect();
-        if missing.is_empty() {
-            return;
-        }
-        let index = index.clone();
-        let keys: Vec<String> = missing.iter().map(|(k, _, _)| k.clone()).collect();
-        let found = blocking("melody index lookup", move || {
-            missing
-                .into_iter()
-                .map(|(key, title, artist)| (key, index.find_song(&title, &artist).map(|s| s.id)))
-                .collect::<Vec<_>>()
-        })
-        .await;
-        match found {
-            Some(found) => self.songs.extend(found),
-            None => self.songs.extend(keys.into_iter().map(|k| (k, None))),
-        }
+            .collect()
     }
 
-    /// Score the query against index songs of lyric/ACR candidates (cached per song).
-    async fn score_support(
-        &mut self,
-        index: &Arc<MelodyIndex>,
-        others: &[(CandidateSourceKind, Track, f32, Option<String>)],
-    ) {
-        let Some(query) = self.query.clone() else { return };
+    /// Index songs of lyric/ACR candidates the query was not yet scored against.
+    fn support_ids(&self, others: &[Other]) -> Vec<u32> {
         let found: Vec<u32> = self.melody.iter().map(|m| m.song.id).collect();
         let mut ids: Vec<u32> = others
             .iter()
@@ -646,20 +705,41 @@ impl Fusion {
             .collect();
         ids.sort_unstable();
         ids.dedup();
-        if ids.is_empty() {
-            return;
-        }
-        let index = index.clone();
-        let wanted = ids.clone();
-        let scored = blocking("melody scoring", move || {
-            wanted.into_iter().map(|id| (id, matcher::score_song(&index, &query, id))).collect::<Vec<_>>()
-        })
-        .await;
-        match scored {
-            Some(scored) => self.support.extend(scored),
-            None => self.support.extend(ids.into_iter().map(|id| (id, None))),
-        }
+        ids
     }
+}
+
+/// A lyric or ACR answer: (kind, track, score, detail).
+type Other = (CandidateSourceKind, Track, f32, Option<String>);
+
+/// Index song ids of (identity key, title, artist) lookups.
+fn find_songs(index: &MelodyIndex, missing: Vec<(String, String, String)>) -> Vec<(String, Option<u32>)> {
+    missing.into_iter().map(|(key, title, artist)| (key, index.find_song(&title, &artist).map(|s| s.id))).collect()
+}
+
+/// How the query scores against each song.
+fn score_songs(index: &MelodyIndex, query: &MelodyQuery, ids: Vec<u32>) -> Vec<(u32, Option<MelodyMatch>)> {
+    ids.into_iter().map(|id| (id, matcher::score_song(index, query, id))).collect()
+}
+
+/// Melody, sung-lyric and ACRCloud answers fused as an impression session fuses
+/// them, on the calling thread (CPU-bound; for evaluation tools).
+pub fn fuse_answers(
+    index: Option<&MelodyIndex>,
+    query: Option<MelodyQuery>,
+    melody: Vec<MelodyMatch>,
+    lyrics: Vec<LyricMatch>,
+    acr: Vec<ProviderMatch>,
+) -> Vec<Candidate> {
+    let mut fusion = Fusion { query, melody, lyrics, acr, ..Fusion::default() };
+    fusion.candidates_now(index)
+}
+
+/// The clip an impression sends to ACRCloud humming: the newest ≤ 12 s of the
+/// 16 kHz capture, as an 8 kHz 16-bit WAV.
+pub fn acr_humming_clip(audio: &[f32]) -> Vec<u8> {
+    let newest = &audio[audio.len().saturating_sub(ACR_CLIP_MS * SAMPLE_RATE as usize / 1000)..];
+    encode_wav(&f32_to_i16(&downsample_half(newest)), ACR_RATE)
 }
 
 fn song_track(song: &SongMeta) -> Track {
