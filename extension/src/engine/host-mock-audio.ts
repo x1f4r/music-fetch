@@ -158,8 +158,8 @@ export class ToneTimeline {
   /** Frame index (time / 100 ms) → tone, -1 for none. */
   readonly labels = new Map<number, number>();
   private carry: Float32Array = new Float32Array(0);
-  /** Original-time-base ms at the start of `carry`. */
-  private carryMs = 0;
+  /** The frame the next full 100 ms of the run fills (null before the first block). */
+  private nextFrame: number | null = null;
   private liveMs = 0;
   /** Captured ranges in ms of the original time base, merged. */
   readonly covered: [number, number][] = [];
@@ -167,27 +167,32 @@ export class ToneTimeline {
   push(chunk: { samples: Float32Array; sampleRate: number; speed: number; mediaMs: number | null; continuous: boolean }): void {
     const rate = chunk.sampleRate / (chunk.speed || 1);
     const startMs = chunk.mediaMs ?? this.liveMs;
-    // A new run (seek, stall, ad, first block) drops the unfinished frame of the last one.
-    if (!chunk.continuous || this.carry.length === 0) {
-      this.carry = new Float32Array(0);
-      this.carryMs = startMs;
-    }
-    const joined = new Float32Array(this.carry.length + chunk.samples.length);
-    joined.set(this.carry);
-    joined.set(chunk.samples, this.carry.length);
     const frameLen = Math.round((FRAME_MS / 1000) * rate);
-    // Align frames to the 100 ms grid of the time line.
-    const firstFrame = Math.ceil(this.carryMs / FRAME_MS - 1e-6);
-    let offset = Math.max(0, Math.round(((firstFrame * FRAME_MS - this.carryMs) / 1000) * rate));
-    let frame = firstFrame;
-    while (offset + frameLen <= joined.length) {
-      this.labels.set(frame, frameTone(joined, offset, frameLen, rate));
-      offset += frameLen;
-      frame++;
+    let samples = chunk.samples;
+    // Where this block should start if it continues the run (the carry ends there).
+    const expected = this.nextFrame === null ? null : this.nextFrame * FRAME_MS + (this.carry.length / rate) * 1000;
+    const jumped = chunk.mediaMs !== null && expected !== null && Math.abs(chunk.mediaMs - expected) > 50;
+    if (!chunk.continuous || this.nextFrame === null || jumped) {
+      // A new run (first block, seek, stall, ad): drop the unfinished frame of the last one
+      // and start on the next 100 ms mark of the time line.
+      const first = Math.ceil(startMs / FRAME_MS - 1e-6);
+      const skip = Math.round(((first * FRAME_MS - startMs) / 1000) * rate);
+      samples = samples.subarray(Math.min(samples.length, Math.max(0, skip)));
+      this.carry = new Float32Array(0);
+      this.nextFrame = first;
     }
-    const consumedMs = this.carryMs + (offset / rate) * 1000;
+    // Within a run frames follow each other by sample count: no re-snapping, which would
+    // skip a frame whenever rounding left the run a fraction of a sample past a mark.
+    const joined = new Float32Array(this.carry.length + samples.length);
+    joined.set(this.carry);
+    joined.set(samples, this.carry.length);
+    let offset = 0;
+    while (offset + frameLen <= joined.length) {
+      this.labels.set(this.nextFrame!, frameTone(joined, offset, frameLen, rate));
+      offset += frameLen;
+      this.nextFrame!++;
+    }
     this.carry = joined.slice(offset);
-    this.carryMs = consumedMs;
     const endMs = startMs + (chunk.samples.length / rate) * 1000;
     this.liveMs = endMs;
     this.cover(startMs, endMs);

@@ -102,6 +102,9 @@ export class MediaClock {
   restart(wallMs: number): void {
     this.nextMs = null;
     this.outliers = [];
+    // The last sample describes the media before the change, whatever its time stamp says
+    // (another context's clock may run a little ahead).
+    this.latest = null;
     this.restartedAt = wallMs;
   }
 
@@ -133,14 +136,14 @@ export class MediaClock {
       errors.push(error);
       if (errors.length > WINDOW) errors.shift();
       const recent = errors.slice(-this.confirmBlocks);
-      if (Math.abs(error) <= limit && Math.abs(median(errors)) <= limit) {
+      if (Math.abs(error) <= limit) {
         mediaMs = this.nextMs;
         continuous = true;
       } else if (recent.length === this.confirmBlocks && recent.every((e) => Math.abs(e) > BIG_JUMP_MS) && Math.max(...recent) - Math.min(...recent) <= BIG_JUMP_MS / 4) {
         // The media jumped by seconds and nobody said so (a seek, a skipped ad): follow it now.
         mediaMs = this.nextMs + median(recent);
         this.outliers = [];
-      } else if (errors.length >= MIN_WINDOW && Math.abs(median(errors)) > limit) {
+      } else if (errors.length >= MIN_WINDOW && Math.abs(median(errors)) > limit + DRIFT_SLACK_MS + DRIFT_SLACK_PER_RATE_MS * rate) {
         // The frames drifted from the page's clock: re-anchor by the median disagreement,
         // which jitter from a busy page can't move far (a single sample can't either).
         const shift = median(errors);
@@ -163,6 +166,13 @@ export class MediaClock {
 /** Blocks of history for the drift estimate (about 0.6 s at 2048 frames, 48 kHz). */
 const WINDOW = 15;
 const MIN_WINDOW = 7;
+/**
+ * Drift is slow: the median has to disagree by this much more than one block may before
+ * the clock re-anchors, so jitter that moves the median doesn't cut the audio into runs.
+ * At 4×: 40 + 100 + 100 = 240 ms of media, far inside the seconds that boundaries need.
+ */
+const DRIFT_SLACK_MS = 100;
+const DRIFT_SLACK_PER_RATE_MS = 25;
 /** Media ms beyond which three agreeing blocks re-anchor at once. */
 const BIG_JUMP_MS = 2000;
 

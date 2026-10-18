@@ -70,8 +70,13 @@ export class FakeAgent implements AgentApi {
   tab: FakeTabSource | null = null;
   /** Virtual wall clock: real time at start plus simulated playback time. */
   private wall = performance.timeOrigin + performance.now();
-  /** ± jitter in ms of the clock samples' delivery and of block stamps. */
+  /** ± jitter in ms of block stamps (seeded, so a failure reproduces). */
   jitterMs = 0;
+  seed = 1;
+  private random() {
+    this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0;
+    return this.seed / 2 ** 32;
+  }
   /** Captured audio trails currentTime by this much wall time (tab capture: ~35 ms). */
   lagMs = 35;
   served: ServedPort<AgentTopics> | null = null;
@@ -136,6 +141,8 @@ export class FakeAgent implements AgentApi {
     this.muted = options.mute;
   }
   async seek(ms: number) {
+    // The next block starts a new run, as the real agent's clock marks it.
+    if (ms !== this.positionMs) this.seq = 0;
     this.positionMs = ms;
   }
   async play() {
@@ -186,7 +193,7 @@ export class FakeAgent implements AgentApi {
           // 2048-frame blocks, stamped when the audio thread processed them (plus jitter).
           const samples = renderMix(this.mix, from, to, 48_000 / this.rate);
           for (let i = 0; i < samples.length; i += 2048) {
-            const jitter = (Math.random() * 2 - 1) * this.jitterMs;
+            const jitter = (this.random() * 2 - 1) * this.jitterMs;
             this.tab.capture(samples.slice(i, i + 2048), wallStart + this.lagMs + (i / 48_000) * 1000 + jitter);
           }
         } else if (this.capturing) {

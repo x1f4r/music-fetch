@@ -34,6 +34,13 @@ function setup(agent = new FakeAgent(), via: 'element' | 'tab' = 'element') {
       ? {
           openTabCapture: async (_id: string, clock: MediaClock | null) => {
             agent.tab = new FakeTabSource(clock);
+            const stats = { chunks: 0, starts: [] as number[], clock };
+            agent.tab.onPcm((c) => {
+              stats.chunks++;
+              if (!c.continuous) stats.starts.push(Math.round(c.mediaMs!));
+            });
+            (globalThis as unknown as { __tabStats: unknown[] }).__tabStats ??= [];
+            (globalThis as unknown as { __tabStats: unknown[] }).__tabStats.push(stats);
             return agent.tab;
           },
         }
@@ -95,6 +102,7 @@ describe('the capture coordinator', () => {
   it('stamps Chromium tab capture by the page clock, with jittery blocks, within 2 s', async () => {
     const agent = new FakeAgent();
     agent.jitterMs = 60;
+    agent.seed = Number(process.env.MF_SEED ?? 7);
     const { host, client } = setup(agent, 'tab');
     cleanup.push(async () => {
       await host.worker.recycle('test');
@@ -103,7 +111,8 @@ describe('the capture coordinator', () => {
     const id = await client.analyze('http://127.0.0.1:8000/mix.html', 'Mix', { tab_id: 42, url: TAB.url, title: 'Fake mix', facts: null });
     await vi.waitFor(async () => expect((await client.session(id))?.entry.status).toBe('Completed'), { timeout: 10_000 });
     const detail = (await client.session(id))!;
-    const where = JSON.stringify(detail.segments.map((s) => [s.track?.title, s.start_ms, s.end_ms]));
+    const stats = ((globalThis as unknown as { __tabStats?: { chunks: number; starts: number[]; clock: MediaClock }[] }).__tabStats ?? []).map((t) => ({ chunks: t.chunks, starts: t.starts.slice(0, 12), dropped: t.clock.dropped, runs: t.clock.runs }));
+    const where = `${JSON.stringify(detail.segments.map((s) => [s.track?.title, s.start_ms, s.end_ms]))} ${JSON.stringify(stats)}`;
     expect(detail.segments.map((s) => s.track?.title), where).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
     expect(Math.abs(detail.segments[0]!.end_ms - 20_000), where).toBeLessThanOrEqual(2000);
     expect(Math.abs(detail.segments[1]!.end_ms - 40_000), where).toBeLessThanOrEqual(2000);
