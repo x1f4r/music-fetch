@@ -33,14 +33,23 @@ uv sync            # CUDA torch on Linux, the default wheels elsewhere
 | export | `python -m melenc.export_onnx runs/a/model.pt runs/a/encoder.onnx data/eval-chad.pkl` | ONNX plus test vectors for tract |
 | compressed index, CPU cost | `python -m melenc.latency runs/a/index-notes.npz runs/a/encoder.onnx data/eval-chad.pkl --m 16 --hop-keep 2` | IVF-PQ recall, size, one-thread latency |
 | tract check | `cargo run --release --manifest-path tract-bench/Cargo.toml -- runs/a/encoder.onnx runs/a/encoder.onnx.features.bin runs/a/encoder.onnx.embeddings.bin 64` | tract vs onnxruntime, one-thread timing |
+| checkpoint selection on real hums | `python -m melenc.select sel.jsonl c2k=runs/c/model-2000.pt d-1500=runs/d/model-1500.pt ...` | CHAD-V / CHAD-T, MIR-QBSH validation songs, synthetic, private takes |
+| Rust test vectors | `python -m melenc.fixtures ../../core/crates/mfcore/src/melody/encoder/fixtures` | toy ONNX, featurizer and window vectors from synthetic contours |
+| the encoder file for an index | `mf index encoder build --index <tier>.mfi --model runs/c2k/encoder.onnx --top 30000 --sub-quantizers 32 --out melody-encoder-android.mfe` | see docs/PIPELINES.md ("Melody encoder") |
+| Rust evaluation summary | `mf eval qbsh --index <mfi> --queries <tsv> --encoder <mfe> --out run.jsonl`, then `python -m melenc.rust_eval data/refs-notes-songs.json base=a.jsonl enc=b.jsonl --base base` | top-1 / top-10, encoder recall and union, CHAD halves apart |
 
 ## Data rules
 
 - Evaluation songs never reach training. Every song of an evaluation set, every song that
   shares a normalized title with one, and the songs of the private acceptance recordings
   are held out (`refs.holdout_songs`); 600 more songs are the validation split.
-- Real hums used for training come from MIR-QBSH only. CHAD, IOACAS and the private
-  recordings are evaluation data.
+- Real hums used for training come from MIR-QBSH only. CHAD (CC BY-NC), IOACAS and the
+  private recordings are evaluation data.
+- Checkpoints are selected on real hums (`select`, splits in `splits`): CHAD's songs fall
+  in two halves by a hash of the normalized title; half V selects, half T is reported.
+  With `train --qbsh-holdout`, the hums of 12 of MIR-QBSH's 48 songs are never trained on
+  and form a second validation set. The rule: best CHAD-V union@500 (sum pooling), ties to
+  CHAD-V enc@10.
 
 ## Features (mirrored in Rust)
 

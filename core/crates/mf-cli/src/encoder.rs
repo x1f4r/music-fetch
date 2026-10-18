@@ -79,6 +79,9 @@ pub fn run(cmd: EncoderCommand) -> anyhow::Result<()> {
                 stats.quantize_s,
                 started.elapsed().as_secs_f64()
             );
+            if let Some(kb) = peak_rss_kb() {
+                println!("peak RSS {:.0} MB", kb as f64 / 1024.0);
+            }
             Ok(())
         }
         EncoderCommand::Info { mfe, index } => {
