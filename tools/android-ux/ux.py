@@ -108,8 +108,11 @@ class Device:
         time.sleep(0.6)
 
     def size(self):
+        """The screen as it is shown: `wm size` is the natural (portrait) size, so swap in landscape."""
         m = re.search(r"(\d+)x(\d+)", self.sh("wm size").splitlines()[-1])
-        return int(m.group(1)), int(m.group(2))
+        w, h = int(m.group(1)), int(m.group(2))
+        r = re.search(r"mCurrentRotation=ROTATION_(\d+)", self.sh("dumpsys window displays", check=False))
+        return (h, w) if r and r.group(1) in ("90", "270") else (w, h)
 
     def back(self):
         self.sh("input keyevent KEYCODE_BACK")
@@ -244,8 +247,9 @@ def _mid(d, fx, fy):
 def library_row(d, key, scrolls=4):
     """The library row of seed session [key], scrolling down to it if needed."""
     tag = "library.row." + d.ids()[key]
-    _, height = d.size()
-    for _ in range(scrolls + 1):
+    width, height = d.size()
+    # A swipe moves a quarter of the screen: fewer rows in landscape.
+    for _ in range((scrolls if height >= width else scrolls * 3) + 1):
         node = d.find(tag)
         if node is not None:
             _, y1, _, y2 = map(int, re.findall(r"\d+", node.get("bounds")))
