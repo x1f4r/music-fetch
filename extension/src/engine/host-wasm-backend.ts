@@ -104,8 +104,13 @@ interface WasmEngine {
   close(): Promise<void>;
 }
 
-/** Where the published melody index manifest lives (the apps use the same one). */
-export const MELODY_INDEX_MANIFEST = 'https://github.com/x1f4r/music-fetch/releases/download/melody-index-2/manifest.json';
+/**
+ * The published melody index manifests (docs/CORE_API.md "Melody index"): the phone tier
+ * on Android, the large tier on desktops (as the Mac app).
+ */
+export function melodyIndexManifest(android: boolean): string {
+  return `https://github.com/x1f4r/music-fetch/releases/download/melody-index-2/manifest-${android ? 'android' : 'mac'}.json`;
+}
 /** Media shorter than this without "Mix" gets survey windows, not a listen-through (plan §2.4). */
 const LONG_MEDIA_MS = 15 * 60_000;
 /** Survey windows: the core's first probes (50 %, 20 %, 80 %) of 12 s, with a second each side. */
@@ -241,7 +246,7 @@ export class WasmBackend implements EngineBackend {
     backend.engine = await wasm.Engine.create(
       {
         app_version: import.meta.env?.MODE === 'test' ? '1.1.0' : browserVersion(),
-        melody_index_manifest_url: MELODY_INDEX_MANIFEST,
+        melody_index_manifest_url: melodyIndexManifest(env.android),
         low_power: env.lowPower,
         ...config,
       },
