@@ -135,19 +135,25 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
   });
 
   it('captures the microphone in the page that asked, not in the event page', async () => {
-    await tab.evaluate(
-      (id, src) => {
-        document.getElementById(id)?.remove();
-        const frame = document.createElement('iframe');
-        frame.id = id;
-        frame.src = src;
-        frame.allow = 'microphone';
-        Object.assign(frame.style, { position: 'fixed', left: '0', top: '0', width: '380px', height: '560px', border: '0', zIndex: '9999' });
-        document.body.append(frame);
-      },
-      FRAME,
-      '/popup.html',
-    );
+    const mount = () =>
+      tab.evaluate(
+        async (id, src) => {
+          document.getElementById(id)?.remove();
+          const frame = document.createElement('iframe');
+          frame.id = id;
+          frame.allow = 'microphone';
+          Object.assign(frame.style, { position: 'fixed', left: '0', top: '0', width: '380px', height: '560px', border: '0', zIndex: '9999' });
+          const loaded = new Promise((done) => frame.addEventListener('load', done, { once: true }));
+          frame.src = src;
+          document.body.append(frame);
+          await loaded;
+          return frame.contentWindow?.location.href ?? 'no window';
+        },
+        FRAME,
+        '/popup.html',
+      );
+    let where = await mount();
+    if (!(await tab.evaluate((id) => Boolean((document.getElementById(id) as HTMLIFrameElement).contentDocument?.querySelector('#root')), FRAME))) where = await mount();
     const inFrame = <T,>(fn: string) =>
       tab.waitForFunction(
         (id, code) => {
@@ -161,7 +167,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     await inFrame("return doc.querySelector('.listen .disc')").catch(async (error: unknown) => {
       await tab.screenshot({ path: join(ARTIFACTS, 'rt-firefox-mic-popup.png') }).catch(() => undefined);
       const html = await tab.evaluate((id) => (document.getElementById(id) as HTMLIFrameElement).contentDocument?.body?.innerHTML.slice(0, 600) ?? 'no frame', FRAME);
-      throw new Error(`popup did not render: ${html}`, { cause: error });
+      throw new Error(`popup did not render at ${where}: ${html}`, { cause: error });
     });
     await tab.evaluate((id) => {
       const doc = (document.getElementById(id) as HTMLIFrameElement).contentDocument!;
