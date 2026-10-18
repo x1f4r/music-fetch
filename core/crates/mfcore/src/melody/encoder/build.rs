@@ -14,9 +14,6 @@ use super::scan::{self, BLOCK, KSUB};
 use super::{CHANNELS, FORMAT, HEADER_LEN, MAGIC, Model, SECTION_TABLE, SECTIONS, featurize};
 use super::{S_CODE, S_META, S_MODL, S_PQCB, S_TWIN, S_WSTA, reference_window, reference_windows};
 
-/// Embeddings of one thread: (track, its windows' embeddings).
-type Embedded = Vec<(usize, Vec<f32>)>;
-
 /// What goes into an encoder file.
 #[derive(Debug, Clone)]
 pub struct BuildOptions {
@@ -145,49 +142,69 @@ pub fn build(
         starts.iter().filter(|s| !s.is_empty()).count()
     ));
 
-    // Embeddings, in window order.
+    // Embeddings, in window order: runs of whole tracks of about 256 windows, each
+    // embedded in batches of 8 (the plans the app uses) into its own output slice.
     let started = Instant::now();
     let mut emb = vec![0f32; total * dim];
-    let next = AtomicUsize::new(0);
+    let mut work: Vec<(std::ops::Range<usize>, &mut [f32])> = Vec::new();
+    {
+        let mut rest: &mut [f32] = &mut emb;
+        let mut t0 = 0;
+        while t0 < tracks {
+            let mut t1 = t0;
+            while t1 < tracks && (first[t1] - first[t0]) < 256 {
+                t1 += 1;
+            }
+            let n = (first[t1] - first[t0]) as usize * dim;
+            let (head, tail) = std::mem::take(&mut rest).split_at_mut(n);
+            work.push((t0..t1, head));
+            rest = tail;
+            t0 = t1;
+        }
+    }
+    let queue = std::sync::Mutex::new(work);
     let done = AtomicUsize::new(0);
     let step = (total / 20).max(1);
     let threads = o.threads.clamp(1, 64);
-    let results: Vec<Result<Embedded>> = std::thread::scope(|scope| {
+    let results: Vec<Result<()>> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..threads)
             .map(|_| {
-                let (model, starts, next, done) = (&model, &starts, &next, &done);
-                scope.spawn(move || -> Result<Embedded> {
-                    let mut out = Vec::new();
+                let (model, starts, queue, done) = (&model, &starts, &queue, &done);
+                scope.spawn(move || -> Result<()> {
                     let per = CHANNELS * o.window;
+                    // Not `while let`: the queue's lock must be released before the work.
+                    #[allow(clippy::while_let_loop)]
                     loop {
-                        let t = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(s) = starts.get(t) else { break };
-                        if s.is_empty() {
-                            continue;
+                        let Some((range, out)) = queue.lock().ok().and_then(|mut q| q.pop()) else { break };
+                        let n: usize = range.clone().map(|t| starts[t].len()).sum();
+                        let mut features = vec![0f32; n * per];
+                        let mut f = features.chunks_exact_mut(per);
+                        for t in range {
+                            if starts[t].is_empty() {
+                                continue;
+                            }
+                            let contour = index.track(t as u32).map(|tr| tr.contour).unwrap_or_default();
+                            for &start in &starts[t] {
+                                if let Some(f) = f.next() {
+                                    featurize(&reference_window(&contour, start as usize * o.hop, o.window), f);
+                                }
+                            }
                         }
-                        let contour = index.track(t as u32).map(|tr| tr.contour).unwrap_or_default();
-                        let mut features = vec![0f32; s.len() * per];
-                        for (&start, f) in s.iter().zip(features.chunks_exact_mut(per)) {
-                            featurize(&reference_window(&contour, start as usize * o.hop, o.window), f);
+                        let z = model.embed(&features)?;
+                        out.copy_from_slice(&z);
+                        let before = done.fetch_add(n, Ordering::Relaxed);
+                        if (before + n) / step > before / step {
+                            progress(&format!("embedded {} of {total} windows", before + n));
                         }
-                        let z = model.embed_batched(&features, 64)?;
-                        let before = done.fetch_add(s.len(), Ordering::Relaxed);
-                        if (before + s.len()) / step > before / step {
-                            progress(&format!("embedded {} of {total} windows", before + s.len()));
-                        }
-                        out.push((t, z));
                     }
-                    Ok(out)
+                    Ok(())
                 })
             })
             .collect();
         handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(fail("embedding thread panicked")))).collect()
     });
     for r in results {
-        for (t, z) in r? {
-            let at = first[t] as usize * dim;
-            emb[at..at + z.len()].copy_from_slice(&z);
-        }
+        r?;
     }
     let embed_s = started.elapsed().as_secs_f64();
 
