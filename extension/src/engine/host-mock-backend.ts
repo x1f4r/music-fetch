@@ -119,9 +119,13 @@ class LiveProbe {
     if (found) this.match = syntheticTrack(found.song);
   }
 
-  /** Tones were heard lately but not enough to decide: worth listening on. */
+  /**
+   * Tones were heard lately but not enough to decide: worth listening on. A test song
+   * changes note every 500 ms; a steady tone (a fake microphone's beep) is not one.
+   */
   private promising(): boolean {
-    return this.timeline.tonesIn(Math.max(0, this.heardMs - 4000), this.heardMs).length >= 10;
+    const tones = this.timeline.tonesIn(Math.max(0, this.heardMs - 4000), this.heardMs);
+    return tones.length >= 10 && new Set(tones.map(([, tone]) => tone)).size >= 3;
   }
 
   private outcome(final: boolean): MockLiveOutcome | null | undefined {
