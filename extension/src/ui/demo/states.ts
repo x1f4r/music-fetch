@@ -471,6 +471,16 @@ export const DEMO_STATES: DemoState[] = [
     secrets: { acrHumming: DEMO_KEYS.acrHumming },
   },
   { ...APP, id: 'app-settings-privacy-services', title: 'Settings · privacy, with paid services', route: '/settings/privacy', settings: DECIDED, secrets: DEMO_KEYS },
+  {
+    ...APP,
+    id: 'app-narrow-settings-services',
+    title: 'App tab, narrow · settings: entering keys',
+    width: 390,
+    height: 780,
+    route: '/settings/services',
+    settings: DECIDED,
+    actions: [{ click: '#svc-acrHumming-title ~ .group .add-keys' }, { type: 'identify-eu-west-1.acrcloud.com', into: '#svc-acrHumming-host' }],
+  },
   { ...APP, id: 'app-settings-privacy-firefox', title: 'Firefox settings · privacy and data consent', route: '/settings/privacy', settings: DECIDED, browser: 'firefox' },
   { ...APP, id: 'app-welcome', title: 'Welcome · where do you listen?', route: '/welcome', settings: {}, sessions: 'none', prototype: 'app-welcome' },
   { ...APP, id: 'app-welcome-custom', title: 'Welcome · more services and a custom link', route: '/welcome', settings: {}, sessions: 'none', actions: [{ click: '.opt.more' }, { click: '.opt.custom' }] },
@@ -497,6 +507,14 @@ export const DEMO_STATES: DemoState[] = [
   { ...MOBILE_APP, id: 'mobile-welcome', title: 'Firefox for Android · welcome: where do you listen?', route: '/welcome', settings: {}, sessions: 'none' },
   { ...MOBILE_APP, id: 'mobile-welcome-find', title: 'Firefox for Android · welcome: where to find it', route: '/welcome', settings: { ...DECIDED, 'local:welcomeStep': 2 }, sessions: 'none' },
   { ...MOBILE_APP, id: 'mobile-settings-listening', title: 'Firefox for Android · settings: listening', route: '/settings/listening', settings: DECIDED },
+  {
+    ...MOBILE_APP,
+    id: 'mobile-settings-services',
+    title: 'Firefox for Android · settings: services',
+    route: '/settings/services',
+    settings: { ...DECIDED, 'local:providerChecks': { acrHumming: { state: 'ok', at: 0 } } },
+    secrets: { acrHumming: DEMO_KEYS.acrHumming },
+  },
 ];
 
 export function demoState(id: string): DemoState | undefined {
