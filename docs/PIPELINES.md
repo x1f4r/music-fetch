@@ -77,14 +77,43 @@ Recording queries (modes `Auto` and `Recording`, and all `SystemAudio` sessions)
 Impression rules (mode `Hum`, or `Auto` after the detector says impression):
 
 - `Notice::ImpressionDetected` once (Auto only). Stop issuing recording queries.
-- Auto-stop when voiced ≥ 6 s and the last 1.5 s are unvoiced/silent, or 20 s after the
-  impression started, or on `finish()`.
-- `Notice::KeepGoing` if the user stops with < 3 s voiced.
+- Progressive melody search (below) runs while the user hums.
+- Auto-stop (`ListenOptions.auto_stop`, default on): when the progressive search is
+  confident; when voiced ≥ 8 s and the last 1.5 s are unvoiced/silent; after a 5 s
+  pause once ≥ 1 s was voiced; 30 s after the impression started; or on `finish()`.
+  With `auto_stop` off only `finish()` and the 30 s limit end the capture.
+- `Notice::KeepGoing` once, during a ≥ 1.5 s pause with 1–4 s voiced, and when capture
+  ends with < 4 s voiced.
+
+Progressive melody search (impressions only):
+
+- Every 2 s of captured audio (4 s in low-power mode), once ≥ 4 s are voiced, search the
+  melody index with the streaming pitch frames so far (`hum::search_frames`: the
+  detailed frames → `notes::query_from_details` → `matcher::search`, top 10) on a
+  blocking worker. One search at a time; a search that is due while another runs waits
+  for the next slot. `LiveInput::is_settled` is false while one runs.
+- With `ListenOptions.live_candidates` (default off), each finished search's melody
+  candidates go out as `Candidates { is_final: false }` while the phase is still
+  `Listening` (melody only, not enriched, scores and tiers as in the final fusion).
+- Confident: the top answer scores ≥ 0.8, no other answer scores above 0.1, and the
+  previous search had the same top song. (On real hums against 58k songs such early
+  answers are right 94 % of the time, 90 % without the agreement.) With `auto_stop` on this ends the capture
+  (`Stop::Confident`) and no further searches start.
+- The final melody answer: the streaming frames equal a batch analysis of the capture
+  unless the stream took the whistle path, which it must choose from the frames heard so
+  far and cannot revise (an early whistle-like stretch, sibilants or whistles near
+  1.2 kHz can switch it where the batch analysis, voting on the whole clip, would not).
+  So: the last search when nothing was voiced after it and the stream stayed on the
+  direct path (or after a confident stop); else a search on the streaming frames; after
+  a whistle switch, or when the tracker failed, pitch is tracked on the whole capture
+  again.
 
 Finishing:
 
-- Impression (or Hum) with ≥ 2.5 s voiced → impression analysis (below), session kind
-  becomes `Hum`.
+- Impression (or Hum) with < 4 s voiced → `Notice::KeepGoing` (unless already sent) and
+  `NoMatch(TooShort)`: too little to answer with, so no guess.
+- Impression (or Hum) with ≥ 4 s voiced → impression analysis (below) with the melody
+  answer chosen as above, session kind becomes `Hum`.
 - Otherwise: if the last recording query is older than 4 s and there is ≥ 3 s of
   audible audio, run one final query; then `NoMatch` with a reason:
   `CaptureSilent` (silent notice and no audible audio), `TooQuiet` (median RMS < −45
@@ -93,16 +122,24 @@ Finishing:
 
 ## Impression analysis (`pipeline/hum.rs`)
 
-Input: the captured 16 kHz audio (≤ 30 s), its pitch frames, the language. Used by live
-sessions and by `analyze(.., AnalyzeMode::Impression)` on files.
+Input: the captured 16 kHz audio (≤ 30 s), the language, and the melody input
+(`hum::MelodyInput`): track pitch on the audio, pitch frames already tracked, or a
+progressive search that already covered the whole capture. Used by live sessions and by
+`analyze(.., AnalyzeMode::Impression)` on files.
 
 Run concurrently:
 
-1. Melody — `notes::query_from_frames`; if the index is installed,
-   `matcher::search(index, query, 10)`. If not installed, `Notice::MelodyIndexMissing`.
-2. Lyrics — if a `SpeechToText` is available: write a temp WAV, `transcribe` (timeout
-   15 s), drop hypotheses with < 3 real words (filler like "la", "na", "oh", "hmm" does
-   not count), then `lyrics::search` (timeout 12 s). Store the best transcript.
+1. Melody — `notes::query_from_details` on the detailed pitch frames (loudness splits
+   repeated notes); if the index is installed, `matcher::search(index, query, 10)`. If
+   not installed, `Notice::MelodyIndexMissing`.
+2. Lyrics — the words come from the app (`hum::SpeechInput`): transcripts it pushed
+   while the user sang (`LiveSession::push_transcript`; with
+   `ListenOptions::transcripts` the final one is awaited for up to 2 s after capture),
+   or else, if a `SpeechToText` is available, a temp WAV of the capture is transcribed
+   (timeout 15 s). Hypotheses with < 3 real words are dropped (filler like "la", "na",
+   "oh", "hmm" does not count), then `lyrics::search` (timeout 12 s); a pushed
+   transcript's reported confidence c scales its matches' scores by 0.4 + 0.6·c. Store
+   the best transcript.
 3. ACRCloud humming — if configured: newest ≤ 12 s as 8 kHz WAV (timeout 10 s).
 
 Emit `Candidates { is_final: false }` as each source returns (after fusion), then the
@@ -150,9 +187,16 @@ Rate limits from recognizers were the main failure of 0.4. Rules:
    (`links::extract_url`, first URL in shared text) → `Link`; else `InvalidInput`.
 2. `Started`, then for links `Phase(Resolving)` and `links::resolve` (when the page
    itself cannot be fetched, the media backend still gets the link):
-   - `Resolution::Tracks` → `Source`; enrich tracks (4 at a time); one `Segment` per
-     track (`kind Track`, `start = end = 0`, `item_index` = position, confidence 0.99,
-     `Confirmed`, evidence `Metadata`) → `Finished(Completed { n, n })`.
+   - `Resolution::Tracks` → `Source`; at once one `Segment` per track from the page's
+     metadata (`kind Track`, `start = end = 0`, `item_index` = position, confidence 0.99,
+     `Confirmed`, evidence `Metadata`, search links for every service), then each
+     segment again under the same id as its enrichment arrives (8 lookups in flight,
+     the catalogs' rate limiters pace them) → `Finished(Completed { n, n })`. A
+     single track gets every catalog; collections get Deezer only (ISRC or search;
+     iTunes just for tracks Deezer misses, and only while nothing else waits for
+     it; tracks read from Deezer itself are not looked up again). A 50-track
+     Spotify playlist lists every track within a fraction of a second and
+     finishes in about 8 s.
    - `Resolution::Media` → `Source` (with hints); continue.
 3. Media: unless `direct`, `MediaBackend::probe` → `media::parse_probe` → refresh
    `Source` (title, uploader, thumbnail, duration, item count). For media ≥ 8 min the
@@ -161,7 +205,9 @@ Rate limits from recognizers were the main failure of 0.4. Rules:
    description is probed once more with comments.
 4. Playlists: see "Playlists" below.
 5. Single media: `Phase(Downloading, fraction)` → `download_audio` (or a direct HTTP
-   download with the SSRF guard and a 2 GiB cap) into `cache_dir/sessions/<id>/` →
+   download with the SSRF guard and a 2 GiB cap) into `cache_dir/sessions/<id>/`
+   (a failed backend download is tried twice more, 1.5 s and 4 s later, each time
+   into a fresh folder; cancellation stops a running download at once) →
    `Phase(Decoding)` → `audio::decode::decode_file` → delete the download.
 6. Strategy (see below): `Impression` mode → impression analysis on the first 30 s;
    otherwise **survey → single or mix**.
@@ -188,9 +234,14 @@ Collected before any recognizer call:
 - Version qualifiers (remix, edit, extended, live, acoustic, VIP, bootleg, rework,
   sped up, slowed) are kept: they select the exact recording. `hints::version_key`
   reduces a title to what distinguishes a recording ("Tiësto Remix" → `tiesto remix`;
-  "Extended Mix", "Radio Edit", "Original Mix", remasters → the original);
-  `same_recording` = no ISRC/provider-id conflict + same song + compatible version, and
-  is what stitching and deduplication use.
+  "Extended Mix", "Radio Edit", "Original Mix", remasters → the original); two
+  versions are compatible when they share a kind (remix, live, …) and, when both name
+  people or places, one of those (style words such as trap, dubstep or house name
+  nobody: "Thrizzo Trap Remix" is not "Eff3cts Trap Remix"). `same_recording` = no
+  ISRC/provider-id conflict + same song + compatible version, and is what stitching and
+  deduplication use. `same_song` also accepts a version credited to its remixers in
+  one place and to someone else in another ("Argy, Omnya – Aria" and "Habib Alberto –
+  Aria [Argy & Omnya RMX]").
 
 ### Local fingerprint matching (`fingerprint/`)
 
@@ -233,9 +284,21 @@ Never decide by duration alone. A single song must never be split.
      most probes name (the prior's version first); tier from agreement (2+ probes or a
      confirmed page prior → Confirmed).
    - Probes disagree → two more probes (35 %, 65 %); then **mix** only if two songs each
-     have ≥ 2 answers, or their start estimates line up as consecutive songs. A clear
-     majority (≥ 3) with stray single answers (samples, interpolations), or a song the
-     page names, stays a single; the strays become alternates. Ambiguity never splits.
+     have ≥ 2 answers that do not alternate in time, or their start estimates line up
+     as consecutive songs. Answers that alternate (A B A A B) are one recording known
+     under two names (a DJ set or compilation containing the song, a record sampling
+     it): a single of the page's song, else of the recording whose answers place its
+     start near the media's. A clear majority (≥ 3) with stray single answers
+     (samples, interpolations), or a song the page names, stays a single; the strays
+     become alternates. Ambiguity never splits.
+   - The page against the verdict: one recognizer answer naming another song (the
+     other probes silent or disagreeing) does not outweigh the page's song, and
+     neither does a cover by another artist when the artist's own channel uploaded
+     the media (channel named like the artist, Topic, VEVO); the page's song is
+     `Likely` from the artist's channel, else `Possible`, with the answer as first
+     alternate. The page names a version (live, remix) the recognizer only knows in
+     its original, or whose versions the answers disagree on (none named twice): the
+     page's version, the recognizer's as first alternate.
    - No probe matches → two more probes (35 %, 65 %), then paid providers; still nothing
      → the page's song as `Possible`, else one `Unidentified` segment. Never several
      `Unidentified` pieces for a short file.
@@ -262,9 +325,11 @@ Never decide by duration alone. A single song must never be split.
    "Episode … (Intro)") get one probe and otherwise become `Unidentified` or `Speech`.
    When three of the last six settled entries were overruled, the tracklist no longer
    describes the media (re-edited upload, shifted times): entries from the first of
-   them on are dropped, their probes kept, and the rest is analysed blind. Untimed
-   hints (YouTube "Music" cards) become the candidate set for local matching across the
-   whole mix before any probing.
+   them on are dropped, their probes kept, and the rest is analysed blind. A list
+   written "Title - Artist" throughout is turned around first when the catalog knows
+   at least two of its first four entries only that way. Untimed hints (YouTube
+   "Music" cards) become the candidate set for local matching across the whole mix
+   before any probing.
 3. **Adaptive probing** for everything still unexplained, in time order (probe starts
    snap to a 2 s grid so a re-analysis hits the answer cache):
    - A match of X at window start T with Shazam offset o and skew s gives the start
@@ -272,7 +337,10 @@ Never decide by duration alone. A single song must never be split.
      Eₓ = Sₓ + D/(1 + s). Only the middle of a 12 s window counts as surely X.
    - Next probe at Eₓ + 10 s (just past X's latest end, where the next track must play)
      when that is at most 4 min ahead, else T + 150 s; at least T + 30 s; without D, or
-     when X was heard past Eₓ (wrong duration), T + 90 s. No match → T + 25 s.
+     when X was heard past Eₓ (wrong duration), T + 90 s. No match → T + 25 s, twice;
+     further unanswered probes in a row double the step up to 150 s (interviews,
+     unreleased tracks and long breakdowns do not eat the budget; gap probing looks
+     between them later).
    - Each new recording's preview is fetched and looked for between Sₓ and Eₓ; a hit
      confirms the answer for free and shows more of where X plays. Before each probe the
      previews of everything identified so far are looked for around T (continuing or
@@ -305,6 +373,23 @@ Never decide by duration alone. A single song must never be split.
      probe 10–40 s away inside the stretch it must occupy: the same recording confirms
      it, another version of the same song replaces it, anything else is kept as a
      neighbour (and checked for overlap again), nothing keeps it as it is.
+   - What counts as backing: a second answer of the same recording whose start
+     estimate agrees, from a window at least 12 s away (overlapping windows hear the
+     same audio; a window within 6 s of an earlier probe is never asked again), or the
+     preview found inside the stretch the play must occupy. Two answers at a speed and
+     pitch no player produces do not back each other up (a sampled vocal repeats).
+   - Refining probes only decide which of the two neighbours dominates; a third
+     recording heard in the middle of a blend is ignored (the blend confusing the
+     recognizer far more often than a hidden track).
+   - Answers of one play that name different versions of a song (a radio edit and the
+     extended mix, a remix and its original sharing most of their audio) become one
+     recording — the version most answers name, local matches counting twice — so a
+     play is never split by version; a song heard only after the other ended (an
+     album's reprise, a replay) stays separate.
+   - A play heard over 15 s past the end its catalog duration gives (the catalog
+     knows a shorter edit) has no known end; a recording without a known end is
+     taken to last 90 s past its last hearing when nothing else was heard after it,
+     instead of being stretched over minutes nobody heard it in.
 4. Unresolved music regions ≥ 45 s: one more probe at a different position, then paid
    providers (≤ 30 calls) if configured.
 5. **Stitch** (`pipeline/stitch.rs`, ported from 0.4): bridge Track(X) → short gap →
@@ -374,8 +459,103 @@ A manifest of real cases with ground truth, run with `mf eval mixes`:
 `install_melody_index`: fetch the manifest → stream the file into
 `data_dir/melody/.download` with `Phase(Downloading, fraction)` → verify SHA-256 →
 atomic rename to `melody-index.mfi` + `manifest.json` → open → swap into the engine →
+then, when the manifest names an encoder file this core can use
+(`Manifest::usable_encoder`), the same for it: `.download-encoder` → SHA-256 →
+`EncoderIndex::open` against the new index → rename to `melody-encoder.mfe` → swap in
+(`EngineCtx::encoder` holds it with the index it was opened for, so a search never pairs
+an encoder with another index). The old encoder file is deleted when the index changes; an
+encoder failure keeps the new index (the session still finishes `Completed`), and an index
+that is already current gets only its missing or newer encoder. The installed
+`manifest.json` names the encoder only once its file is in place. →
 `Finished(Completed { 1, 1 })`. Cancel deletes the partial file. `check_melody_index`
-fetches the manifest and fills `available_version` / `download_bytes`.
+fetches the manifest and fills `available_version` / `download_bytes` (index and encoder
+still to fetch; the installed version when only the encoder is missing). At startup an
+encoder file that does not open against the installed index is deleted.
+
+## Melody encoder (`melody/encoder.rs`)
+
+An optional recall stage for humming search: a small network (tools/melody-encoder, about
+820k parameters) maps 8 s of the 20 fps query contour to a 64-d unit vector, and the songs
+whose reference windows lie closest join the matcher's rerank. It finds songs the
+matcher's own retrieval misses; the rerank and the score model still decide the answer.
+
+**Companion file.** `melody-encoder-<tier>.mfe` (format 1) belongs to one melody index:
+its header names the index by FNV-1a 64 over the index's TRCK section and its track count,
+and `EncoderIndex::open` refuses any other index ("belongs to another melody index"). A
+missing, damaged or foreign file disables the stage; the matcher runs as without it.
+Sections (offset, length) in a 192-byte header, each 64-byte aligned:
+
+| section | content |
+|---|---|
+| MODL | the encoder as ONNX: `features` (batch, 3, 160) → (batch, 64) unit vectors |
+| PQCB | sub-quantizers × 16 × (64 / sub-quantizers) f32 centroids |
+| TWIN | (tracks + 1) × u32: first window of each track (windows ordered by track, start) |
+| WSTA | windows × u16: start in reference hops |
+| CODE | ⌈windows / 32⌉ blocks of sub-quantizers × 16 B: byte j of sub-quantizer s holds window j's code (low nibble) and window j + 16's (high) |
+| META | version string |
+
+The header also carries the window length (160), the reference and query hops (40 frames),
+the least voiced share (300 ‰) and the most query windows (8). Only the tier's most
+popular songs get windows; the others keep an empty TWIN range and are left to the
+matcher, which still searches every song.
+
+**Query path** (`EncoderIndex::search`):
+
+1. Windows: the contour trimmed to its voiced span, 160 frames every 40 with the last one
+   aligned to the end, kept when ≥ 30 % voiced; a shorter query is one window padded with
+   rests. More than the budget's windows are thinned evenly.
+2. Features per frame (spec: `melenc.latency.featurize_np`, reproduced bit for bit): pitch
+   minus the window's voiced median (lower middle value), rests holding the previous pitch
+   and leading rests the median, ÷ 6 clipped to ±2; the voicing flag; the held pitch
+   change ÷ 3 clipped to ±2.
+3. Embedding with tract; plans for batches of 1, 2, 4 and 8 with concrete shapes, built
+   on first use (the model is parsed on the first search).
+4. Fast scan per query window: the 64-d query against each sub-quantizer's 16 centroids
+   gives a table, quantized to bytes with one scale (as faiss does); every block of 32
+   coded windows is summed with `tbl` (NEON: Apple Silicon, Android arm64) or `pshufb`
+   (SSSE3: Intel Macs, Android x86_64), or a scalar loop elsewhere. The nearest
+   `window_neighbours` windows are rescored exactly from the float table.
+5. Songs: each query window's best similarity per song, summed over query windows (or
+   the best one, `Pooling::Max`); the top `songs` become `EncoderHit`s with their best
+   window pair.
+6. `EncoderHit::hint` → `matcher::search_with_hints` / `candidates_with_hints` with the
+   budget's `HintOptions`: one placement per (tempo, shift) of `offsets`, where the two
+   windows' centres meet, unless retrieval already placed the track there. Hinted
+   placements skip the pool cut, carry no votes and compete in the quick stage like any
+   other placement. `votes` adds a retrieval pass restricted to the hinted tracks so
+   their placements carry index votes (about +110 ms per search on an M4 core; off in
+   every budget until retrieval can do it in its first pass); `reserve` sends the first
+   N hits to the full rerank even when the quick stage cuts them (off).
+
+Measured on the held-out CHAD half with the c2k model (popularity prior off): top-1
+15.3 → 17.1 %, top-10 19.1 → 22.2 % with the Android budget; the encoder stage itself
+takes about 4 ms per search on an M4 core and the extra rerank about 11 ms.
+
+Budgets (`EncoderBudget`):
+
+| | Android | Mac | low power |
+|---|---|---|---|
+| query windows | 6 | 8 | 4 |
+| windows kept per query window | 1000 | 1000 | 500 |
+| songs | 200 | 500 | 100 |
+| placements per hit (tempo, shift frames) | (1, −20), (1, 0), (1, +20) | the same plus (0.8, 0), (1.25, 0) | (1, 0) |
+
+**Build.** `mf index encoder build --index <tier>.mfi --model encoder.onnx --top 30000
+--sub-quantizers 32 --out melody-encoder-android.mfe` embeds every window with the
+app's featurizer and tract plan (threads `--threads`), trains the 4-bit quantizer by
+k-means on 300k sampled windows and writes the file atomically. `--sub-quantizers 64`
+gives 32 B per window (the Mac file). `mf index encoder info <file> --index <tier>.mfi`
+checks a file against its index. The file must be rebuilt whenever its index is rebuilt
+(the digest changes); a new model only needs a new encoder file.
+
+**Release.** The encoder file is published in the same release as its index (tag
+`melody-index-2`) and named in that index's manifest under `encoder` (`url`, `sha256`,
+`bytes`, `format`, `min_core`); `scripts/package-melody-index.sh <mfi> <version> <base>
+<file.mfe>` checks it against the index and writes the entry (`min_core` 1.1.0, the first
+core that downloads the file); with `TIER=android|mac` it writes the per-tier names
+`melody-index-<tier>.mfi` and `manifest-<tier>.json`. Cores that do not know the field
+ignore it (`Manifest` has no `deny_unknown_fields`); `Manifest::usable_encoder` skips
+entries of another format or for a newer core.
 
 ## Library operations
 

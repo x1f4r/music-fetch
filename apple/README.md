@@ -1,7 +1,11 @@
 # Music Fetch for macOS
 
-SwiftUI app for macOS 26 on top of the Rust engine (`MusicFetchCore`). Architecture:
-[docs/APPS.md](../docs/APPS.md); screens and copy: [docs/design/DESIGN.md](../docs/design/DESIGN.md).
+SwiftUI app for macOS 15 and later on top of the Rust engine (`MusicFetchCore`), one
+universal binary for Apple silicon and Intel Macs. On macOS 26 it uses Liquid Glass and
+SpeechAnalyzer; before that, native materials, bordered button styles and
+`SFSpeechRecognizer` (`App/Compat.swift`, `Views/Components/GlassCompat.swift`).
+Architecture: [docs/APPS.md](../docs/APPS.md); screens and copy:
+[docs/design/DESIGN.md](../docs/design/DESIGN.md).
 
 ## Build
 
@@ -9,6 +13,11 @@ SwiftUI app for macOS 26 on top of the Rust engine (`MusicFetchCore`). Architect
 scripts/build-macos-app.sh            # core, media runtime, Release build, signing, zip → dist/
 scripts/privacy-check.sh dist         # before sharing a build
 ```
+
+The engine, the app and the bundled runtime (CPython, yt-dlp, QuickJS) are universal
+(arm64 + x86_64); the build checks every Mach-O for both architectures and a macOS 15
+deployment target. Every configuration, Debug included, is signed with the designated
+requirement in `Signing.rqs`, so microphone and system-audio permissions survive rebuilds.
 
 For day-to-day work run `scripts/build-core-apple.sh` once, then
 `xcodegen generate --spec apple/project.yml` and build the `MusicFetch` scheme in Xcode.
@@ -36,10 +45,13 @@ open -n "dist/Music Fetch.app" --args -MFDemoState mix
 
 States: `idle`, `listening`, `hum`, `matching`, `result`, `candidates`, `mix`,
 `collection`, `library`, `session`, `noMatch`, `captureSilent`, `downloading`,
-`prePrompt`, `micDenied`, `melodyPrompt`, `lyrics`, `failed`, `settings-general`,
-`settings-services`, `settings-melody`, `settings-melody-downloading`,
-`settings-storage`, `settings-about`. Add `-NSRequiresAquaSystemAppearance YES` for the
-light appearance.
+`prePrompt`, `micDenied`, `melodyPrompt`, `lyrics`, `failed`, `providers`,
+`providers-custom`, `settings-general`, `settings-general-custom`, `settings-services`,
+`settings-melody`, `settings-melody-downloading`, `settings-storage`, `settings-about`.
+Add `-NSRequiresAquaSystemAppearance YES` for the light appearance.
+
+Debug builds also accept `-MFLegacyUI YES`, which takes every pre-macOS 26 branch (no
+Liquid Glass, `SFSpeechRecognizer`), to check the macOS 15 fallbacks on a newer Mac.
 
 ## Testing the melody library download
 

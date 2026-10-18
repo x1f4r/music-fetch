@@ -6,9 +6,9 @@ import Speech
 
 /// `SpeechToText` for sung lyrics, entirely on this Mac.
 ///
-/// Prefers `SpeechAnalyzer` + `SpeechTranscriber`; for locales it lacks, uses
-/// `DictationTranscriber`, then `SFSpeechRecognizer` with on-device recognition only.
-/// Nothing is sent to a server.
+/// On macOS 26 prefers `SpeechAnalyzer` + `SpeechTranscriber`, and `DictationTranscriber`
+/// for locales it lacks. On macOS 15, and for locales neither supports, uses
+/// `SFSpeechRecognizer` with on-device recognition only. Nothing is sent to a server.
 nonisolated final class SpeechTranscriberService: SpeechToText {
     /// Overall budget per call; the engine gives up after 15 s.
     static let timeout: Duration = .seconds(14)
@@ -42,6 +42,7 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
     /// Starts downloading the on-device model for `language` if it is supported but not
     /// installed yet, so the first hum doesn't wait for it. Errors are ignored.
     static func prepare(language: String) async {
+        guard #available(macOS 26, *), !Compat.forcesLegacy else { return }
         let locale = Locale(identifier: language)
         guard let match = matchingLocale(locale, in: await SpeechTranscriber.supportedLocales) else { return }
         let transcriber = makeTranscriber(locale: match)
@@ -55,6 +56,7 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
 
     /// A file transcriber that reports alternatives. Built from options rather than a
     /// preset: the preset names differ between the macOS 26.0 SDK and later systems.
+    @available(macOS 26, *)
     private static func makeTranscriber(locale: Locale) -> SpeechTranscriber {
         SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.alternativeTranscriptions], attributeOptions: [])
     }
@@ -62,7 +64,20 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
     /// Up to five hypotheses, best first; empty when nothing was said.
     static func transcribe(file: URL, language: String) async throws -> [String] {
         let locale = Locale(identifier: language)
+        if #available(macOS 26, *), !Compat.forcesLegacy,
+            let hypotheses = try await transcribeWithSpeechAnalyzer(file: file, locale: locale)
+        {
+            return hypotheses
+        }
+        return try await recognizeWithLegacyRecognizer(file: file, locale: locale)
+    }
 
+    // MARK: - SpeechAnalyzer (macOS 26)
+
+    /// Hypotheses from `SpeechTranscriber` or `DictationTranscriber`; nil when neither
+    /// supports `locale` on this Mac.
+    @available(macOS 26, *)
+    private static func transcribeWithSpeechAnalyzer(file: URL, locale: Locale) async throws -> [String]? {
         if let match = matchingLocale(locale, in: await SpeechTranscriber.supportedLocales) {
             let transcriber = makeTranscriber(locale: match)
             if try await installAssets(for: transcriber) {
@@ -92,11 +107,8 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
                 return hypotheses(from: pieces)
             }
         }
-
-        return try await recognizeWithLegacyRecognizer(file: file, locale: locale)
+        return nil
     }
-
-    // MARK: - SpeechAnalyzer
 
     /// One finalized result: its best text and alternatives.
     struct Piece: Sendable, Equatable {
@@ -104,6 +116,7 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
         var alternatives: [String]
     }
 
+    @available(macOS 26, *)
     private static func installAssets(for module: any SpeechModule) async throws -> Bool {
         switch await AssetInventory.status(forModules: [module]) {
         case .installed:
@@ -120,6 +133,7 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
     }
 
     /// Runs the analyzer over `file` while `collect` drains the module's results.
+    @available(macOS 26, *)
     private static func analyze(
         file: URL,
         module: any SpeechModule,
@@ -177,7 +191,7 @@ nonisolated final class SpeechTranscriberService: SpeechToText {
         return sameLanguage.first
     }
 
-    // MARK: - SFSpeechRecognizer (on-device only)
+    // MARK: - SFSpeechRecognizer (macOS 15; on-device only)
 
     private static func recognizeWithLegacyRecognizer(file: URL, locale: Locale) async throws -> [String] {
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.supportsOnDeviceRecognition else {

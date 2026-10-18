@@ -15,7 +15,8 @@
         android:name="android.hardware.microphone"
         android:required="false" />
 
-    <!-- Apps that open links directly (ServiceLinkOpener) and Google's hum to search. -->
+    <!-- Provider apps that open links directly (Providers.packages, ServiceLinkOpener) and
+         Google's hum to search. -->
     <queries>
         <package android:name="com.spotify.music" />
         <package android:name="com.google.android.apps.youtube.music" />
@@ -25,6 +26,16 @@
         <package android:name="com.aspiro.tidal" />
         <package android:name="com.amazon.mp3" />
         <package android:name="com.soundcloud.android" />
+        <package android:name="com.qobuz.music" />
+        <package android:name="com.pandora.android" />
+        <package android:name="com.audiomack" />
+        <package android:name="com.anghami" />
+        <package android:name="com.jio.media.jiobeats" />
+        <package android:name="com.afmobi.boomplayer" />
+        <package android:name="com.skysoft.kkbox.android" />
+        <package android:name="ru.yandex.music" />
+        <package android:name="com.netease.cloudmusic" />
+        <package android:name="com.bandcamp.android" />
         <package android:name="com.shazam.android" />
         <package android:name="com.google.android.googlequicksearchbox" />
     </queries>
@@ -126,6 +137,11 @@
                 android:name="android.service.quicksettings.TOGGLEABLE_TILE"
                 android:value="true" />
         </service>
+
+        <!-- "Pin" on result notifications. -->
+        <receiver
+            android:name=".notify.PinReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".widget.ListenWidgetReceiver"

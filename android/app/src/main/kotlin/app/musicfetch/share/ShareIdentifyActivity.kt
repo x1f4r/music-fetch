@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -38,9 +39,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,15 +62,20 @@ import app.musicfetch.appGraph
 import app.musicfetch.core.MfException
 import app.musicfetch.core.Phase
 import app.musicfetch.core.SegmentKind
-import app.musicfetch.core.Service
 import app.musicfetch.core.Track
 import app.musicfetch.notify.Notifications
 import app.musicfetch.platform.FileImports
+import app.musicfetch.platform.ListenSource
+import app.musicfetch.platform.ProviderPreference
+import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.common.Formatters
+import app.musicfetch.ui.common.devTestTagsRoot
+import app.musicfetch.ui.common.tag
 import app.musicfetch.ui.common.userMessage
 import app.musicfetch.ui.components.Artwork
 import app.musicfetch.ui.components.OpenInSplitButton
 import app.musicfetch.ui.theme.MusicFetchTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -73,9 +83,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 
 /** What was shared: a link or a file. */
@@ -104,8 +114,24 @@ class ShareViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<AnalysisState?> = run.flatMapLatest { it?.state ?: flowOf(null) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    val preferred: StateFlow<Service> = graph.settings.settings.map { it.defaultService }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, Service.SPOTIFY)
+    /** Where results open; null until the settings are read. */
+    val preference: StateFlow<ProviderPreference?> = graph.preference
+
+    private val _pinned = MutableStateFlow(false)
+
+    /** Whether the identified session is pinned (it is already in the library). */
+    val pinned: StateFlow<Boolean> = _pinned.asStateFlow()
+
+    /** Pin or unpin [sessionId] at once; a failure puts the toggle back. */
+    fun setPinned(sessionId: String, pinned: Boolean) {
+        val before = _pinned.value
+        _pinned.value = pinned
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching { graph.engineHost.engine().setPinned(sessionId, pinned) }.isSuccess }
+            if (!ok) _pinned.value = before
+            graph.notifyLibraryChanged()
+        }
+    }
 
     fun handle(intent: Intent) {
         if (_item.value != null) return
@@ -121,6 +147,7 @@ class ShareViewModel(app: Application) : AndroidViewModel(app) {
     fun retry() {
         val item = _item.value ?: return
         _error.value = null
+        _pinned.value = false
         run.value = null
         start(item)
     }
@@ -212,7 +239,8 @@ private fun ShareSheet(viewModel: ShareViewModel, onClose: () -> Unit, onOpenApp
     val state by viewModel.state.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val nothing by viewModel.nothing.collectAsStateWithLifecycle()
-    val preferred by viewModel.preferred.collectAsStateWithLifecycle()
+    val preference by viewModel.preference.collectAsStateWithLifecycle()
+    val pinned by viewModel.pinned.collectAsStateWithLifecycle()
     val sheet = rememberBottomSheetState(initialValue = SheetValue.Hidden, enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded))
     ModalBottomSheet(
         onDismissRequest = onClose,
@@ -221,7 +249,7 @@ private fun ShareSheet(viewModel: ShareViewModel, onClose: () -> Unit, onOpenApp
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
+            Modifier.fillMaxWidth().devTestTagsRoot().padding(horizontal = 24.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item?.let { SourceRow(it) }
@@ -238,18 +266,22 @@ private fun ShareSheet(viewModel: ShareViewModel, onClose: () -> Unit, onOpenApp
                 current.canceled -> Text(stringResource(R.string.library_canceled), style = MaterialTheme.typography.titleMedium)
                 single != null && sessionId != null && current.isTerminal -> Result(
                     track = single,
-                    preferred = preferred,
+                    preference = preference,
+                    pinned = pinned,
+                    onPin = { viewModel.setPinned(sessionId, it) },
                     onOpenApp = { onOpenApp("musicfetch://session/$sessionId") },
                 )
                 current.isCollection && sessionId != null && current.identified > 0 ->
                     Collection(current, onOpen = { onOpenApp("musicfetch://session/$sessionId") }, onStop = viewModel::stop)
                 single != null && sessionId != null && !current.isCollection -> Result(
                     track = single,
-                    preferred = preferred,
+                    preference = preference,
+                    pinned = pinned,
+                    onPin = { viewModel.setPinned(sessionId, it) },
                     onOpenApp = { onOpenApp("musicfetch://session/$sessionId") },
                 )
                 current.isTerminal -> NoMatch(
-                    onHum = { onOpenApp("musicfetch://listen?mode=hum") },
+                    onHum = { onOpenApp(AppIntents.listenUri(ListenSource.Hum)) },
                     onLyric = { onOpenApp("musicfetch://lyrics") },
                 )
                 else -> Working(current, onStop = viewModel::stop)
@@ -329,11 +361,13 @@ private fun workingText(state: AnalysisState?): String = when (state?.phase) {
 }
 
 @Composable
-private fun Result(track: Track, preferred: Service, onOpenApp: () -> Unit) {
+private fun Result(track: Track, preference: ProviderPreference?, pinned: Boolean, onPin: (Boolean) -> Unit, onOpenApp: () -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    val pinnedLabel = stringResource(if (pinned) R.string.session_pinned else R.string.session_not_pinned)
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Artwork(track.artworkUrl, 64.dp, corner = 12.dp)
-            Column(Modifier.padding(start = 16.dp)) {
+            Column(Modifier.weight(1f).padding(start = 16.dp)) {
                 Text(track.title, style = MaterialTheme.typography.titleLargeEmphasized, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(track.artist, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 val meta = listOfNotNull(track.album?.takeIf { it.isNotBlank() }, track.releaseYear?.toString()).joinToString(" · ")
@@ -341,11 +375,25 @@ private fun Result(track: Track, preferred: Service, onOpenApp: () -> Unit) {
                     Text(meta, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 }
             }
+            // Already in the library: keep it there with one tap.
+            IconToggleButton(
+                checked = pinned,
+                onCheckedChange = {
+                    haptics.performHapticFeedback(if (it) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff)
+                    onPin(it)
+                },
+                modifier = Modifier.semantics { stateDescription = pinnedLabel }.tag("share.pin"),
+            ) {
+                Icon(
+                    painterResource(if (pinned) R.drawable.ic_push_pin_filled else R.drawable.ic_push_pin),
+                    contentDescription = stringResource(R.string.session_pin),
+                )
+            }
         }
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            OpenInSplitButton(track, preferred)
+            preference?.let { OpenInSplitButton(track, it) }
             Spacer(Modifier.height(4.dp))
-            TextButton(onClick = onOpenApp) { Text(stringResource(R.string.share_open_in_app)) }
+            TextButton(onClick = onOpenApp, modifier = Modifier.tag("share.openApp")) { Text(stringResource(R.string.share_open_in_app)) }
         }
     }
 }

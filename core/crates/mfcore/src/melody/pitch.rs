@@ -12,7 +12,9 @@
 //! - **Whistle path.** Whistles sit above the model's 2093.75 Hz ceiling. When
 //!   voiced frames sit above 1.2 kHz, pin at the ceiling, or the loud frames are
 //!   pure tones above 1.2 kHz, the 2× upsampled audio is fed to the model as if it
-//!   were 16 kHz (half speed); pitches are doubled and times halved.
+//!   were 16 kHz (half speed); pitches are doubled and times halved. Whistles whose
+//!   tones sit above 1.5 kHz go through 4× upsampling instead (quarter speed), so
+//!   their upper notes stay well below the 2× path's 4.19 kHz ceiling.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -47,10 +49,10 @@ const WHISTLE_HZ: f32 = 1200.0;
 const CEILING_HZ: f32 = 1950.0;
 /// ...or a tone this pure (share of energy within ±2 bins of the peak).
 const TONAL_SHARE: f32 = 0.5;
+/// Whistles whose tonal peaks have a median above this use the 4× path.
+const FOUR_X_HZ: f32 = 1500.0;
 /// Minimum frames before deciding on a whistle.
 const WHISTLE_MIN_FRAMES: usize = 8;
-/// Frames the streaming tracker looks back over for whistle evidence (1 s).
-const WHISTLE_WINDOW: usize = 62;
 /// Frames the whistle path starts before the switch, so its edge effects never
 /// reach emitted frames.
 const WHISTLE_LEAD: usize = 12;
@@ -151,9 +153,13 @@ impl PitchTracker {
         if !vote.is_whistle() {
             return Ok(PitchAnalysis { frames, whistle: false });
         }
-        let up = upsample_2x(&scaled);
-        let half = self.model.analyze(&up, self.threads)?;
-        let raw: Vec<RawFrame> = (0..raw.len()).map(|f| half_speed_frame(half.get(2 * f).copied())).collect();
+        let factor = vote.factor();
+        let mut up = scaled;
+        for _ in 0..factor.trailing_zeros() {
+            up = upsample_2x(&up);
+        }
+        let slow = self.model.analyze(&up, self.threads)?;
+        let raw: Vec<RawFrame> = (0..raw.len()).map(|f| slowed_frame(slow.get(factor * f).copied(), factor)).collect();
         Ok(PitchAnalysis { frames: gate(&raw, &loud), whistle: true })
     }
 
@@ -167,7 +173,8 @@ impl PitchTracker {
 /// Incremental tracker for live input. Emits each frame at most 224 ms after its
 /// center. Frames are identical to [`PitchTracker::analyze`] on the same audio
 /// unless the whistle decision differs: the stream switches to the whistle path
-/// once the last second sounds like whistling and cannot revise earlier frames.
+/// once the frames so far sound like whistling (the batch analysis votes on the
+/// whole clip) and cannot revise earlier frames.
 pub struct StreamingPitch {
     tracker: Arc<PitchTracker>,
     gain: LevelGain,
@@ -188,8 +195,8 @@ pub struct StreamingPitch {
     whistle: Option<WhistleStream>,
     /// Model frames waiting for the gate's lookahead.
     held: VecDeque<RawFrame>,
-    /// Whistle evidence of recent frames.
-    recent: VecDeque<(FrameDetail, Option<(f32, f32)>)>,
+    /// Whistle evidence of every frame so far.
+    vote: WhistleVote,
     emitted: usize,
     finished: bool,
 }
@@ -211,7 +218,7 @@ impl StreamingPitch {
             normal,
             whistle: None,
             held: VecDeque::new(),
-            recent: VecDeque::new(),
+            vote: WhistleVote::default(),
             emitted: 0,
             finished: false,
         }
@@ -305,17 +312,10 @@ impl StreamingPitch {
                 let f = (frame.t_ms / FRAME_MS) as usize;
                 let tonal = frame_loud_enough(&self.loud, f)
                     .then(|| tonal_peak(&*self.tracker.tonal_fft, &self.original, self.original_base, f));
-                self.recent.push_back((*frame, tonal));
-                if self.recent.len() > WHISTLE_WINDOW {
-                    self.recent.pop_front();
-                }
+                self.vote.add(frame, tonal);
             }
-            let mut vote = WhistleVote::default();
-            for (frame, tonal) in &self.recent {
-                vote.add(frame, *tonal);
-            }
-            if vote.is_whistle() {
-                self.start_whistle();
+            if self.vote.is_whistle() {
+                self.start_whistle(self.vote.factor());
                 out.extend(self.release(false));
             }
         }
@@ -350,14 +350,15 @@ impl StreamingPitch {
         out
     }
 
-    /// Switch to the half-speed path for frames from `self.emitted` on.
-    fn start_whistle(&mut self) {
+    /// Switch to the slowed-down path (`factor` 2 or 4) for frames from `self.emitted` on.
+    fn start_whistle(&mut self, factor: usize) {
         let next = self.emitted + self.held.len();
         let start_frame = next.saturating_sub(WHISTLE_LEAD).max(self.scaled_base.div_ceil(HOP));
         let start = start_frame * HOP;
         let mut stream = WhistleStream {
-            up: Upsampler::default(),
-            raw: RawStream::new(self.tracker.model.clone(), 2 * STREAM_BLOCK),
+            ups: (0..factor.trailing_zeros()).map(|_| Upsampler::default()).collect(),
+            factor,
+            raw: RawStream::new(self.tracker.model.clone(), factor * STREAM_BLOCK),
             first_frame: start_frame,
             seen: 0,
             from_frame: next,
@@ -366,7 +367,6 @@ impl StreamingPitch {
         let raw = stream.push(&history, false);
         self.take_raw(raw);
         self.whistle = Some(stream);
-        self.recent.clear();
     }
 
     fn trim(&mut self) {
@@ -389,13 +389,15 @@ impl StreamingPitch {
     }
 }
 
-/// The half-speed model fed with 2× upsampled scaled audio.
+/// The slowed-down model fed with 2× or 4× upsampled scaled audio.
 struct WhistleStream {
-    up: Upsampler,
+    /// One half-band stage per doubling.
+    ups: Vec<Upsampler>,
+    factor: usize,
     raw: RawStream,
-    /// Original frame of half-speed frame 0.
+    /// Original frame of slowed frame 0.
     first_frame: usize,
-    /// Half-speed frames received so far.
+    /// Slowed frames received so far.
     seen: usize,
     /// First original frame to return.
     from_frame: usize,
@@ -404,21 +406,27 @@ struct WhistleStream {
 impl WhistleStream {
     /// Feed scaled original-rate samples; returns frames from `from_frame` on, in order.
     fn push(&mut self, scaled: &[f32], last: bool) -> Result<Vec<RawFrame>> {
-        let mut up = self.up.push(scaled);
+        let mut up = scaled.to_vec();
+        for stage in &mut self.ups {
+            let mut next = stage.push(&up);
+            if last {
+                next.extend(stage.finish());
+            }
+            up = next;
+        }
         let raw = if last {
-            up.extend(self.up.finish());
             let mut r = self.raw.push(&up)?;
             r.extend(self.raw.finish()?);
             r
         } else {
             self.raw.push(&up)?
         };
-        let mut out = Vec::with_capacity(raw.len() / 2 + 1);
+        let mut out = Vec::with_capacity(raw.len() / self.factor + 1);
         for r in raw {
             let g = self.seen;
             self.seen += 1;
-            if g.is_multiple_of(2) && self.first_frame + g / 2 >= self.from_frame {
-                out.push(half_speed_frame(Some(r)));
+            if g.is_multiple_of(self.factor) && self.first_frame + g / self.factor >= self.from_frame {
+                out.push(slowed_frame(Some(r), self.factor));
             }
         }
         Ok(out)
@@ -506,9 +514,10 @@ fn gate(raw: &[RawFrame], loud: &[f32]) -> Vec<FrameDetail> {
     raw.iter().enumerate().map(|(f, &r)| gate_frame(loud, f, r)).collect()
 }
 
-fn half_speed_frame(r: Option<RawFrame>) -> RawFrame {
+/// A frame of the model run on audio slowed down `factor` times, at the original pitch.
+fn slowed_frame(r: Option<RawFrame>, factor: usize) -> RawFrame {
     match r {
-        Some(r) => RawFrame { hz: r.hz * 2.0, confidence: r.confidence, loudness_db: r.loudness_db },
+        Some(r) => RawFrame { hz: r.hz * factor as f32, confidence: r.confidence, loudness_db: r.loudness_db },
         None => RawFrame { hz: 0.0, confidence: 0.0, loudness_db: FLOOR_DB },
     }
 }
@@ -521,6 +530,8 @@ struct WhistleVote {
     pinned: usize,
     loud: usize,
     tonal_high: usize,
+    /// Peak frequencies of the pure tones above `WHISTLE_HZ`.
+    tonal_hz: Vec<f32>,
 }
 
 impl WhistleVote {
@@ -539,6 +550,7 @@ impl WhistleVote {
             self.loud += 1;
             if hz > WHISTLE_HZ && share >= TONAL_SHARE {
                 self.tonal_high += 1;
+                self.tonal_hz.push(hz);
             }
         }
     }
@@ -548,6 +560,16 @@ impl WhistleVote {
             self.voiced >= WHISTLE_MIN_FRAMES && (2 * self.high >= self.voiced || 4 * self.pinned >= self.voiced);
         let by_tone = self.loud >= WHISTLE_MIN_FRAMES && 2 * self.tonal_high >= self.loud;
         by_pitch || by_tone
+    }
+
+    /// Upsampling factor for the whistle path: 4 when the tones sit high.
+    fn factor(&self) -> usize {
+        let mut hz = self.tonal_hz.clone();
+        hz.sort_by(f32::total_cmp);
+        match hz.get(hz.len() / 2) {
+            Some(&median) if median > FOUR_X_HZ => 4,
+            _ => 2,
+        }
     }
 }
 

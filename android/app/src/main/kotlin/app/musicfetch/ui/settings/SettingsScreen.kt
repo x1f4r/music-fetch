@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,7 +31,6 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -46,7 +44,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -65,12 +62,11 @@ import app.musicfetch.capture.PhoneAudioTileService
 import app.musicfetch.capture.SongTileService
 import app.musicfetch.engine.MelodyDownload
 import app.musicfetch.platform.CredentialField
-import app.musicfetch.platform.ServiceLinkOpener
-import app.musicfetch.platform.displayName
 import app.musicfetch.ui.common.Formatters
 import app.musicfetch.ui.common.ListRow
 import app.musicfetch.ui.navigation.LicensesRoute
 import app.musicfetch.ui.navigation.LocalNavigator
+import app.musicfetch.ui.navigation.ProviderRoute
 import app.musicfetch.ui.session.BackBar
 import app.musicfetch.ui.theme.StandardMotion
 import app.musicfetch.widget.ListenWidgetReceiver
@@ -88,7 +84,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     val checkFailed by viewModel.melodyCheckFailed.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val engineVersion by viewModel.engineVersion.collectAsStateWithLifecycle()
-    var serviceDialog by rememberSaveable { mutableStateOf(false) }
+    val preference by viewModel.preference.collectAsStateWithLifecycle()
     var clearDialog by rememberSaveable { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -99,8 +95,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 item {
                     ListRow(
                         headline = stringResource(R.string.settings_open_songs_in),
-                        supporting = settings?.defaultService?.displayName ?: "",
-                        onClick = { serviceDialog = true },
+                        supporting = preference?.name ?: "",
+                        onClick = { navigator.push(ProviderRoute) },
                     )
                 }
                 item {
@@ -161,6 +157,16 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                         onCancel = viewModel::cancelMelody,
                         onRemove = viewModel::removeMelody,
                         onCheck = viewModel::checkMelody,
+                    )
+                }
+                item { Header(R.string.settings_while_humming) }
+                item {
+                    val on = settings?.autoStop ?: true
+                    ListRow(
+                        headline = stringResource(R.string.settings_auto_stop),
+                        trailing = { Switch(checked = on, onCheckedChange = null) },
+                        modifier = Modifier.semantics { role = Role.Switch },
+                        onClick = { viewModel.setAutoStop(!on) },
                     )
                 }
 
@@ -239,32 +245,6 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
         }
     }
 
-    if (serviceDialog) {
-        AlertDialog(
-            onDismissRequest = { serviceDialog = false },
-            title = { Text(stringResource(R.string.settings_open_songs_in)) },
-            text = {
-                Column {
-                    for (service in ServiceLinkOpener.defaultChoices) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(selected = settings?.defaultService == service, role = Role.RadioButton) {
-                                    viewModel.setDefaultService(service)
-                                    serviceDialog = false
-                                }
-                                .padding(vertical = 4.dp),
-                        ) {
-                            RadioButton(selected = settings?.defaultService == service, onClick = null)
-                            Text(service.displayName, modifier = Modifier.padding(start = 12.dp))
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { serviceDialog = false }) { Text(stringResource(R.string.session_cancel)) } },
-        )
-    }
     if (clearDialog) {
         val cache = Formatters.bytes(context, storage?.cacheBytes?.toLong() ?: 0L)
         AlertDialog(

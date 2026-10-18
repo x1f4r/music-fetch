@@ -1,0 +1,5 @@
+/* Every surface loads the theme through this file: the D1 tokens and components, then the
+   extension's adaptations. */
+@import './design-tokens.css';
+@import './components.css';
+@import './extension.css';

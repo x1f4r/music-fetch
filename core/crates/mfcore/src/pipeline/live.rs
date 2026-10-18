@@ -6,6 +6,10 @@
 //! pitch, impression detection) and schedules recognizer calls on the engine
 //! runtime. Time is measured in captured audio, so a session behaves the same
 //! whether audio arrives in real time or faster.
+//!
+//! In the browser there are no threads: the same loop runs as a task on the
+//! engine Worker's event loop and processes each pushed chunk as soon as the
+//! push returns (DSP inline in the Worker, recognizer calls as tasks).
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -14,20 +18,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
+use tokio::sync::watch;
 
 use crate::audio::SAMPLE_RATE;
 use crate::audio::resample::{StreamResampler, f32_to_i16};
 use crate::error::{MfError, Result};
+use crate::melody::pitch::FrameDetail;
 use crate::melody::{ImpressionDetector, StreamingPitch};
 use crate::model::{
-    CaptureSource, Evidence, ListenMode, NoMatchReason, Notice, Outcome, Phase, PitchFrame, Segment, SegmentKind,
-    SessionKind, Tier,
+    CaptureSource, Evidence, ListenMode, ListenOptions, NoMatchReason, Notice, Outcome, Phase, PitchFrame, Segment,
+    SegmentKind, SessionKind, SpeechTranscript, Tier,
 };
 use crate::pipeline::ctx::SessionCtx;
 use crate::pipeline::hum;
 use crate::pipeline::recognize::{self, RecognitionHit};
 use crate::shazam::Priority;
 use crate::store::SessionUpdate;
+use crate::util::rt;
 
 /// Longest capture; the session ends there.
 const MAX_CAPTURE_MS: u64 = 30_000;
@@ -54,12 +61,25 @@ const MAX_BACKLOG_MS: f64 = 5_000.0;
 const MIN_INPUT_RATE: u32 = 8_000;
 const MAX_INPUT_RATE: u32 = 192_000;
 const MAX_INPUT_CHANNELS: u32 = 32;
-/// Impression auto-stop: enough voiced audio followed by a pause, or a time limit.
-const IMPRESSION_MIN_VOICED_MS: u64 = 6_000;
+/// Impression auto-stop: a confident answer, enough voiced audio followed by a
+/// pause, a long pause, or a time limit.
+const IMPRESSION_MIN_VOICED_MS: u64 = 8_000;
 const IMPRESSION_PAUSE_MS: u64 = 1_500;
-const IMPRESSION_MAX_MS: u64 = 20_000;
-const KEEP_GOING_MS: u64 = 3_000;
-const ANALYZE_MIN_VOICED_MS: u64 = 2_500;
+/// Any pause this long ends the impression once something was hummed.
+const IMPRESSION_LONG_PAUSE_MS: u64 = 5_000;
+const IMPRESSION_LONG_PAUSE_VOICED_MS: u64 = 1_000;
+const IMPRESSION_MAX_MS: u64 = 30_000;
+/// Less voicing than this gets `KeepGoing` instead of an answer.
+const KEEP_GOING_MS: u64 = 4_000;
+/// Progressive melody search while the user hums: every 2 s of capture (4 s in
+/// low-power mode) once enough is voiced, one search at a time.
+const SEARCH_EVERY_MS: u64 = 2_000;
+const SEARCH_EVERY_LOW_POWER_MS: u64 = 4_000;
+const SEARCH_MIN_VOICED_MS: u64 = KEEP_GOING_MS;
+/// A top answer this likely, with no runner-up above `CONFIDENT_RUNNER_UP`, that
+/// two searches in a row agree on, ends the capture early.
+const CONFIDENT_SCORE: f32 = 0.8;
+const CONFIDENT_RUNNER_UP: f32 = 0.1;
 /// Finishing runs one more query when the last one is older than this.
 const FINAL_QUERY_AGE_MS: u64 = 4_000;
 const MIN_AUDIBLE_MS: u64 = 3_000;
@@ -67,6 +87,12 @@ const MATCH_ENRICH_LIMIT: Duration = Duration::from_secs(3);
 const POP_TIMEOUT: Duration = Duration::from_millis(20);
 /// Share of speech-like windows above which a miss is reported as `MostlySpeech`.
 const SPEECH_SHARE: f32 = 0.6;
+/// With `ListenOptions::transcripts`, how long the answer waits after capture for
+/// the recognizer's final transcript.
+const FINAL_TRANSCRIPT_WAIT: Duration = Duration::from_secs(2);
+/// Pushed transcript text kept, at most.
+const MAX_TRANSCRIPT_CHARS: usize = 2_000;
+const MAX_TRANSCRIPT_ALTERNATIVES: usize = 4;
 
 /// One pushed chunk, already converted to f32.
 struct Chunk {
@@ -89,20 +115,48 @@ struct InputState {
 }
 
 /// Audio handed over by the app, shared by the session handle and its DSP thread.
-#[derive(Default)]
 pub struct LiveInput {
     state: Mutex<InputState>,
     ready: Condvar,
+    /// Wakes the DSP task in the browser (no threads to park there).
+    #[cfg(target_family = "wasm")]
+    ready_task: tokio::sync::Notify,
     /// The DSP thread is working on a chunk.
     busy: AtomicBool,
     /// A recognizer call is running.
     inflight: AtomicBool,
+    /// The newest transcript the app pushed.
+    transcript: watch::Sender<Option<SpeechTranscript>>,
 }
 
 impl LiveInput {
     /// An empty input queue.
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Arc::new(Self {
+            state: Mutex::default(),
+            ready: Condvar::new(),
+            #[cfg(target_family = "wasm")]
+            ready_task: tokio::sync::Notify::new(),
+            busy: AtomicBool::new(false),
+            inflight: AtomicBool::new(false),
+            transcript: watch::Sender::new(None),
+        })
+    }
+
+    /// Replace the transcript of what the user sang so far (any thread, also
+    /// shortly after capture ended).
+    pub fn push_transcript(&self, mut transcript: SpeechTranscript) {
+        transcript.text = transcript.text.chars().take(MAX_TRANSCRIPT_CHARS).collect();
+        transcript.alternatives.truncate(MAX_TRANSCRIPT_ALTERNATIVES);
+        for alternative in &mut transcript.alternatives {
+            *alternative = alternative.chars().take(MAX_TRANSCRIPT_CHARS).collect();
+        }
+        self.transcript.send_replace(Some(transcript));
+    }
+
+    /// Follow the pushed transcripts.
+    pub fn transcripts(&self) -> watch::Receiver<Option<SpeechTranscript>> {
+        self.transcript.subscribe()
     }
 
     /// Queue interleaved little-endian f32 PCM. Never blocks on analysis: beyond
@@ -138,17 +192,23 @@ impl LiveInput {
             }
         }
         self.ready.notify_one();
+        #[cfg(target_family = "wasm")]
+        self.ready_task.notify_one();
     }
 
     /// The user stopped capture.
     pub fn finish(&self) {
         self.state.lock().finished = true;
         self.ready.notify_all();
+        #[cfg(target_family = "wasm")]
+        self.ready_task.notify_one();
     }
 
     /// Wake the DSP thread (after cancellation).
     pub fn wake(&self) {
         self.ready.notify_all();
+        #[cfg(target_family = "wasm")]
+        self.ready_task.notify_one();
     }
 
     fn close(&self) {
@@ -184,15 +244,34 @@ impl LiveInput {
     }
 
     /// Next chunk, waiting up to `timeout`. `Err(())` once finished and drained.
+    #[cfg(not(target_family = "wasm"))]
     fn pop(&self, timeout: Duration) -> std::result::Result<Option<Chunk>, ()> {
         let mut state = self.state.lock();
         if state.chunks.is_empty() && !state.finished {
             self.ready.wait_for(&mut state, timeout);
         }
+        Self::take(&mut state, &self.busy)
+    }
+
+    /// [`pop`](Self::pop) for the browser's DSP task: waits without blocking.
+    #[cfg(target_family = "wasm")]
+    async fn pop_async(&self, timeout: Duration) -> std::result::Result<Option<Chunk>, ()> {
+        let idle = {
+            let state = self.state.lock();
+            state.chunks.is_empty() && !state.finished
+        };
+        if idle {
+            // A push between the check and the wait leaves a permit: no lost wake-up.
+            let _ = rt::timeout(timeout, self.ready_task.notified()).await;
+        }
+        Self::take(&mut self.state.lock(), &self.busy)
+    }
+
+    fn take(state: &mut InputState, busy: &AtomicBool) -> std::result::Result<Option<Chunk>, ()> {
         match state.chunks.pop_front() {
             Some(chunk) => {
                 state.backlog_ms = (state.backlog_ms - chunk.ms).max(0.0);
-                self.busy.store(true, Ordering::SeqCst);
+                busy.store(true, Ordering::SeqCst);
                 Ok(Some(chunk))
             }
             None if state.finished => Err(()),
@@ -211,38 +290,75 @@ pub fn session_kind(source: CaptureSource, mode: ListenMode) -> SessionKind {
 }
 
 /// Start the DSP thread of a live session. `on_exit` runs on that thread after
-/// the terminal event.
+/// the terminal event. (In the browser: a task on the event loop.)
 pub fn spawn(
     ctx: Arc<SessionCtx>,
     source: CaptureSource,
     mode: ListenMode,
+    options: ListenOptions,
     input: Arc<LiveInput>,
     on_exit: impl FnOnce() + Send + 'static,
 ) -> Result<()> {
-    let name = format!("mf-live-{}", ctx.id.chars().take(8).collect::<String>());
-    std::thread::Builder::new()
-        .name(name)
-        .spawn(move || {
-            let kind = session_kind(source, mode);
-            ctx.emitter.started(kind);
-            let outcome = catch_unwind(AssertUnwindSafe(|| Live::new(ctx.clone(), source, mode, input.clone()).run()));
-            if let Err(panic) = outcome {
-                tracing::error!(session = %ctx.id, "live session panicked: {}", panic_message(&panic));
-                ctx.emitter.failed(&MfError::internal("the session stopped unexpectedly"));
-            }
-            input.close();
-            if !ctx.emitter.is_terminal() {
-                if ctx.cancel.is_canceled() {
-                    ctx.emitter.canceled();
-                } else {
-                    ctx.emitter.failed(&MfError::internal("the session ended without a result"));
-                }
-            }
-            ctx.cleanup();
+    #[cfg(target_family = "wasm")]
+    {
+        let runtime = ctx.engine.runtime.clone();
+        runtime.spawn(async move {
+            ctx.emitter.started(session_kind(source, mode));
+            // Panics end the whole instance in the browser; nothing to catch.
+            Live::new(ctx.clone(), source, mode, options, input.clone()).run_async().await;
+            ended(&ctx, &input);
             on_exit();
-        })
-        .map(drop)
-        .map_err(|e| MfError::internal(format!("could not start the listening thread: {e}")))
+        });
+        Ok(())
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let name = format!("mf-live-{}", ctx.id.chars().take(8).collect::<String>());
+        std::thread::Builder::new()
+            .name(name)
+            .spawn(move || {
+                let kind = session_kind(source, mode);
+                ctx.emitter.started(kind);
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    Live::new(ctx.clone(), source, mode, options, input.clone()).run()
+                }));
+                if let Err(panic) = outcome {
+                    tracing::error!(session = %ctx.id, "live session panicked: {}", panic_message(&panic));
+                    ctx.emitter.failed(&MfError::internal("the session stopped unexpectedly"));
+                }
+                ended(&ctx, &input);
+                on_exit();
+            })
+            .map(drop)
+            .map_err(|e| MfError::internal(format!("could not start the listening thread: {e}")))
+    }
+}
+
+/// After the session body: no more audio, exactly one terminal event, no work files.
+fn ended(ctx: &SessionCtx, input: &LiveInput) {
+    input.close();
+    if !ctx.emitter.is_terminal() {
+        if ctx.cancel.is_canceled() {
+            ctx.emitter.canceled();
+        } else {
+            ctx.emitter.failed(&MfError::internal("the session ended without a result"));
+        }
+    }
+    ctx.cleanup();
+}
+
+/// The result of a task that already finished, without waiting.
+fn finished<T>(runtime: &rt::Handle, task: rt::JoinHandle<T>) -> std::result::Result<T, rt::JoinError> {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        runtime.block_on(task)
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        use futures_util::FutureExt;
+        let _ = runtime;
+        task.now_or_never().expect("a finished task has its result")
+    }
 }
 
 /// Text of a panic payload.
@@ -273,17 +389,31 @@ enum Stop {
     Limit,
     /// Impression auto-stop.
     Impression,
+    /// The progressive melody search is confident.
+    Confident,
     /// The app called `finish()`.
     User,
     Canceled,
 }
 
-type QueryTask = tokio::task::JoinHandle<Result<Option<RecognitionHit>>>;
+type QueryTask = rt::JoinHandle<Result<Option<RecognitionHit>>>;
+/// A progressive melody search over the first `frames` pitch frames.
+type SearchTask = (usize, rt::JoinHandle<Option<hum::MelodySearch>>);
+
+/// The newest finished progressive search.
+struct Searched {
+    /// Pitch frames it covered.
+    frames: usize,
+    /// Top song and score.
+    top: Option<(u32, f32)>,
+    result: hum::MelodySearch,
+}
 
 struct Live {
     ctx: Arc<SessionCtx>,
     input: Arc<LiveInput>,
     mode: ListenMode,
+    options: ListenOptions,
     resampler: Option<StreamResampler>,
     /// 16 kHz mono capture (≤ 30 s).
     capture: Vec<f32>,
@@ -301,6 +431,17 @@ struct Live {
     pitch: Option<StreamingPitch>,
     detector: Option<ImpressionDetector>,
     frames: Vec<PitchFrame>,
+    details: Vec<FrameDetail>,
+    /// First frame of the whistle path, when the stream switched to it mid-capture.
+    whistle_from: Option<usize>,
+    // Progressive melody search.
+    search: Option<SearchTask>,
+    searched: Option<Searched>,
+    next_search_ms: u64,
+    confident: bool,
+    /// Interim candidates are on screen (`ListenOptions::live_candidates`).
+    shown_candidates: bool,
+    keep_going_noticed: bool,
     // Recording queries.
     next_query: usize,
     pending_query: bool,
@@ -314,12 +455,19 @@ struct Live {
 }
 
 impl Live {
-    fn new(ctx: Arc<SessionCtx>, source: CaptureSource, mode: ListenMode, input: Arc<LiveInput>) -> Self {
+    fn new(
+        ctx: Arc<SessionCtx>,
+        source: CaptureSource,
+        mode: ListenMode,
+        options: ListenOptions,
+        input: Arc<LiveInput>,
+    ) -> Self {
         let mode = if source == CaptureSource::SystemAudio { ListenMode::Recording } else { mode };
         Self {
             ctx,
             input,
             mode,
+            options,
             resampler: None,
             capture: Vec::with_capacity(MAX_CAPTURE_MS as usize * SAMPLE_RATE as usize / 1000),
             resampled: Vec::new(),
@@ -333,6 +481,14 @@ impl Live {
             pitch: None,
             detector: None,
             frames: Vec::new(),
+            details: Vec::new(),
+            whistle_from: None,
+            search: None,
+            searched: None,
+            next_search_ms: 0,
+            confident: false,
+            shown_candidates: false,
+            keep_going_noticed: false,
             next_query: 0,
             pending_query: false,
             last_query_ms: None,
@@ -349,12 +505,9 @@ impl Live {
         self.capture.len() as u64 * 1000 / u64::from(SAMPLE_RATE)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn run(mut self) {
-        self.ctx.emitter.phase(Phase::Listening, None);
-        if self.impression_at_ms.is_some() {
-            self.notify_missing_index();
-        }
-        self.start_pitch();
+        self.begin();
         let stop = self.listen();
         self.input.close();
         self.input.busy.store(false, Ordering::SeqCst);
@@ -364,6 +517,28 @@ impl Live {
         let runtime = self.ctx.engine.runtime.clone();
         runtime.block_on(self.finish(stop));
         self.input.inflight.store(false, Ordering::SeqCst);
+    }
+
+    /// [`run`](Self::run) as a task (browser).
+    #[cfg(target_family = "wasm")]
+    async fn run_async(mut self) {
+        self.begin();
+        let stop = self.listen_async().await;
+        self.input.close();
+        self.input.busy.store(false, Ordering::SeqCst);
+        if stop == Stop::Canceled {
+            return;
+        }
+        self.finish(stop).await;
+        self.input.inflight.store(false, Ordering::SeqCst);
+    }
+
+    fn begin(&mut self) {
+        self.ctx.emitter.phase(Phase::Listening, None);
+        if self.impression_at_ms.is_some() {
+            self.notify_missing_index();
+        }
+        self.start_pitch();
     }
 
     fn start_pitch(&mut self) {
@@ -379,28 +554,57 @@ impl Live {
     }
 
     /// The capture loop; returns why it stopped.
+    #[cfg(not(target_family = "wasm"))]
     fn listen(&mut self) -> Stop {
         loop {
-            if self.ctx.cancel.is_canceled() {
-                return Stop::Canceled;
-            }
-            self.poll_queries();
-            if self.matched.is_some() {
-                return Stop::Matched;
-            }
-            if let Some(stop) = self.stop_condition() {
+            if let Some(stop) = self.poll_stop() {
                 return stop;
             }
             match self.input.pop(POP_TIMEOUT) {
+                Ok(Some(chunk)) => self.take_chunk(chunk),
+                Ok(None) => {}
+                Err(()) => return Stop::User,
+            }
+        }
+    }
+
+    /// [`listen`](Self::listen) as a task (browser): each chunk is processed
+    /// when it arrives; between chunks the recognizer and search tasks run.
+    #[cfg(target_family = "wasm")]
+    async fn listen_async(&mut self) -> Stop {
+        loop {
+            if let Some(stop) = self.poll_stop() {
+                return stop;
+            }
+            match self.input.pop_async(POP_TIMEOUT).await {
                 Ok(Some(chunk)) => {
-                    self.process(chunk);
-                    self.poll_queries();
-                    self.input.busy.store(false, Ordering::SeqCst);
+                    self.take_chunk(chunk);
+                    rt::yield_to_tasks().await;
                 }
                 Ok(None) => {}
                 Err(()) => return Stop::User,
             }
         }
+    }
+
+    /// Collects finished work; `Some` when capture must stop.
+    fn poll_stop(&mut self) -> Option<Stop> {
+        if self.ctx.cancel.is_canceled() {
+            return Some(Stop::Canceled);
+        }
+        self.poll_queries();
+        self.poll_search();
+        if self.matched.is_some() {
+            return Some(Stop::Matched);
+        }
+        self.stop_condition()
+    }
+
+    fn take_chunk(&mut self, chunk: Chunk) {
+        self.process(chunk);
+        self.poll_queries();
+        self.poll_search();
+        self.input.busy.store(false, Ordering::SeqCst);
     }
 
     fn process(&mut self, chunk: Chunk) {
@@ -452,8 +656,10 @@ impl Live {
             }
         }
         if let Some(pitch) = self.pitch.as_mut() {
-            match guarded("pitch tracking", || pitch.push(new)) {
-                Some(frames) => {
+            let was_whistle = pitch.is_whistle();
+            match guarded("pitch tracking", || pitch.push_detailed(new)) {
+                Some(details) => {
+                    let frames: Vec<PitchFrame> = details.iter().map(FrameDetail::to_pitch_frame).collect();
                     if !frames.is_empty() {
                         self.ctx.emitter.pitch(&frames);
                     }
@@ -463,6 +669,12 @@ impl Live {
                         self.detector = None;
                     }
                     self.frames.extend(frames);
+                    self.details.extend(details);
+                    // Frames from here on come from the whistle path; the ones before
+                    // were tracked on the direct path and are no whistle melody.
+                    if !was_whistle && pitch.is_whistle() {
+                        self.whistle_from = Some(self.details.len());
+                    }
                 }
                 None => {
                     self.pitch = None;
@@ -516,8 +728,80 @@ impl Live {
                 self.paid_started = true;
                 self.issue_paid();
             }
+        } else {
+            self.issue_search();
+            self.keep_going_hint();
         }
         self.update_inflight();
+    }
+
+    /// Start a progressive melody search when one is due.
+    fn issue_search(&mut self) {
+        let elapsed = self.elapsed_ms();
+        if self.search.is_some() || self.confident || elapsed < self.next_search_ms {
+            return;
+        }
+        if self.voiced_ms() < SEARCH_MIN_VOICED_MS {
+            return;
+        }
+        let Some(searcher) = hum::MelodySearcher::installed(&self.ctx.engine) else { return };
+        let every = if self.ctx.engine.is_low_power() { SEARCH_EVERY_LOW_POWER_MS } else { SEARCH_EVERY_MS };
+        self.next_search_ms = elapsed + every;
+        let frames = search_frames(&self.details, self.whistle_from).to_vec();
+        let n = self.details.len();
+        let task = self.ctx.engine.runtime.spawn_blocking(move || searcher.search_frames(&frames));
+        self.search = Some((n, task));
+    }
+
+    /// Collect a finished progressive search: interim candidates, confidence.
+    fn poll_search(&mut self) {
+        if !self.search.as_ref().is_some_and(|(_, t)| t.is_finished()) {
+            return;
+        }
+        let Some((frames, task)) = self.search.take() else { return };
+        let runtime = self.ctx.engine.runtime.clone();
+        match finished(&runtime, task) {
+            Ok(Some(result)) => self.take_search(frames, result),
+            Ok(None) => {}
+            Err(e) => tracing::error!("progressive melody search failed: {e}"),
+        }
+        self.update_inflight();
+    }
+
+    fn take_search(&mut self, frames: usize, result: hum::MelodySearch) {
+        let top = result.matches.first().map(|m| (m.song.id, m.score));
+        let runner_up = result.matches.get(1).map(|m| m.score).unwrap_or(0.0);
+        let agrees = self.searched.as_ref().and_then(|s| s.top).zip(top).is_some_and(|(a, b)| a.0 == b.0);
+        if self.options.auto_stop
+            && agrees
+            && top.is_some_and(|(_, score)| score >= CONFIDENT_SCORE)
+            && runner_up <= CONFIDENT_RUNNER_UP
+        {
+            self.confident = true;
+        }
+        if self.options.live_candidates {
+            let candidates = hum::melody_candidates(&result.matches);
+            // An empty list clears a previous one.
+            if !candidates.is_empty() || self.shown_candidates {
+                self.shown_candidates = !candidates.is_empty();
+                self.ctx.emitter.candidates(candidates, false);
+            }
+        }
+        self.searched = Some(Searched { frames, top, result });
+    }
+
+    /// A pause before there is enough to search with: ask for more, once.
+    fn keep_going_hint(&mut self) {
+        if self.keep_going_noticed {
+            return;
+        }
+        let voiced = self.voiced_ms();
+        if (IMPRESSION_LONG_PAUSE_VOICED_MS..KEEP_GOING_MS).contains(&voiced)
+            && self.pause_ms().is_some_and(|p| p >= IMPRESSION_PAUSE_MS)
+        {
+            self.keep_going_noticed = true;
+            self.ctx.emitter.notice(Notice::KeepGoing);
+        }
     }
 
     fn impression_verdict(&mut self) -> Option<bool> {
@@ -566,7 +850,18 @@ impl Live {
         if elapsed.saturating_sub(started) >= IMPRESSION_MAX_MS {
             return Some(Stop::Impression);
         }
-        if self.voiced_ms() >= IMPRESSION_MIN_VOICED_MS && self.pause_ms().is_some_and(|p| p >= IMPRESSION_PAUSE_MS) {
+        if !self.options.auto_stop {
+            return None;
+        }
+        if self.confident {
+            return Some(Stop::Confident);
+        }
+        let voiced = self.voiced_ms();
+        let pause = self.pause_ms().unwrap_or(0);
+        if voiced >= IMPRESSION_MIN_VOICED_MS && pause >= IMPRESSION_PAUSE_MS {
+            return Some(Stop::Impression);
+        }
+        if voiced >= IMPRESSION_LONG_PAUSE_VOICED_MS && pause >= IMPRESSION_LONG_PAUSE_MS {
             return Some(Stop::Impression);
         }
         None
@@ -608,7 +903,8 @@ impl Live {
     }
 
     fn update_inflight(&self) {
-        self.input.inflight.store(self.shazam.is_some() || self.paid.is_some(), Ordering::SeqCst);
+        let busy = self.shazam.is_some() || self.paid.is_some() || self.search.is_some();
+        self.input.inflight.store(busy, Ordering::SeqCst);
     }
 
     /// Collect finished recognizer calls; issue a query that was waiting.
@@ -617,12 +913,12 @@ impl Live {
         if self.shazam.as_ref().is_some_and(|t| t.is_finished())
             && let Some(task) = self.shazam.take()
         {
-            self.on_result("Shazam", runtime.block_on(task));
+            self.on_result("Shazam", finished(&runtime, task));
         }
         if self.paid.as_ref().is_some_and(|t| t.is_finished())
             && let Some(task) = self.paid.take()
         {
-            self.on_result("paid providers", runtime.block_on(task));
+            self.on_result("paid providers", finished(&runtime, task));
         }
         if self.pending_query && self.shazam.is_none() && self.recording_rules() && self.matched.is_none() {
             self.issue_query();
@@ -630,11 +926,7 @@ impl Live {
         self.update_inflight();
     }
 
-    fn on_result(
-        &mut self,
-        who: &str,
-        result: std::result::Result<Result<Option<RecognitionHit>>, tokio::task::JoinError>,
-    ) {
+    fn on_result(&mut self, who: &str, result: std::result::Result<Result<Option<RecognitionHit>>, rt::JoinError>) {
         match result {
             Ok(Ok(Some(hit))) => {
                 if self.matched.is_none() {
@@ -728,21 +1020,61 @@ impl Live {
     }
 
     async fn finish_impression(&mut self, stop: Stop) {
-        let voiced = self.voiced_ms();
-        if stop == Stop::User && voiced < KEEP_GOING_MS {
-            self.ctx.emitter.notice(Notice::KeepGoing);
+        if let Some(pitch) = self.pitch.as_mut()
+            && let Some(rest) = guarded("pitch tracking", || pitch.finish_detailed())
+        {
+            self.details.extend(rest);
         }
+        let voiced = self.voiced_ms();
         let kind = Some(SessionKind::Hum);
-        if voiced < ANALYZE_MIN_VOICED_MS {
+        // Too little to answer with: ask for more instead of guessing.
+        if voiced < KEEP_GOING_MS {
+            if !self.keep_going_noticed {
+                self.ctx.emitter.notice(Notice::KeepGoing);
+            }
             let reason = self.no_match_reason(true);
             self.ctx.emitter.finished(Outcome::NoMatch { reason }, SessionUpdate { kind, ..Default::default() });
             return;
         }
         self.ctx.emitter.flush_pitch();
+        // A search still running may cover the whole capture.
+        if let Some((frames, task)) = self.search.take() {
+            match task.await {
+                Ok(Some(result)) => self.take_search(frames, result),
+                Ok(None) => {}
+                Err(e) => tracing::error!("progressive melody search failed: {e}"),
+            }
+        }
+        tracing::debug!(?stop, voiced, "impression finished");
+        // The streaming frames are the batch analysis's unless the stream took the
+        // whistle path, which it cannot revise: a hissy onset, sibilants or whistles
+        // near 1.2 kHz can switch it where the batch analysis, voting on the whole
+        // clip, would not. Then (or when the tracker failed) the whole capture is
+        // tracked again. Otherwise the last progressive search is the answer when
+        // nothing was voiced after it, and the final search runs on the streaming
+        // frames. After a confident stop the last search is the answer either way.
+        let direct = self.pitch.as_ref().is_some_and(|p| !p.is_whistle());
+        let melody = match self.searched.take() {
+            Some(s)
+                if (stop == Stop::Confident || direct)
+                    && !self.details[s.frames.min(self.details.len())..].iter().any(|f| f.voiced) =>
+            {
+                hum::MelodyInput::Searched(s.result)
+            }
+            _ if direct && !self.details.is_empty() => hum::MelodyInput::Frames(std::mem::take(&mut self.details)),
+            _ => hum::MelodyInput::Track,
+        };
         let capture = std::mem::take(&mut self.capture);
-        // The live frames drive the trace and the detector; matching re-tracks the
-        // whole capture offline, which measured a few points better on MIR-QBSH.
-        match hum::run_impression_detailed(&self.ctx, &capture, None, false).await {
+        let transcripts = self.input.transcripts();
+        // Transcripts the app pushed replace asking its recognizer afterwards.
+        let speech = if self.options.transcripts {
+            hum::SpeechInput::Pushed { transcripts, wait: FINAL_TRANSCRIPT_WAIT }
+        } else if transcripts.borrow().is_some() {
+            hum::SpeechInput::Pushed { transcripts, wait: Duration::ZERO }
+        } else {
+            hum::SpeechInput::Recognizer
+        };
+        match hum::run_impression_detailed(&self.ctx, &capture, melody, speech, true, self.shown_candidates).await {
             Ok((outcome, candidates)) => {
                 let top = candidates.first().map(|c| &c.track);
                 let update = SessionUpdate {
@@ -804,6 +1136,16 @@ impl Live {
             return NoMatchReason::MostlySpeech;
         }
         NoMatchReason::NotFound
+    }
+}
+
+/// The frames a progressive search uses: after a mid-capture switch to the whistle
+/// path only the whistle path's (the direct path's frames before it hold no
+/// whistle melody, and the final answer re-tracks the whole capture anyway).
+fn search_frames(details: &[FrameDetail], whistle_from: Option<usize>) -> &[FrameDetail] {
+    match whistle_from {
+        Some(i) => &details[i.min(details.len())..],
+        None => details,
     }
 }
 
@@ -969,6 +1311,16 @@ mod tests {
         assert!((perceptual(-30.0) - 0.5).abs() < 1e-6);
         assert!((rms_db(&[0.5; 100]) - (-6.02)).abs() < 0.01);
         assert_eq!(clock(74_000), "1:14");
+    }
+
+    #[test]
+    fn searches_after_a_whistle_switch_skip_the_direct_path_frames() {
+        let frames: Vec<FrameDetail> = (0..10)
+            .map(|i| FrameDetail { t_ms: i * 16, hz: 440.0, confidence: 0.9, loudness_db: -20.0, voiced: true })
+            .collect();
+        assert_eq!(search_frames(&frames, None).len(), 10);
+        assert_eq!(search_frames(&frames, Some(4))[0].t_ms, 64);
+        assert!(search_frames(&frames, Some(20)).is_empty());
     }
 
     #[test]

@@ -1,0 +1,11 @@
+node_modules/
+.output/
+.wxt/
+web-ext-artifacts/
+stats.html
+*.log
+.e2e-artifacts/
+.screens/
+# The engine, built by core/crates/mfcore-wasm/build.sh
+src/engine/wasm/
+public/engine/

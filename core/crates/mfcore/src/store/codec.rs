@@ -54,6 +54,7 @@ db_text!(SessionStatus {
     NoMatch => "no_match",
     Failed => "failed",
     Canceled => "canceled",
+    Waiting => "waiting",
 });
 
 db_text!(SegmentKind {

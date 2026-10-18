@@ -5,7 +5,7 @@ views. Visual design and copy: [design/DESIGN.md](design/DESIGN.md).
 
 ## Shared structure
 
-| Concern | macOS (Swift 6, SwiftUI, macOS 26) | Android (Kotlin, Compose, API 29+) |
+| Concern | macOS (Swift 6, SwiftUI, macOS 15+, universal; Liquid Glass on macOS 26) | Android (Kotlin, Compose, API 29+) |
 |---|---|---|
 | Engine host | `EngineHost` actor: builds `EngineConfig`, creates `Engine` off the main thread, owns platform services | `EngineHost` singleton in `MusicFetchApp` (Application) |
 | Event bridge | `ObserverBridge: SessionObserver` → `AsyncStream<SessionEvent>` consumed on the MainActor | `ObserverBridge` → `callbackFlow`/`Channel` collected in `viewModelScope` |
@@ -13,7 +13,7 @@ views. Visual design and copy: [design/DESIGN.md](design/DESIGN.md).
 | System audio | Core Audio process tap (`CATapDescription` global tap excluding own process) + private aggregate device | `AudioPlaybackCapture` via `MediaProjection` in a `mediaProjection` foreground service |
 | Media backend | none: `EngineConfig.media_tools` points at the bundled Python + yt-dlp + qjs (`MediaRuntime`) | `ChaquopyMediaBackend` (Python 3.13 + yt-dlp + bundled `libqjs.so`) |
 | Decoder fallback | `AVFoundationDecoder` (AVAssetReader → 16-bit mono WAV) | `MediaCodecDecoder` (MediaExtractor + MediaCodec) |
-| Speech | `SpeechTranscriberService` (SpeechAnalyzer/SpeechTranscriber, on-device; DictationTranscriber for other locales) | `AndroidSpeechToText` (`createOnDeviceSpeechRecognizer`, `EXTRA_AUDIO_SOURCE` on API 33+) |
+| Speech | `SpeechTranscriberService` (macOS 26: SpeechAnalyzer/SpeechTranscriber, DictationTranscriber for other locales; macOS 15: `SFSpeechRecognizer`; on-device only) | `AndroidSpeechToText` (`createOnDeviceSpeechRecognizer`, `EXTRA_AUDIO_SOURCE` on API 33+) |
 | Credentials | Keychain (generic passwords, service `local.musicfetch.app.credentials`) | DataStore with values encrypted by an Android Keystore AES-GCM key |
 | Settings | `@AppStorage` / `UserDefaults` | DataStore preferences |
 | Background work | not needed (app keeps running) | link/file analysis in a foreground service (`dataSync`, `mediaProcessing` on API 35+) with a progress notification |
@@ -26,14 +26,27 @@ platforms.
 
 - `ListenModel` — `phase: idle | listening(source, mode) | analyzing | result`;
   live `level`, `pitchTrace` (ring of the last 8 s of `PitchFrame`s), `impression: Bool`,
-  `notice`, `elapsed`; result: `matched(Track) | candidates([Candidate]) | noMatch(reason)`;
-  actions `start(source, mode)`, `stop()`, `cancel()`, `retryAsHum()`.
+  `notice`, `elapsed`; result: `matched(Track) | candidates([Candidate]) |
+  noMatch(reason) | offline` (`Outcome::Waiting`: saved to identify once online);
+  actions `start(source, mode)`, `stop()`, `cancel()`, `retryAsHum()`, `select(source)`
+  (a source toggle: chooses the method without listening and leaves a finished state).
+  On macOS the toggles stay on the stage in every state; recovery actions (Try again,
+  Hum it, Type a lyric, …) sit in their own row below them. Try again repeats the last
+  method, or analyzes the same link or file again. Android: anything outside the stage
+  that starts a listen ("Listen again", "Hum it", deep links) goes through
+  `AppIntents.listenNow(source)`, which shows the stage and lets it start the listen with
+  its own permission, pre-prompt and consent steps.
 - `SessionModel` — for link/file/lyrics sessions and library detail: `source`,
   `phase`/`fraction`, `progress` (analyzed/total/ETA), ordered `segments` (upsert by id,
   removal), `candidates`, `items` (playlist entries), `outcome`, `error`; actions
   `cancel()`, `export(format)`, `correct(segment, track)`, `confirm(candidate)`.
 - `LibraryModel` — paged `LibraryEntry` list grouped by day, filter (All, Heard, Hummed,
-  Links, Mixes), search text, pin/delete; refreshes when sessions finish.
+  Links, Mixes, Pinned), search text, pin/delete; refreshes when sessions finish. Pinning
+  takes any number of sessions at once (`setPinned(ids, pinned:)`, `togglePinned(ids)`:
+  pins all unless all are pinned), updates the lists at once, writes to the store off
+  the main thread and registers Undo. Android: the pinned sessions of the filter for the
+  section above the day groups, and a selection (ids) for pinning, sharing and deleting
+  several sessions at once; Undo restores each session's own pin.
 - `SettingsModel` — default service, credentials, melody index status/install/remove,
   storage usage/clear cache, platform toggles.
 
@@ -48,6 +61,35 @@ Rules:
 - Opening a service link prefers the user's default service; fall back to the first
   available link.
 
+## macOS window
+
+- One inspector, attached to the `NavigationSplitView`, owns its toggle in its own
+  toolbar, so the toolbar keeps every content item left of the inspector divider.
+  Below 1060 pt (832 pt without the sidebar) it folds away and comes back when the
+  window widens, without changing the preference.
+- The toolbar's Listen is a split button: listen again with the current method, or
+  choose another method, a link, a file or a lyric from its menu. Results on the Listen
+  pane have a back button (⌘[, Esc); the sidebar's Listen row also returns to the stage.
+- Pin is the only way to keep sessions (no separate favorites).
+
+## Screenshots and layout checks (macOS)
+
+- `apple/MusicFetchUITests` launches every demo state (`-MFDemoState`, with
+  `-MFWindowSize`, `-MFAppearance`, `-MFReduceMotion`, `-MFInspector`) and attaches
+  window screenshots and toolbar geometry checks (no toolbar item on a split divider,
+  Listen present, one center line). The Screenshots workflow runs it on macOS 26 and
+  macOS 15 runners and publishes a contact sheet (`screenshots` artifact, `index.html`),
+  built by `scripts/screenshot-sheet.py`. Never run the UI tests on a Mac someone is
+  using: they launch the app.
+- Debug builds also have an offscreen check, `apple/tools/render-offscreen.sh`: it lays
+  the main window out in windows that are never shown (`-MFRender`), at 900–1440 pt,
+  with and without the inspector, and fails on the same geometry rules. It runs a copy of
+  the Debug app under its own bundle identifier, so the installed app's preferences and
+  permissions are never touched. Liquid Glass doesn't draw offscreen; its PNGs only show
+  layout.
+- Demo states run on `FakeEngine` and keep everything they change (inspector, Settings
+  pane, provider, source) in memory.
+
 ## Permissions
 
 - Microphone: pre-prompt sheet once, then the system prompt; denied → inline banner
@@ -57,7 +99,8 @@ Rules:
   Settings" (Privacy & Security → Screen & System Audio Recording).
 - System audio (Android): one-line explanation, then the MediaProjection consent each
   session; silent capture → "This app blocks audio capture. Use the microphone instead."
-- Notifications (Android 13+): requested the first time a background analysis starts.
+- Notifications (Android 13+): requested the first time a background analysis starts, and
+  before the first phone-audio listen (its result usually arrives as a notification).
 
 ## Android Quick Settings tiles
 
@@ -72,9 +115,11 @@ MediaProjection consent, `mediaProjection`) and finishes immediately. The tile s
 `STATE_ACTIVE` while capturing; tapping it again stops. The ongoing notification says
 what is being captured ("Listening with the microphone" / "Listening to phone audio"),
 shows elapsed time and has a Stop action. When the session ends the notification is
-replaced by the result: matched track (actions "Open in <default service>", "Open"),
-best impression candidate ("Best guess: … · See all"), or the no-match reason with
-"Try again". Tapping it opens the session in the app.
+replaced by the result: matched track (actions "Open in <default service>", "Pin", which
+pins in place and turns into "Unpin"), best impression candidate ("Best guess: … · See all"),
+the no-match reason with "Try again" and "Hum it", or the failure's message. Tapping it opens
+the session in the app; seeing the session in the app dismisses the notification. A match
+while the app's Listen stage is on screen opens there instead of notifying.
 
 ## Opening links
 
@@ -128,3 +173,9 @@ The apps are distributed to testers and the repository is public:
   runtime → ad-hoc sign with the stable designated requirement → zip).
 - Android: `scripts/build-android-app.sh` (runtime → core → Gradle assembleRelease →
   signed APK).
+- Android UI checks: `tools/android-ux/` builds a seed library without any network
+  (`seed.py`), synthetic replay files for the microphone dev hook (`replays.py`), installs the
+  seed (`push-seed.sh`) and drives a debug build on an emulator through test tags exposed as
+  resource ids (`ux.py`, `run-all.sh`: screenshots light, dark and at font scale 1.3). Debug and
+  benchmark builds also replay `debug-phone-capture.wav` as phone audio without the
+  MediaProjection consent. Compose UI tests: `:app:connectedDebugAndroidTest`.

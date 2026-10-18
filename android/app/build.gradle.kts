@@ -22,8 +22,9 @@ android {
         applicationId = "app.musicfetch"
         minSdk = 29
         targetSdk = 36
-        versionCode = 101
-        versionName = "1.0.1"
+        versionCode = 110
+        versionName = "1.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters += androidAbis()
@@ -44,11 +45,25 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Development files (microphone replay, melody-index manifest override); see DevFiles.
+            buildConfigField("boolean", "DEV_TOOLS", "true")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
+            buildConfigField("boolean", "DEV_TOOLS", "false")
+        }
+        // Release code and optimizations, profileable and with the development files, signed
+        // with the debug key: for measuring speed and memory (`assembleBenchmark`).
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+            isProfileable = true
+            buildConfigField("boolean", "DEV_TOOLS", "true")
         }
     }
 
@@ -128,6 +143,7 @@ dependencies {
     implementation(libs.androidx.graphics.shapes)
     implementation(libs.androidx.glance.appwidget)
     implementation(libs.androidx.glance.material3)
+    implementation(libs.androidx.work.runtime.ktx)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
@@ -145,4 +161,11 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // Compose UI tests on a device or emulator (`connectedDebugAndroidTest`).
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    debugImplementation(libs.compose.ui.test.manifest)
 }

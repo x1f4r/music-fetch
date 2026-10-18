@@ -5,17 +5,29 @@
 //! the Apple Music link, genre and a second artwork/preview source but allows only
 //! about 20 calls a minute, so enrichment skips it when its queue is long.
 //! Nothing here fails: errors leave the track as it was.
+//!
+//! Without the `net` feature only the link builders remain (`search_links`,
+//! `custom_link`, `with_search_links`).
 
+// The matching and merging helpers serve `enrich` and `find` (`net`).
+#![cfg_attr(not(feature = "net"), allow(dead_code, unused_imports))]
+
+#[cfg(feature = "net")]
 mod cache;
+#[cfg(feature = "net")]
 pub(crate) mod deezer;
+#[cfg(feature = "net")]
 pub(crate) mod itunes;
 mod matching;
 
+#[cfg(feature = "net")]
 use std::sync::LazyLock;
+#[cfg(feature = "net")]
 use std::time::Duration;
 
 use url::Url;
 
+#[cfg(feature = "net")]
 use self::cache::TtlCache;
 use self::matching::Query;
 use crate::error::Result;
@@ -24,8 +36,10 @@ use crate::model::{Service, ServiceLink, Track};
 use crate::util::cancel::CancelToken;
 
 /// iTunes calls `enrich` may queue behind before skipping Apple Music.
+#[cfg(feature = "net")]
 const ENRICH_ITUNES_QUEUE: usize = 2;
 /// iTunes calls `find` may queue behind (it has no other fallback).
+#[cfg(feature = "net")]
 const FIND_ITUNES_QUEUE: usize = 4;
 
 /// Services that get a link on every enriched track, in display order.
@@ -41,8 +55,10 @@ pub const LINK_SERVICES: [Service; 8] = [
 ];
 
 // Match results per query. Deezer entries expire before its signed preview URLs do.
+#[cfg(feature = "net")]
 static DEEZER_MATCHES: LazyLock<TtlCache<Option<Track>>> =
     LazyLock::new(|| TtlCache::new(512, Duration::from_secs(600)));
+#[cfg(feature = "net")]
 static APPLE_MATCHES: LazyLock<TtlCache<Option<Track>>> =
     LazyLock::new(|| TtlCache::new(512, Duration::from_secs(6 * 3600)));
 
@@ -51,6 +67,7 @@ static APPLE_MATCHES: LazyLock<TtlCache<Option<Track>>> =
 /// Fills ISRC, duration, album, release year, genre, artwork and preview where
 /// missing, adds direct Deezer and Apple Music links when a confident match is
 /// found and search links for every other service.
+#[cfg(feature = "net")]
 pub async fn enrich(http: &reqwest::Client, track: Track, country: &str, cancel: &CancelToken) -> Track {
     let mut track = crate::links::finish_track(track);
     if track.title.is_empty() {
@@ -67,11 +84,48 @@ pub async fn enrich(http: &reqwest::Client, track: Track, country: &str, cancel:
     finish(track)
 }
 
+/// Enrichment for many tracks at once (playlists and albums of streaming
+/// services): Deezer only, so a whole collection finishes in seconds. iTunes
+/// is asked only for tracks Deezer does not know, and only while nothing else
+/// waits for it. Tracks that already carry Deezer's metadata are only finished.
+#[cfg(feature = "net")]
+pub async fn enrich_quick(http: &reqwest::Client, track: Track, country: &str, cancel: &CancelToken) -> Track {
+    let mut track = crate::links::finish_track(track);
+    if track.title.is_empty() || has_deezer_metadata(&track) {
+        return finish(track);
+    }
+    match deezer_match(http, &track, cancel).await {
+        Some(found) => merge(&mut track, &found),
+        None if !cancel.is_canceled() => {
+            if let Some(found) = apple_match(http, &track, country, 1, cancel).await {
+                merge(&mut track, &found);
+            }
+        }
+        None => {}
+    }
+    finish(track)
+}
+
+/// A track read from Deezer itself (id, ISRC, artwork and duration present).
+fn has_deezer_metadata(track: &Track) -> bool {
+    track.ids.contains_key("deezer")
+        && track.isrc.is_some()
+        && track.artwork_url.is_some()
+        && track.duration_ms.is_some()
+}
+
+/// The track as it is, with search links for every service and a refreshed
+/// identity: what a collection shows before enrichment arrives.
+pub fn with_search_links(track: Track) -> Track {
+    finish(crate::links::finish_track(track))
+}
+
 /// Best catalog match for a title/artist (and optional duration), if confident.
 ///
 /// Returns the catalog's own metadata (Deezer first, then iTunes) with its
 /// direct link and search links for the other services; pass it to `enrich`
 /// for the second catalog.
+#[cfg(feature = "net")]
 pub async fn find(
     http: &reqwest::Client,
     title: &str,
@@ -144,6 +198,7 @@ fn query_key(track: &Track) -> String {
     format!("{}|{seconds}", identity::fuzzy_key(&track.title, &primary_artist(track)))
 }
 
+#[cfg(feature = "net")]
 async fn deezer_match(http: &reqwest::Client, track: &Track, cancel: &CancelToken) -> Option<Track> {
     let key = match (track.ids.get("deezer"), track.isrc.as_deref().and_then(normalize_isrc)) {
         (Some(id), _) => format!("id:{id}"),
@@ -165,6 +220,7 @@ async fn deezer_match(http: &reqwest::Client, track: &Track, cancel: &CancelToke
     }
 }
 
+#[cfg(feature = "net")]
 async fn deezer_lookup(http: &reqwest::Client, track: &Track, cancel: &CancelToken) -> Result<Option<Track>> {
     if let Some(id) = track.ids.get("deezer").filter(|id| !id.trim().is_empty()) {
         return deezer::track(http, id.trim(), cancel).await.map(Some);
@@ -192,6 +248,7 @@ fn plausible_title(track: &Track, found: &Track) -> bool {
     a.is_empty() || a.contains(&b) || b.contains(&a) || strsim::normalized_levenshtein(&a, &b) >= 0.5
 }
 
+#[cfg(feature = "net")]
 async fn apple_match(
     http: &reqwest::Client,
     track: &Track,
@@ -219,6 +276,7 @@ async fn apple_match(
     }
 }
 
+#[cfg(feature = "net")]
 async fn apple_lookup(
     http: &reqwest::Client,
     track: &Track,
@@ -381,6 +439,7 @@ mod tests {
         assert!(!plausible_title(&track("Billie Jean", "MJ"), &track("Thriller", "MJ")));
     }
 
+    #[cfg(feature = "net")]
     #[tokio::test]
     async fn never_fails_and_respects_cancellation() {
         let http = crate::links::fetch::test_client();
@@ -393,5 +452,38 @@ mod tests {
         assert!(find(&http, "Some Song", "Some Artist", None, "us", &cancel).await.is_none());
         let empty = enrich(&http, Track::default(), "us", &cancel).await;
         assert!(empty.links.is_empty());
+    }
+}
+
+/// See `crate::custom_provider_link`.
+pub fn custom_link(track: &Track, template: &str) -> Option<String> {
+    fn enc(value: &str) -> String {
+        percent_encoding::utf8_percent_encode(value.trim(), percent_encoding::NON_ALPHANUMERIC).to_string()
+    }
+    let artist = track.artists.first().cloned().unwrap_or_else(|| track.artist.clone());
+    let query = format!("{} {}", artist.trim(), track.title.trim()).trim().to_string();
+    let url = template
+        .trim()
+        .replace("{artist}", &enc(&artist))
+        .replace("{title}", &enc(&track.title))
+        .replace("{query}", &enc(&query))
+        .replace("{isrc}", &enc(track.isrc.as_deref().unwrap_or("")));
+    let parsed = url::Url::parse(&url).ok()?;
+    matches!(parsed.scheme(), "http" | "https").then_some(url)
+}
+
+#[cfg(test)]
+mod custom_link_tests {
+    use super::*;
+
+    #[test]
+    fn fills_placeholders_and_rejects_other_schemes() {
+        let track = Track { title: "Take On Me".into(), artist: "a-ha".into(), ..Default::default() };
+        assert_eq!(
+            custom_link(&track, "https://example.com/search?q={query}").as_deref(),
+            Some("https://example.com/search?q=a%2Dha%20Take%20On%20Me")
+        );
+        assert_eq!(custom_link(&track, "javascript:alert({title})"), None);
+        assert_eq!(custom_link(&track, "not a url {title}"), None);
     }
 }

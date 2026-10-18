@@ -49,16 +49,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.musicfetch.R
-import app.musicfetch.appGraph
-import app.musicfetch.capture.ListenOrigin
-import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.EvidenceSource
-import app.musicfetch.core.ListenMode
 import app.musicfetch.core.Segment
 import app.musicfetch.core.SegmentKind
 import app.musicfetch.core.Tier
+import app.musicfetch.platform.ListenSource
 import app.musicfetch.platform.ServiceLinkOpener
 import app.musicfetch.platform.displayName
+import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.common.Formatters
 import app.musicfetch.ui.components.Artwork
 import app.musicfetch.ui.components.HatchedTile
@@ -141,7 +139,7 @@ internal fun MixContent(view: SessionView.Mix, viewModel: SessionViewModel, onBa
                         onConfirm = { segment.track?.let { viewModel.correct(segment, it) } },
                         onReject = {
                             selectedId = segment.id
-                            sheetId = segment.id
+                            viewModel.reject(segment)
                         },
                         onHumIt = { humIt(viewModel, segment) },
                         modifier = Modifier.animateItem(),
@@ -156,15 +154,13 @@ internal fun MixContent(view: SessionView.Mix, viewModel: SessionViewModel, onBa
     }
 }
 
-/** Starts a hum whose confirmed answer fills in [segment]. */
+/** Starts a hum on the Listen stage whose confirmed answer fills in [segment]. */
 @Composable
 private fun humItAction(): (SessionViewModel, Segment) -> Unit {
-    val context = LocalContext.current
     val navigator = LocalNavigator.current
     return { vm, segment ->
         vm.humForSegment(segment)
-        context.appGraph.listen.start(CaptureSource.MICROPHONE, ListenMode.HUM, ListenOrigin.App)
-        navigator.showListen()
+        AppIntents.listenNow(ListenSource.Hum, navigator)
     }
 }
 
@@ -329,7 +325,7 @@ private fun SegmentSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val preferred by viewModel.preferred.collectAsStateWithLifecycle()
+    val preference by viewModel.preference.collectAsStateWithLifecycle()
     val colors = MaterialTheme.colorScheme
     val track = segment.track
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -359,7 +355,7 @@ private fun SegmentSheet(
                 Detail(stringResource(R.string.mix_match), tierText(segment))
                 evidenceText(segment)?.let { Detail(stringResource(R.string.mix_evidence), it) }
                 track.album?.takeIf { it.isNotBlank() }?.let { Detail(stringResource(R.string.result_album), it) }
-                OpenInSplitButton(track, preferred, height = 48.dp)
+                preference?.let { OpenInSplitButton(track, it, height = 48.dp) }
             }
             val sourceUrl = segment.sourceUrl
             if (sourceUrl != null && view.timed) {
@@ -374,6 +370,10 @@ private fun SegmentSheet(
                         viewModel.correct(segment, track)
                         onDismiss()
                     }) { Text(stringResource(R.string.mix_confirm)) }
+                    FilledTonalButton(onClick = {
+                        viewModel.reject(segment)
+                        onDismiss()
+                    }) { Text(stringResource(R.string.mix_not_this)) }
                 }
             }
             if (segment.alternates.isNotEmpty()) {

@@ -187,6 +187,8 @@ final class SessionModel: Identifiable {
             case .noMatch(let reason):
                 noMatchReason = reason
                 status = .noMatch
+            case .waiting:
+                status = .waiting
             }
         case .failed(let code, let message):
             isRunning = false
@@ -279,6 +281,14 @@ final class SessionModel: Identifiable {
         if mode == .mix { return true }
         if let duration = durationMs, duration >= 240_000 { return true }
         return listedSegments.count >= 2
+    }
+
+    /// A tracklist or a single answer to export (the Export menu).
+    var hasExport: Bool {
+        switch presentation {
+        case .result, .timeline, .collection: true
+        case .candidates, .running, .empty: false
+        }
     }
 
     var presentation: Presentation {

@@ -3,20 +3,30 @@ import SwiftUI
 
 /// Settings (§6.9): five panes, grouped forms, the last pane restored.
 struct SettingsView: View {
-    @AppStorage(PreferenceKey.settingsPane) private var pane = SettingsPane.general.rawValue
+    @Environment(AppModel.self) private var app
+    @AppStorage(PreferenceKey.settingsPane) private var storedPane = SettingsPane.general.rawValue
+
+    /// The stored pane; demo states keep theirs in memory.
+    private var pane: Binding<String> {
+        Binding {
+            app.demoSettingsPane ?? storedPane
+        } set: { value in
+            if app.isDemo { app.demoSettingsPane = value } else { storedPane = value }
+        }
+    }
 
     var body: some View {
-        TabView(selection: $pane) {
+        TabView(selection: pane) {
             Tab(Copy.settingsGeneral, systemImage: "gearshape", value: SettingsPane.general.rawValue) {
                 GeneralPane()
             }
-            Tab("Audio", systemImage: "mic", value: SettingsPane.audio.rawValue) {
+            Tab(Copy.settingsAudio, systemImage: "mic", value: SettingsPane.audio.rawValue) {
                 AudioPane()
             }
             Tab(Copy.settingsServices, systemImage: "key", value: SettingsPane.services.rawValue) {
                 ServicesPane()
             }
-            Tab(Copy.settingsMelody, image: "ContourMark", value: SettingsPane.melody.rawValue) {
+            Tab(Copy.settingsMelody, image: "contour.mark", value: SettingsPane.melody.rawValue) {
                 MelodyPane()
             }
             Tab(Copy.settingsStorage, systemImage: "internaldrive", value: SettingsPane.storage.rawValue) {
@@ -38,29 +48,64 @@ enum SettingsPane: String {
 
 struct GeneralPane: View {
     @Environment(AppModel.self) private var app
-    @AppStorage(PreferenceKey.defaultService) private var defaultService = ServiceKey.spotify.rawValue
     @AppStorage(PreferenceKey.showMenuBarExtra) private var showMenuBar = true
     @AppStorage(PreferenceKey.notifyInBackground) private var notify = true
 
     var body: some View {
+        let preference = app.providerPreference
+        let selected = preference.key.flatMap(Provider.init(storageKey:)) ?? Providers.fallback
         Form {
-            Picker(Copy.openSongsIn, selection: $defaultService) {
-                ForEach(LinkOpener.defaultChoices, id: \.self) { service in
-                    Text(Copy.name(of: service)).tag(ServiceKey(service).rawValue)
+            Section {
+                Picker(Copy.openSongsIn, selection: Binding(get: { selected }, set: { app.setPreferredProvider($0) })) {
+                    ForEach(Providers.common, id: \.self) { service in
+                        Text(Copy.name(of: service)).tag(Provider.service(service))
+                    }
+                    Divider()
+                    ForEach(Providers.more, id: \.self) { service in
+                        Text(Copy.name(of: service)).tag(Provider.service(service))
+                    }
+                    Divider()
+                    Text(Copy.customProviderEllipsis).tag(Provider.custom)
+                }
+                if selected == .custom {
+                    TextField(
+                        Copy.providerName,
+                        text: Binding(
+                            get: { preference.custom.name },
+                            set: { app.setCustomProvider(CustomProvider(name: $0, template: app.providerPreference.custom.template)) }),
+                        prompt: Text(Copy.providerNamePrompt))
+                    TextField(
+                        Copy.providerAddress,
+                        text: Binding(
+                            get: { preference.custom.template },
+                            set: { app.setCustomProvider(CustomProvider(name: app.providerPreference.custom.name, template: $0)) }),
+                        prompt: Text(verbatim: Copy.providerAddressPrompt))
+                }
+            } footer: {
+                if selected == .custom {
+                    CustomTemplateHint(template: preference.custom.template)
                 }
             }
-            Toggle(Copy.showInMenuBar, isOn: $showMenuBar)
-            Toggle(Copy.launchAtLogin, isOn: Binding(get: { app.settings.launchAtLogin }, set: { app.settings.setLaunchAtLogin($0) }))
-            if let error = app.settings.loginItemError {
-                Text(error).font(.callout).foregroundStyle(.secondary)
+            .autocorrectionDisabled()
+            Section {
+                generalToggles
             }
-            Toggle(Copy.notifyInBackground, isOn: $notify)
-                .onChange(of: notify) { _, enabled in
-                    if enabled { Task { _ = await app.notifier.requestAuthorization() } }
-                }
         }
         .formStyle(.grouped)
         .frame(minHeight: 260)
+    }
+
+    @ViewBuilder
+    private var generalToggles: some View {
+        Toggle(Copy.showInMenuBar, isOn: $showMenuBar)
+        Toggle(Copy.launchAtLogin, isOn: Binding(get: { app.settings.launchAtLogin }, set: { app.settings.setLaunchAtLogin($0) }))
+        if let error = app.settings.loginItemError {
+            Text(error).font(.callout).foregroundStyle(.secondary)
+        }
+        Toggle(Copy.notifyInBackground, isOn: $notify)
+            .onChange(of: notify) { _, enabled in
+                if enabled { Task { _ = await app.notifier.requestAuthorization() } }
+            }
     }
 }
 
@@ -90,26 +135,26 @@ struct AudioPane: View {
                 }
                 .frame(minHeight: 132)
             } header: {
-                Text("Microphone order")
+                Text(Copy.microphoneOrder)
             } footer: {
-                Text("Music Fetch listens with the first connected microphone. Drag to reorder.")
+                Text(Copy.microphoneOrderFooter)
                     .foregroundStyle(.secondary)
             }
 
             Section {
-                Picker("Listen to", selection: $captureOutput) {
-                    Text("System output").tag("")
+                Picker(Copy.listenTo, selection: $captureOutput) {
+                    Text(Copy.systemOutput).tag("")
                     ForEach(devices.outputs) { device in
                         Text(device.name).tag(device.uid)
                     }
                     if !captureOutput.isEmpty, !devices.outputs.contains(where: { $0.uid == captureOutput }) {
-                        Text("Not connected").tag(captureOutput)
+                        Text(Copy.notConnected).tag(captureOutput)
                     }
                 }
             } header: {
-                Text("This Mac")
+                Text(Copy.thisMac)
             } footer: {
-                Text("When the chosen output isn't connected, the system output is used.")
+                Text(Copy.outputFooter)
                     .foregroundStyle(.secondary)
             }
         }
@@ -138,19 +183,19 @@ private struct MicrophoneRow: View {
                 Text(device.name)
                     .foregroundStyle(connected ? .primary : .secondary)
                 if active {
-                    Text("In use").font(.caption).foregroundStyle(.tint)
+                    Text(Copy.inUse).font(.caption).foregroundStyle(.tint)
                 } else if !connected {
-                    Text("Not connected").font(.caption).foregroundStyle(.secondary)
+                    Text(Copy.notConnected).font(.caption).foregroundStyle(.secondary)
                 }
             }
             Spacer()
             ControlGroup {
                 Button { list.moveUp(device.uid) } label: { Image(systemName: "chevron.up") }
                     .disabled(isFirst)
-                    .accessibilityLabel("Move \(device.name) up")
+                    .accessibilityLabel(Copy.moveUp(device.name))
                 Button { list.moveDown(device.uid) } label: { Image(systemName: "chevron.down") }
                     .disabled(isLast)
-                    .accessibilityLabel("Move \(device.name) down")
+                    .accessibilityLabel(Copy.moveDown(device.name))
             }
             .controlGroupStyle(.navigation)
             .fixedSize()
@@ -158,7 +203,7 @@ private struct MicrophoneRow: View {
         .padding(.vertical, 2)
         .contextMenu {
             if !connected {
-                Button("Forget \(device.name)") { list.forget(device.uid) }
+                Button(Copy.forget(device.name)) { list.forget(device.uid) }
             }
         }
     }
@@ -230,6 +275,7 @@ struct ServicesPane: View {
 struct MelodyPane: View {
     @Environment(AppModel.self) private var app
     @AppStorage(PreferenceKey.searchSungLyrics) private var searchSungLyrics = true
+    @AppStorage(PreferenceKey.autoStopAfterPause) private var autoStop = true
 
     var body: some View {
         let settings = app.settings!
@@ -287,6 +333,7 @@ struct MelodyPane: View {
             }
             Section(Copy.whileHumming) {
                 Toggle(Copy.alsoSearchLyrics, isOn: $searchSungLyrics)
+                Toggle(Copy.autoStopAfterPause, isOn: $autoStop)
             }
         }
         .formStyle(.grouped)

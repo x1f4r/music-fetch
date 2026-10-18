@@ -1,0 +1,4 @@
+# Designated requirement for every build of Music Fetch (codesign --requirements).
+# Ad-hoc signatures otherwise default to the code hash, which changes with each build
+# and makes macOS ask for microphone and system audio permission again.
+designated => identifier "local.musicfetch.app"

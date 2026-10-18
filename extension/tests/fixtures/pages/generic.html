@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- A plain page with an <audio> element (tab and element capture tests). ?src=<wav>. -->
+<meta property="og:title" content="Alpha Signal">
+<meta property="og:audio" content="https://example.org/test-signal-a.mp3">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"AudioObject","name":"Alpha Signal","author":{"name":"Music Fetch Test Signals"},"duration":"PT32S"}</script>
+<title>A page that plays a test song</title>
+</head>
+<body>
+<h1>Alpha Signal</h1>
+<audio id="player" controls loop preload="auto"></audio>
+<script>
+  var player = document.getElementById('player');
+  player.src = new URLSearchParams(location.search).get('src') || '/media/song-a.wav';
+  if (new URLSearchParams(location.search).has('autoplay')) player.play().catch(function (e) { document.title = 'blocked: ' + e.name; });
+</script>
+</body>
+</html>

@@ -15,7 +15,7 @@ into both apps. The apps own capture, speech recognition, credentials, the media
 download backend and the UI.
 
 ```
-┌──────────── macOS app (SwiftUI, macOS 26+) ───────────┐  ┌──────── Android app (Compose, API 29+) ────────┐
+┌──────────── macOS app (SwiftUI, macOS 15+) ───────────┐  ┌──────── Android app (Compose, API 29+) ────────┐
 │ AVAudioEngine mic · Core Audio process tap            │  │ AudioRecord mic · AudioPlaybackCapture         │
 │ SpeechTranscriber · Keychain · bundled Python+yt-dlp  │  │ SpeechRecognizer · Keystore · Chaquopy+yt-dlp  │
 │ Views (Liquid Glass)                                  │  │ Views (Material 3 Expressive)                  │
@@ -108,8 +108,10 @@ are free to evolve as long as that surface holds.
    Shazam has not matched by 10 s.
 4. In parallel, a voice-melody detector (voicing ratio, monophony, spectral flatness)
    decides whether the input is someone humming/singing/whistling. In `Auto`, once that
-   is likely, the session switches to impression rules: stop after ≥ 6 s voiced audio
-   followed by 1.5 s of silence, or at 20 s.
+   is likely, the session switches to impression rules: the melody is searched every
+   2 s while the user hums, and capture stops once that search is confident, after
+   ≥ 8 s voiced audio followed by 1.5 s of silence, or at 30 s. Less than 4 s voiced
+   asks the user to keep going instead of answering.
 5. `ListenMode::Hum` skips Shazam and only runs impression analysis.
 6. Without a recording match, impression analysis runs on the captured audio (see
    below). With too little signal the outcome is `NoMatch` with a reason code
@@ -119,10 +121,13 @@ are free to evolve as long as that surface holds.
 
 Run in parallel, then fused by identity:
 
-- **Melody:** f0 (SwiftF0; whistle path above ~1.2 kHz via half-speed trick) → median
-  filter, octave fixing, gap handling → notes + 20 fps contour → n-gram retrieval with
-  offset voting → linear scaling → subsequence DTW with key search → note edit distance
-  → score fusion with a popularity prior. Requires the melody index (downloadable).
+- **Melody:** f0 (SwiftF0; whistle path above ~1.2 kHz via the half- or quarter-speed trick) → median
+  filter, octave fixing, gap handling → notes + 20 fps contour → retrieval on continuous
+  per-song contours by key-invariant window vectors (inverted multi-index, alignment
+  voting) and by note n-grams → quick DTW + rhythm-free note alignment → linear scaling →
+  subsequence DTW with key search → calibrated score fusion (stage evidence, reference
+  length, popularity, and how conclusive the hum itself is) → one answer per work.
+  Requires the melody index (downloadable).
 - **Lyrics:** if speech is present, the app's `SpeechToText` transcribes the captured
   audio (macOS SpeechTranscriber, Android on-device recognizer). The core searches
   6–10-word windows across iTunes, Genius lyric search, YouTube Music and Deezer,
@@ -182,7 +187,8 @@ Output: 1–5 `Candidate`s, each with sources, a calibrated score, a tier
 - `data_dir/musicfetch.sqlite3`: sessions, segments, candidates, track cache, provider
   cache (positive results 30 days, negative 1 day). WAL, foreign keys, busy timeout.
 - `data_dir/melody/`: melody index file + manifest. Downloaded on demand from the
-  `melody-index-1` GitHub release, verified by SHA-256.
+  `melody-index-<format>` GitHub release of the index format the core reads
+  (`melody-index-2` since 1.1; 1.0.x reads `melody-index-1`), verified by SHA-256.
 - `cache_dir/sessions/<id>/`: downloads and PCM files, removed when a session finishes
   unless the user pins it.
 
@@ -190,8 +196,9 @@ Output: 1–5 `Candidate`s, each with sources, a calibrated score, a tier
 
 - `scripts/build-core-apple.sh` → `apple/MusicFetchCore/MfCoreFFI.xcframework` + Swift bindings.
 - `scripts/build-core-android.sh` → `android/core/src/main/jniLibs/{arm64-v8a,x86_64}` + Kotlin bindings.
-- `scripts/build-macos-app.sh` → `dist/Music Fetch.app` (arm64, ad-hoc signed with the
-  stable designated requirement `identifier "local.musicfetch.app"`) and a `ditto` zip.
+- `scripts/build-macos-app.sh` → `dist/Music Fetch.app` (universal arm64 + x86_64, macOS 15+,
+  ad-hoc signed with the stable designated requirement `identifier "local.musicfetch.app"`)
+  and a `ditto` zip.
 - `scripts/build-android-app.sh` → signed release APK.
 - CI (GitHub Actions): Rust fmt/clippy/test on macOS; Android assembleRelease (unsigned)
   on Ubuntu; macOS app build on macos-26.

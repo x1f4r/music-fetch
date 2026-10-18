@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build "Music Fetch.app" for Apple silicon, ad-hoc signed with a stable designated
-# requirement, and zip it for release.
+# Build "Music Fetch.app" as a universal app (Apple silicon and Intel, macOS 15 or
+# later), ad-hoc signed with a stable designated requirement, and zip it for release.
 #
 #   scripts/build-macos-app.sh [--install] [--offline]
 #
@@ -11,12 +11,14 @@
 #
 # Output:
 #   dist/Music Fetch.app
-#   dist/MusicFetch-<version>-macOS-arm64.zip
+#   dist/MusicFetch-<version>-macOS-universal.zip
 #
-# Steps: build-core-apple.sh, fetch-macos-runtime.sh, xcodegen, xcodebuild (Release),
-# copy the runtime into Contents/Resources/runtime, sign every Mach-O in it ad-hoc,
-# then sign the app with `designated => identifier "local.musicfetch.app"` so macOS
-# privacy permissions (microphone, system audio) survive rebuilds.
+# Steps: build-core-apple.sh, fetch-macos-runtime.sh, xcodegen, xcodebuild (Release,
+# arm64 + x86_64), copy the runtime into Contents/Resources/runtime, check that every
+# Mach-O carries both architectures and runs on macOS 15, sign every Mach-O in the
+# runtime ad-hoc, then sign the app with apple/Signing.rqs
+# (`designated => identifier "local.musicfetch.app"`) so macOS privacy permissions
+# (microphone, system audio) survive rebuilds.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,7 +28,9 @@ DERIVED_DATA="$BUILD_DIR/DerivedData"
 DIST_DIR="$ROOT_DIR/dist"
 APP_NAME="Music Fetch"
 BUNDLE_ID="local.musicfetch.app"
-REQUIREMENT="designated => identifier \"$BUNDLE_ID\""
+REQUIREMENTS_FILE="$APPLE_DIR/Signing.rqs"
+ARCHS=(arm64 x86_64)
+MIN_MACOS="15.0"
 BUILT_APP="$DERIVED_DATA/Build/Products/Release/$APP_NAME.app"
 DIST_APP="$DIST_DIR/$APP_NAME.app"
 INSTALL_DIR="${MF_INSTALL_DIR:-/Applications/$APP_NAME.app}"
@@ -84,7 +88,7 @@ if ! xcodebuild build \
   -destination "generic/platform=macOS" \
   -derivedDataPath "$DERIVED_DATA" \
   -clonedSourcePackagesDirPath "$BUILD_DIR/SourcePackages" \
-  ARCHS=arm64 \
+  ARCHS="${ARCHS[*]}" \
   ONLY_ACTIVE_ARCH=NO \
   CODE_SIGN_IDENTITY=- \
   CODE_SIGN_STYLE=Manual \
@@ -107,31 +111,50 @@ ditto "$BUILD_DIR/runtime" "$RUNTIME_DEST"
 # Settings › About › Licenses (nothing else from the metadata is kept).
 LICENSES_DIR="$DIST_APP/Contents/Resources/Licenses"
 mkdir -p "$LICENSES_DIR"
-(
-  cd "$ROOT_DIR/core"
-  PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH" \
-    cargo metadata --format-version 1 --locked --filter-platform aarch64-apple-darwin
-) | jq '
-  . as $m
-  | ($m.resolve.nodes
-      | map({key: .id, value: [.deps[] | select(any(.dep_kinds[]; .kind == null)) | .pkg]})
-      | from_entries) as $graph
-  | ($m.packages[] | select(.name == "mfcore") | .id) as $root
-  | {seen: {}, queue: [$root]}
-  | until(.queue | length == 0;
-      .queue[0] as $id
-      | .queue |= .[1:]
-      | if .seen[$id] then . else (.seen[$id] = true | .queue += ($graph[$id] // [])) end)
-  | (.seen | keys) as $ids
-  | [$m.packages[] | select(.id as $id | $ids | index($id)) | select(.name != "mfcore")
-      | {name, version, license}]
-  | unique_by(.name + " " + .version)
-  | sort_by(.name)' >"$LICENSES_DIR/rust-crates.json" || die "listing the engine crates failed"
+for target in aarch64-apple-darwin x86_64-apple-darwin; do
+  (
+    cd "$ROOT_DIR/core"
+    PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH" \
+      cargo metadata --format-version 1 --locked --filter-platform "$target"
+  ) | jq '
+    . as $m
+    | ($m.resolve.nodes
+        | map({key: .id, value: [.deps[] | select(any(.dep_kinds[]; .kind == null)) | .pkg]})
+        | from_entries) as $graph
+    | ($m.packages[] | select(.name == "mfcore") | .id) as $root
+    | {seen: {}, queue: [$root]}
+    | until(.queue | length == 0;
+        .queue[0] as $id
+        | .queue |= .[1:]
+        | if .seen[$id] then . else (.seen[$id] = true | .queue += ($graph[$id] // [])) end)
+    | (.seen | keys) as $ids
+    | [$m.packages[] | select(.id as $id | $ids | index($id)) | select(.name != "mfcore")
+        | {name, version, license}]' || die "listing the engine crates failed"
+done | jq -s 'add | unique_by(.name + " " + .version) | sort_by(.name)' >"$LICENSES_DIR/rust-crates.json" ||
+  die "listing the engine crates failed"
 echo "    $(jq length "$LICENSES_DIR/rust-crates.json") crate licenses listed"
 # Finder info and other xattr detritus fail strict signature verification.
 xattr -cr "$DIST_APP"
 
-# 5. Sign nested code first (python, lib-dynload, qjs), then the bundle.
+# 5. Every Mach-O must be universal and run on the oldest supported macOS.
+log "Checking architectures"
+version_le() { [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -t . -k 1,1n -k 2,2n -k 3,3n | head -n 1)" == "$1" ]]; }
+macho=0
+while IFS= read -r -d '' file; do
+  file -b "$file" | grep -q '^Mach-O' || continue
+  macho=$((macho + 1))
+  archs="$(lipo -archs "$file")"
+  for arch in "${ARCHS[@]}"; do
+    [[ " $archs " == *" $arch "* ]] || die "${file#"$DIST_APP"/} lacks $arch ($archs)"
+  done
+  while read -r minos; do
+    version_le "$minos" "$MIN_MACOS" || die "${file#"$DIST_APP"/} requires macOS $minos"
+  done < <(otool -l "$file" | awk '/LC_BUILD_VERSION/ { b = 1 } b && $1 == "minos" { print $2; b = 0 }
+                                    /LC_VERSION_MIN_MACOSX/ { v = 1 } v && $1 == "version" { print $2; v = 0 }')
+done < <(find "$DIST_APP" -type f -print0)
+echo "    $macho Mach-O files, all ${ARCHS[*]}, macOS $MIN_MACOS or older"
+
+# 6. Sign nested code first (python, lib-dynload, qjs), then the bundle.
 log "Signing"
 signed=0
 while IFS= read -r -d '' file; do
@@ -143,21 +166,21 @@ done < <(find "$RUNTIME_DEST" -type f -print0)
 ((signed > 0)) || die "no Mach-O files found in the runtime"
 echo "    $signed runtime binaries signed ad-hoc"
 # A fixed designated requirement keeps the TCC identity stable across ad-hoc builds.
-sign --requirements "=$REQUIREMENT" "$DIST_APP"
+sign --requirements "$REQUIREMENTS_FILE" "$DIST_APP"
 
 codesign --verify --deep --strict --verbose=1 "$DIST_APP"
 designated="$(codesign --display --requirements - "$DIST_APP" 2>/dev/null | sed -n 's/^designated => //p')"
 [[ "$designated" == "identifier \"$BUNDLE_ID\"" ]] || die "unexpected designated requirement: $designated"
 echo "    designated => $designated"
 
-# 6. Release zip.
+# 7. Release zip.
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$DIST_APP/Contents/Info.plist")"
-ZIP="$DIST_DIR/MusicFetch-$VERSION-macOS-arm64.zip"
+ZIP="$DIST_DIR/MusicFetch-$VERSION-macOS-universal.zip"
 rm -f "$ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$DIST_APP" "$ZIP"
 log "Built ${DIST_APP#"$ROOT_DIR"/} ($(dir_size "$DIST_APP")) and ${ZIP#"$ROOT_DIR"/} ($(file_size "$ZIP"))"
 
-# 7. Optional install with rollback.
+# 8. Optional install with rollback.
 if ((INSTALL_APP)); then
   log "Installing to $INSTALL_DIR"
   [[ -w "$(dirname "$INSTALL_DIR")" ]] || die "$(dirname "$INSTALL_DIR") is not writable for $(id -un)"

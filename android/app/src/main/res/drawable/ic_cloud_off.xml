@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material Symbols "cloud_off" (outlined, Apache 2.0); its path uses y in -960..0. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group android:translateY="960">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="M792,-56L686,-160L260,-160Q168,-160 104,-224Q40,-288 40,-380Q40,-457 87.5,-517Q135,-577 210,-594Q213,-602 216,-609.5Q219,-617 222,-626L56,-792L112,-848L848,-112L792,-56ZM260,-240L606,-240L284,-562Q282,-551 281,-541Q280,-531 280,-520L260,-520Q202,-520 161,-479Q120,-438 120,-380Q120,-322 161,-281Q202,-240 260,-240ZM864,-210L806,-266Q823,-280 831.5,-298.5Q840,-317 840,-340Q840,-382 811,-411Q782,-440 740,-440L680,-440L680,-520Q680,-603 621.5,-661.5Q563,-720 480,-720Q453,-720 428,-713.5Q403,-707 380,-693L322,-751Q357,-775 396.5,-787.5Q436,-800 480,-800Q597,-800 678.5,-718.5Q760,-637 760,-520Q829,-512 874.5,-460.5Q920,-409 920,-340Q920,-301 905,-267.5Q890,-234 864,-210Z" />
+    </group>
+</vector>

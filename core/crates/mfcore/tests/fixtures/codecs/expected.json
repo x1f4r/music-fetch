@@ -1,0 +1,56 @@
+{
+  "aac-44k-stereo.m4a": {
+    "peak": 20017,
+    "rms": 6765.7,
+    "samples": 16000,
+    "window_start": 6000
+  },
+  "flac-44k-mono.flac": {
+    "peak": 15275,
+    "rms": 6764.1,
+    "samples": 8000,
+    "window_start": 2000
+  },
+  "mediarecorder-chrome.webm": {
+    "peak": 16468,
+    "rms": 7884.2,
+    "samples": 25920,
+    "window_start": 10960
+  },
+  "mediarecorder-firefox.ogg": {
+    "peak": 16107,
+    "rms": 7827.8,
+    "samples": 26283,
+    "window_start": 11141
+  },
+  "mp3-44k-stereo.mp3": {
+    "peak": 14550,
+    "rms": 6427.3,
+    "samples": 16000,
+    "window_start": 6000
+  },
+  "opus-48k-stereo.opus": {
+    "peak": 15378,
+    "rms": 6766.7,
+    "samples": 16000,
+    "window_start": 6000
+  },
+  "opus-48k-stereo.webm": {
+    "peak": 15378,
+    "rms": 6721.5,
+    "samples": 16216,
+    "window_start": 6108
+  },
+  "vorbis-48k-stereo.ogg": {
+    "peak": 15671,
+    "rms": 6768.7,
+    "samples": 16000,
+    "window_start": 6000
+  },
+  "wav-22k-stereo.wav": {
+    "peak": 15281,
+    "rms": 6764.1,
+    "samples": 8000,
+    "window_start": 2000
+  }
+}

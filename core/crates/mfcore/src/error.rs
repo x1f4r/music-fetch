@@ -3,7 +3,8 @@
 use crate::model::ErrorCode;
 
 /// Error returned by `Engine` methods.
-#[derive(Debug, Clone, PartialEq, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Error))]
 pub enum MfError {
     #[error("{message}")]
     InvalidInput { message: String },
@@ -58,6 +59,7 @@ impl MfError {
     }
 }
 
+#[cfg(feature = "store")]
 impl From<rusqlite::Error> for MfError {
     fn from(e: rusqlite::Error) -> Self {
         MfError::Storage { message: e.to_string() }
@@ -70,6 +72,7 @@ impl From<std::io::Error> for MfError {
     }
 }
 
+#[cfg(feature = "net")]
 impl From<reqwest::Error> for MfError {
     fn from(e: reqwest::Error) -> Self {
         MfError::Network { message: e.to_string() }
@@ -83,7 +86,8 @@ impl From<serde_json::Error> for MfError {
 }
 
 /// Error returned by app-implemented platform services.
-#[derive(Debug, Clone, PartialEq, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Error))]
 pub enum PlatformError {
     #[error("{message}")]
     Failed { message: String },
@@ -96,6 +100,7 @@ pub enum PlatformError {
     NotSupported,
 }
 
+#[cfg(feature = "ffi")]
 impl From<uniffi::UnexpectedUniFFICallbackError> for PlatformError {
     fn from(e: uniffi::UnexpectedUniFFICallbackError) -> Self {
         PlatformError::Failed { message: e.reason }

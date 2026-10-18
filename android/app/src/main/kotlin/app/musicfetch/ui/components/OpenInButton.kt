@@ -31,16 +31,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.musicfetch.R
-import app.musicfetch.core.Service
-import app.musicfetch.core.ServiceLink
 import app.musicfetch.core.Track
+import app.musicfetch.platform.OpenTarget
+import app.musicfetch.platform.ProviderPreference
 import app.musicfetch.platform.ServiceLinkOpener
 import app.musicfetch.platform.displayName
 
-/** Opens track links in the user's service, with "Search the web" as the last resort. */
+/** Opens track links in the user's provider, with "Search the web" as the last resort. */
 object TrackLinks {
-    fun open(context: Context, link: ServiceLink) {
-        if (!ServiceLinkOpener.open(context, link)) noApp(context)
+    fun open(context: Context, target: OpenTarget) {
+        if (!ServiceLinkOpener.open(context, target)) noApp(context)
     }
 
     fun searchWeb(context: Context, track: Track) {
@@ -53,21 +53,32 @@ object TrackLinks {
     }
 }
 
+/** The provider's name as the primary button says it ("Open in YouTube Music"). */
+val OpenTarget.providerName: String
+    get() = when (this) {
+        is OpenTarget.Link -> link.service.displayName
+        is OpenTarget.Custom -> name
+    }
+
+/** A menu entry: the provider, marked when it opens a search rather than the track. */
+@Composable
+fun OpenTarget.menuLabel(): String =
+    if (this is OpenTarget.Link && link.isSearch) stringResource(R.string.result_search, providerName) else providerName
+
 /**
- * "Open in Spotify | ▾" (docs/design/DESIGN.md §5.11): the leading part opens the default
- * service (directly in its app when installed); the chevron lists every service link in the
- * standard order, then "Search the web".
+ * "Open in YouTube Music | ▾" (docs/design/DESIGN.md §5.11, docs/APPS.md "Opening links"):
+ * the leading part opens the preferred provider (directly in its app when installed); the
+ * chevron opens the track once in any other provider, exact links first, then "Search the web".
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun OpenInSplitButton(track: Track, preferred: Service, modifier: Modifier = Modifier, height: Dp = 56.dp) {
+fun OpenInSplitButton(track: Track, preference: ProviderPreference, modifier: Modifier = Modifier, height: Dp = 56.dp) {
     val context = LocalContext.current
-    val primary = remember(track, preferred) { ServiceLinkOpener.pick(track.links, preferred) }
-    val menu = remember(track) { ServiceLinkOpener.menu(track.links) }
+    val choices = remember(track, preference) { ServiceLinkOpener.choices(track, preference) }
+    val primary = choices.primary
     var expanded by remember { mutableStateOf(false) }
     val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
-    val label = primary?.let { stringResource(R.string.result_open_in, it.service.displayName) }
-        ?: stringResource(R.string.result_search_web)
+    val label = primary?.let { stringResource(R.string.result_open_in, it.providerName) } ?: stringResource(R.string.result_search_web)
     val textStyle = if (height >= 56.dp) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge
     val moreDescription = stringResource(R.string.result_more_services)
     SplitButtonLayout(
@@ -98,31 +109,22 @@ fun OpenInSplitButton(track: Track, preferred: Service, modifier: Modifier = Mod
                     )
                 }
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    for (link in menu) {
-                        val name = if (link.service == Service.WEB) {
-                            stringResource(R.string.result_search_web)
-                        } else if (link.isSearch) {
-                            stringResource(R.string.result_search, link.service.displayName)
-                        } else {
-                            link.service.displayName
-                        }
+                    for (target in choices.others) {
                         DropdownMenuItem(
-                            text = { Text(name) },
+                            text = { Text(target.menuLabel()) },
                             onClick = {
                                 expanded = false
-                                TrackLinks.open(context, link)
+                                TrackLinks.open(context, target)
                             },
                         )
                     }
-                    if (menu.none { it.service == Service.WEB }) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.result_search_web)) },
-                            onClick = {
-                                expanded = false
-                                TrackLinks.searchWeb(context, track)
-                            },
-                        )
-                    }
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.result_search_web)) },
+                        onClick = {
+                            expanded = false
+                            TrackLinks.searchWeb(context, track)
+                        },
+                    )
                 }
             }
         },

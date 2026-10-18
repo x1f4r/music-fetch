@@ -4,21 +4,41 @@
 //! `resolve` turns whatever the user pasted into either track metadata
 //! (streaming services) or a media URL for the media backend, plus whatever
 //! cheap page information exists (title, uploader, thumbnail, attribution hints).
+//!
+//! Without the `net` feature only canonicalization, site detection and deep
+//! links remain.
 
+// The track helpers below serve the resolvers and catalog enrichment (`net`).
+#![cfg_attr(not(feature = "net"), allow(dead_code, unused_imports))]
+
+#[cfg(feature = "net")]
 mod amazon;
+#[cfg(feature = "net")]
 mod apple;
 mod canonical;
+#[cfg(feature = "net")]
 mod deezer;
+#[cfg(feature = "net")]
 pub(crate) mod fetch;
+#[cfg(feature = "net")]
 mod generic;
+#[cfg(feature = "net")]
 mod html;
+#[cfg(feature = "net")]
 mod media_sites;
 mod site;
+#[cfg(feature = "net")]
 mod spotify;
+#[cfg(feature = "net")]
 mod ssrf;
+#[cfg(feature = "net")]
 mod tidal;
+#[cfg(feature = "net")]
 mod tiktok;
+#[cfg(feature = "net")]
 mod youtube;
+#[cfg(feature = "engine")]
+pub mod youtube_api;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -27,9 +47,12 @@ use serde::Serialize;
 use url::Url;
 
 pub use canonical::{SHORTENER_HOSTS, TRACKING_QUERY_KEYS, canonicalize, extract_url, looks_like_url};
+#[cfg(feature = "net")]
 pub use fetch::http_client;
+#[cfg(feature = "net")]
 pub(crate) use html::year_of;
 pub use site::Site;
+#[cfg(feature = "net")]
 pub use ssrf::{assert_public_url, ensure_public_url, is_public_ip};
 
 use crate::error::{MfError, Result};
@@ -59,6 +82,7 @@ impl Resolution {
 }
 
 /// Everything a resolver needs.
+#[cfg(feature = "net")]
 pub(crate) struct Ctx<'a> {
     pub http: &'a reqwest::Client,
     /// Lowercase ISO 3166-1 alpha-2 storefront.
@@ -70,6 +94,7 @@ pub(crate) struct Ctx<'a> {
 ///
 /// `url` may be shared text containing a link ("Check this out https://…").
 /// `country` is the storefront used where a link does not name one.
+#[cfg(feature = "net")]
 pub async fn resolve(http: &reqwest::Client, url: &str, country: &str, cancel: &CancelToken) -> Result<Resolution> {
     let text = extract_url(url).ok_or_else(|| MfError::invalid("That doesn't look like a link."))?;
     let parsed = canonical::parse_http_url(&text)?;
@@ -83,8 +108,13 @@ pub(crate) fn storefront(country: &str) -> String {
     if cc.len() == 2 && cc.chars().all(|c| c.is_ascii_lowercase()) { cc } else { "us".to_string() }
 }
 
+#[cfg(not(target_family = "wasm"))]
 type BoxedResolution<'a> = Pin<Box<dyn Future<Output = Result<Resolution>> + Send + 'a>>;
+/// fetch() futures hold JS values, which are not `Send`.
+#[cfg(target_family = "wasm")]
+type BoxedResolution<'a> = Pin<Box<dyn Future<Output = Result<Resolution>> + 'a>>;
 
+#[cfg(feature = "net")]
 fn resolve_url<'a>(ctx: &'a Ctx<'a>, url: Url, depth: u8) -> BoxedResolution<'a> {
     Box::pin(async move {
         ctx.cancel.check()?;
@@ -280,6 +310,7 @@ mod tests {
         assert_eq!(json["direct"], true);
     }
 
+    #[cfg(feature = "net")]
     #[tokio::test]
     async fn rejects_non_links_and_private_targets() {
         let http = fetch::test_client();

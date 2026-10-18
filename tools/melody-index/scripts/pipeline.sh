@@ -20,6 +20,8 @@ run() {
 if [ "${SKIP_UNIVERSE:-0}" != 1 ]; then
   run universe > "$LOGS/universe.out" 2>&1 || exit 1
 fi
+# Evergreen tunes after the universe (it resets chart scores the list lifts).
+run evergreen > "$LOGS/evergreen.out" 2>&1 || exit 1
 run midi --step catalog > "$LOGS/midi-catalog.out" 2>&1 || exit 1
 run midi --step link > "$LOGS/midi-link.out" 2>&1 || exit 1
 
@@ -40,9 +42,24 @@ run resolve --retry-not-found >> "$LOGS/resolve.out" 2>&1
 run extract >> "$LOGS/extract.out" 2>&1
 run years > "$LOGS/years.out" 2>&1
 
+# Full tracks of the most popular songs (YouTube; hours at a sustainable pace). Opt in with
+# MFIDX_FULLTRACK_TOP=3000; resumable, so later runs continue where this one stopped.
+if [ -n "${MFIDX_FULLTRACK_TOP:-}" ]; then
+  run fulltrack --top "$MFIDX_FULLTRACK_TOP" --interval "${MFIDX_FULLTRACK_INTERVAL:-25}" >> "$LOGS/fulltrack.out" 2>&1
+fi
+
+# Verified full tracks and second windows from several sources (days for the top 15k; see
+# README 3c). It usually runs on its own as a long-lived service; opt in here with
+# MFIDX_REFS_TOP=15000. Resumable, and the exports below use whatever it has stored so far.
+if [ -n "${MFIDX_REFS_TOP:-}" ]; then
+  run refs --top "$MFIDX_REFS_TOP" >> "$LOGS/refs.out" 2>&1
+fi
+
 run validate > "$LOGS/validate.out" 2>&1
 run famous > "$MFIDX_ROOT/out/famous.json" 2> "$LOGS/famous.out"
 run export > "$LOGS/export.out" 2>&1 || exit 1
+run export --tier android >> "$LOGS/export.out" 2>&1 || exit 1
+run export --tier mac >> "$LOGS/export.out" 2>&1 || exit 1
 run eval-synth > "$LOGS/eval-synth.out" 2>&1
 run eval-chad > "$LOGS/eval-chad.out" 2>&1
 

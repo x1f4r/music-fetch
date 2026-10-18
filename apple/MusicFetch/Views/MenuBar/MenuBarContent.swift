@@ -10,7 +10,7 @@ struct MenuBarContent: View {
     var body: some View {
         let listen = app.listen!
         VStack(spacing: 0) {
-            GlassEffectContainer(spacing: 24) {
+            GlassContainer(spacing: 24) {
                 ListenButton(listen: listen, diameter: 72)
                     .frame(height: 96)
             }
@@ -23,9 +23,14 @@ struct MenuBarContent: View {
                 .padding(.top, 4)
                 .contentTransition(.opacity)
                 .animation(.easeInOut(duration: 0.15), value: listen.stateLine)
-            ActionRow(listen: listen, compact: true)
+            SourceToggles(listen: listen, compact: true)
                 .frame(height: 28)
                 .padding(.top, 12)
+            if !listen.recoveryActions.isEmpty {
+                RecoveryRow(listen: listen, compact: true)
+                    .frame(height: 28)
+                    .padding(.top, 8)
+            }
 
             if let recent = app.library.recent {
                 Divider().padding(.top, 16)

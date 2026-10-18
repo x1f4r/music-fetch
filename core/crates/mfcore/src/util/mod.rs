@@ -1,12 +1,19 @@
-//! Shared helpers: cancellation, HTTP, rate limiting, temp files, time.
+//! Shared helpers: cancellation, work files, HTTP and test endpoints, rate limiting, system info, clocks and timers.
 
 pub mod cancel;
+pub mod endpoints;
+pub mod files;
+#[cfg(feature = "store")]
+pub mod files_sqlite;
+#[cfg(feature = "net")]
 pub mod http;
 pub mod ratelimit;
+pub mod rt;
+pub mod system;
 
 /// Current Unix time in milliseconds.
 pub fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    rt::SystemTime::now().duration_since(rt::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 /// New random id (UUID v4, lowercase, hyphenated).

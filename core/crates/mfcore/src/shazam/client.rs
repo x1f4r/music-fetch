@@ -9,12 +9,20 @@
 //! cool-down fits its priority (interactive 10 s, batch 10 min) and fails with
 //! `RateLimited` otherwise. Answers, including "no match", are cached by the
 //! SHA-256 of the signature.
+//!
+//! With [`ShazamClient::with_state`] the breaker, its back-off and the spacing
+//! survive a restart (see `state.rs`). Headers come from the `shazam` header
+//! rule; one of eight Android agents is picked per request, and a
+//! [`HeaderRuleHost`] (the browser extension) installs that agent before the
+//! request is sent.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::Mutex;
-use reqwest::header::{ACCEPT, CONTENT_LANGUAGE, HeaderMap, RETRY_AFTER, USER_AGENT};
+use reqwest::header::{ACCEPT, CONTENT_LANGUAGE, HeaderMap, RETRY_AFTER};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -23,10 +31,14 @@ use crate::model::Track;
 use crate::shazam::Signature;
 use crate::shazam::response::parse_match;
 use crate::shazam::signature::MIN_SAMPLES;
+use crate::shazam::state::{self, StateStore};
 use crate::util::cancel::CancelToken;
-use crate::util::ratelimit::RateLimiter;
+use crate::util::http::{HeaderRule, HeaderRuleHost, HeaderRuleId, SHAZAM_USER_AGENTS};
+use crate::util::ratelimit::{LimiterSnapshot, RateLimiter};
+use crate::util::rt::Instant;
 
-const ENDPOINT: &str = "https://amp.shazam.com";
+/// Origin of the recognizer (also used to tell "offline" from "no match").
+pub const ENDPOINT: &str = "https://amp.shazam.com";
 const QUERY: &str = "sync=true&webv3=true&sampling=true&connected=&shazamapiversion=v3&sharehub=true&video=v3";
 const CACHE_CAPACITY: usize = 256;
 /// Upper bound on breaker rounds within one `recognize` call.
@@ -35,18 +47,7 @@ const MAX_THROTTLE_ROUNDS: u32 = 6;
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 /// Fixed request context; never derived from the user.
 const TIMEZONE: &str = "Europe/Paris";
-
-/// Generic Android client strings, one picked per request.
-const USER_AGENTS: [&str; 8] = [
-    "Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8 Build/AP2A.240805.005)",
-    "Dalvik/2.1.0 (Linux; U; Android 14; SM-S921B Build/UP1A.231005.007)",
-    "Dalvik/2.1.0 (Linux; U; Android 13; SM-S911B Build/TP1A.220624.014)",
-    "Dalvik/2.1.0 (Linux; U; Android 13; Pixel 7 Build/TQ3A.230901.001)",
-    "Dalvik/2.1.0 (Linux; U; Android 12; SM-G991B Build/SP1A.210812.016)",
-    "Dalvik/2.1.0 (Linux; U; Android 11; Mi 10T Pro Build/RKQ1.200826.002)",
-    "Dalvik/2.1.0 (Linux; U; Android 10; SM-G973F Build/QP1A.190711.020)",
-    "Dalvik/2.1.0 (Linux; U; Android 9; SM-G960F Build/PPR1.180610.011)",
-];
+const STATE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Priority {
@@ -130,10 +131,25 @@ pub struct ShazamClient {
     queue: tokio::sync::Mutex<QueueState>,
     breaker_until: Mutex<Option<Instant>>,
     cache: Mutex<LruCache>,
+    rule_host: Option<Arc<dyn HeaderRuleHost>>,
+    store: Option<(Arc<dyn StateStore>, String)>,
 }
 
 struct QueueState {
     last_sent: Option<Instant>,
+}
+
+/// What survives a restart (relative to `saved_ms`, see `state.rs`).
+#[derive(Debug, Serialize, Deserialize)]
+struct Saved {
+    v: u32,
+    saved_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_sent_ago_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    breaker_left_ms: Option<u64>,
+    #[serde(default)]
+    limiter: LimiterSnapshot,
 }
 
 /// Outcome of one HTTP exchange.
@@ -168,6 +184,8 @@ impl ShazamClient {
             queue: tokio::sync::Mutex::new(QueueState { last_sent: None }),
             breaker_until: Mutex::new(None),
             cache: Mutex::new(LruCache::new(CACHE_CAPACITY)),
+            rule_host: None,
+            store: None,
         }
     }
 
@@ -182,6 +200,42 @@ impl ShazamClient {
     pub fn with_base_url(mut self, base_url: &str) -> Self {
         self.base_url = base_url.trim_end_matches('/').to_string();
         self
+    }
+
+    /// Install header rules through `host` before every request (the browser).
+    pub fn with_rule_host(mut self, host: Arc<dyn HeaderRuleHost>) -> Self {
+        self.rule_host = Some(host);
+        self
+    }
+
+    /// Keep the breaker, back-off and spacing in `store`: restore what an earlier
+    /// run left and save after every request and throttle. Call after
+    /// [`with_base_url`](Self::with_base_url) and [`with_policy`](Self::with_policy);
+    /// the state belongs to the endpoint.
+    pub fn with_state(mut self, store: Arc<dyn StateStore>) -> Self {
+        let key = state::key("client", &self.base_url);
+        if let Some(saved) = store.load(&key).and_then(|s| serde_json::from_str::<Saved>(&s).ok())
+            && saved.v == STATE_VERSION
+        {
+            let elapsed = state::elapsed_since(saved.saved_ms);
+            let now = Instant::now();
+            self.limiter.restore(&saved.limiter, elapsed);
+            let breaker = state::deadline(saved.breaker_left_ms, elapsed, now);
+            *self.breaker_until.get_mut() = breaker;
+            self.queue.get_mut().last_sent = saved
+                .last_sent_ago_ms
+                .and_then(|ago| now.checked_sub(Duration::from_millis(ago).saturating_add(elapsed)));
+            if let Some(until) = breaker {
+                tracing::info!(cooldown_s = (until - now).as_secs(), "shazam back-off restored");
+            }
+        }
+        self.store = Some((store, key));
+        self
+    }
+
+    /// The endpoint requests go to.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     pub fn policy(&self) -> &QueuePolicy {
@@ -245,10 +299,12 @@ impl ShazamClient {
                 cancel.sleep(ready - Instant::now()).await?;
                 continue;
             }
-            match self.send_with_retries(&mut queue, signature, max_wait, cancel).await {
+            let outcome = self.send_with_retries(&mut queue, signature, max_wait, cancel).await;
+            match outcome {
                 Ok(result) => {
                     self.limiter.success();
                     *self.breaker_until.lock() = None;
+                    self.persist(queue.last_sent);
                     self.cache.lock().insert(key, result.clone());
                     return Ok(result);
                 }
@@ -257,9 +313,13 @@ impl ShazamClient {
                     let retry_after = retry_after.map(|d| d.min(MAX_RETRY_AFTER));
                     let wait = self.limiter.throttled(self.policy.breaker_base, self.policy.breaker_max, retry_after);
                     *self.breaker_until.lock() = Some(later(Instant::now(), wait));
+                    self.persist(queue.last_sent);
                     tracing::warn!(cooldown_s = wait.as_secs(), "shazam throttled; circuit breaker open");
                 }
-                Err(Failure::Error(e)) => return Err(e),
+                Err(Failure::Error(e)) => {
+                    self.persist(queue.last_sent);
+                    return Err(e);
+                }
             }
         }
     }
@@ -301,6 +361,22 @@ impl ShazamClient {
         Err(Failure::Error(last_error.unwrap_or_else(|| MfError::network("Shazam did not answer."))))
     }
 
+    /// Save the back-off state (no-op without a store).
+    fn persist(&self, last_sent: Option<Instant>) {
+        let Some((store, key)) = &self.store else { return };
+        let now = Instant::now();
+        let saved = Saved {
+            v: STATE_VERSION,
+            saved_ms: crate::util::now_ms(),
+            last_sent_ago_ms: last_sent.map(|t| now.saturating_duration_since(t).as_millis() as u64),
+            breaker_left_ms: state::left(*self.breaker_until.lock(), now),
+            limiter: self.limiter.snapshot(),
+        };
+        if let Ok(json) = serde_json::to_string(&saved) {
+            store.save(key, &json);
+        }
+    }
+
     async fn send_once(&self, signature: &Signature, cancel: &CancelToken) -> Attempt {
         let url = format!(
             "{}/discovery/v5/{}/{}/android/-/tag/{}/{}?{QUERY}",
@@ -310,16 +386,26 @@ impl ShazamClient {
             uuid::Uuid::new_v4().to_string().to_ascii_uppercase(),
             uuid::Uuid::new_v4(),
         );
-        let request = self
-            .http
-            .post(url)
-            .header(USER_AGENT, USER_AGENTS[fastrand::usize(..USER_AGENTS.len())])
+        // One agent per request; in the browser the host installs it as a rule first.
+        let agent = fastrand::usize(..SHAZAM_USER_AGENTS.len());
+        if let Some(host) = &self.rule_host {
+            tokio::select! {
+                () = host.prepare(HeaderRuleId::Shazam, agent) => {}
+                _ = cancel.canceled() => return Attempt::Fatal(MfError::Canceled),
+            }
+        }
+        // The rule's prefix names the public endpoint; tests and the stub use other origins.
+        let rule = HeaderRule::new(HeaderRuleId::Shazam, "", agent);
+        let request = rule
+            .set
+            .iter()
+            .fold(self.http.post(url), |r, (name, value)| r.header(name.as_str(), value.as_str()))
             .header(CONTENT_LANGUAGE, &self.content_language)
             .header(ACCEPT, "application/json")
             .json(&request_body(signature, crate::util::now_ms()))
             .timeout(self.policy.request_timeout);
         let response = tokio::select! {
-            r = request.send() => r,
+            r = crate::util::http::prepare(request).send() => r,
             _ = cancel.canceled() => return Attempt::Fatal(MfError::Canceled),
         };
         let response = match response {
@@ -366,7 +452,7 @@ fn request_body(signature: &Signature, now_ms: i64) -> Value {
 fn transport_error(e: &reqwest::Error) -> MfError {
     let message = if e.is_timeout() {
         "Shazam did not answer in time."
-    } else if e.is_connect() {
+    } else if crate::util::http::is_connect(e) {
         "Could not connect to Shazam."
     } else {
         "The connection to Shazam failed."
@@ -684,6 +770,83 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(250));
         canceller.await.unwrap();
         assert_eq!(client.recognize(&sig(32), Priority::Batch, &cancel).await.unwrap_err(), MfError::Canceled);
+    }
+
+    #[tokio::test]
+    async fn the_breaker_and_spacing_survive_a_restart() {
+        let server = TestServer::start(vec![Reply::new(429, "").header("Retry-After", "1"), Reply::json(200, FIXTURE)]);
+        let store: Arc<dyn StateStore> = Arc::new(crate::shazam::MemoryState::default());
+        let first = client(&server).with_state(store.clone());
+        let err = first.recognize(&sig(40), Priority::Interactive, &CancelToken::new()).await.unwrap_err();
+        assert!(matches!(err, MfError::RateLimited { .. }));
+        drop(first);
+
+        // A new client (an engine restart, a recycled browser Worker) is still cooling down.
+        let second = client(&server).with_state(store.clone());
+        let cooldown = second.cooldown().expect("breaker restored");
+        assert!(cooldown > Duration::from_millis(700) && cooldown <= Duration::from_millis(1200), "{cooldown:?}");
+        let err = second.recognize(&sig(41), Priority::Interactive, &CancelToken::new()).await.unwrap_err();
+        assert!(matches!(err, MfError::RateLimited { .. }), "no request while the restored breaker is open");
+        assert_eq!(server.requests().len(), 1);
+
+        // A batch request waits the restored cool-down out, then succeeds.
+        let started = Instant::now();
+        assert!(second.recognize(&sig(42), Priority::Batch, &CancelToken::new()).await.unwrap().is_some());
+        assert!(started.elapsed() >= Duration::from_millis(600), "{:?}", started.elapsed());
+        drop(second);
+
+        // The success closed the breaker for the next run too; the batch spacing
+        // (150 ms after the last request) still holds.
+        let third = client(&server).with_state(store);
+        assert!(third.cooldown().is_none());
+        let started = Instant::now();
+        third.recognize(&sig(43), Priority::Batch, &CancelToken::new()).await.unwrap();
+        let at: Vec<Instant> = server.requests().iter().map(|r| r.at).collect();
+        assert_eq!(at.len(), 3);
+        assert!(at[2] - at[1] >= Duration::from_millis(120), "spacing kept across the restart: {:?}", at[2] - at[1]);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn state_is_per_endpoint() {
+        let throttling = TestServer::start(vec![Reply::new(429, "").header("Retry-After", "5")]);
+        let other = TestServer::start(vec![Reply::json(200, FIXTURE)]);
+        let store: Arc<dyn StateStore> = Arc::new(crate::shazam::MemoryState::default());
+        let a = client(&throttling).with_state(store.clone());
+        assert!(a.recognize(&sig(44), Priority::Interactive, &CancelToken::new()).await.is_err());
+        assert!(client(&throttling).with_state(store.clone()).cooldown().is_some());
+        let b = client(&other).with_state(store);
+        assert!(b.cooldown().is_none());
+        assert!(b.recognize(&sig(45), Priority::Interactive, &CancelToken::new()).await.unwrap().is_some());
+    }
+
+    struct Recorder(Mutex<Vec<(HeaderRuleId, usize)>>);
+
+    impl HeaderRuleHost for Recorder {
+        fn prepare(
+            &self,
+            rule: HeaderRuleId,
+            variant: usize,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            self.0.lock().push((rule, variant));
+            Box::pin(async {})
+        }
+    }
+
+    #[tokio::test]
+    async fn the_rule_host_installs_each_requests_agent_first() {
+        let server = TestServer::start(vec![Reply::new(503, ""), Reply::json(200, FIXTURE)]);
+        let host = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let client = client(&server).with_rule_host(host.clone());
+        client.recognize(&sig(46), Priority::Interactive, &CancelToken::new()).await.unwrap();
+        let prepared = host.0.lock().clone();
+        let requests = server.requests();
+        assert_eq!(prepared.len(), 2, "once per attempt");
+        for ((rule, agent), request) in prepared.iter().zip(&requests) {
+            assert_eq!(*rule, HeaderRuleId::Shazam);
+            assert_eq!(request.header("user-agent"), Some(SHAZAM_USER_AGENTS[*agent]));
+            assert_eq!(request.header("origin"), None);
+        }
     }
 
     #[test]

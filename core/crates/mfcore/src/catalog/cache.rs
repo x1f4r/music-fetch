@@ -1,10 +1,12 @@
 //! Small in-memory LRU cache with a time-to-live.
 
 use std::num::NonZeroUsize;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use lru::LruCache;
 use parking_lot::Mutex;
+
+use crate::util::rt::Instant;
 
 /// Thread-safe LRU of cloneable values that expire after `ttl`.
 pub(crate) struct TtlCache<V> {

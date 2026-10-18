@@ -56,8 +56,19 @@ impl AcrCloud {
         Ok(self.identify(wav, cancel).await?.map(|body| humming(&body)).unwrap_or_default())
     }
 
+    /// Humming recognition returning ACRCloud's answer as sent (its status already
+    /// checked), for tools that keep the answers; [`parse_humming`] reads it.
+    pub async fn humming_response(&self, wav: Vec<u8>, cancel: &CancelToken) -> Result<Value> {
+        self.identify_body(wav, cancel).await
+    }
+
     /// Upload the clip; `None` when ACRCloud found nothing.
     async fn identify(&self, wav: Vec<u8>, cancel: &CancelToken) -> Result<Option<Value>> {
+        Ok(Some(self.identify_body(wav, cancel).await?).filter(|b| status_code(b) == Some(0)))
+    }
+
+    /// Upload the clip and return the checked answer (status 0, 1001 or 2004).
+    async fn identify_body(&self, wav: Vec<u8>, cancel: &CancelToken) -> Result<Value> {
         cancel.check()?;
         let access_key = self.creds.access_key.trim();
         let secret = self.creds.access_secret.trim();
@@ -90,8 +101,14 @@ impl AcrCloud {
             .part("sample", sample);
         let body = send_json(self.http.post(format!("{origin}{PATH}")).multipart(form), cancel, SERVICE).await?;
         check_status(&body)?;
-        Ok(Some(body).filter(|b| status_code(b) == Some(0)))
+        Ok(body)
     }
+}
+
+/// The humming matches of an answer from [`AcrCloud::humming_response`], best
+/// first, at most five (none unless its status is 0).
+pub fn parse_humming(body: &Value) -> Vec<ProviderMatch> {
+    if status_code(body) == Some(0) { humming(body) } else { Vec::new() }
 }
 
 /// `"POST\n/v1/identify\n{access_key}\naudio\n1\n{timestamp}"`

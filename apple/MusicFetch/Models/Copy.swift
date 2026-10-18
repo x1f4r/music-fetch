@@ -67,15 +67,21 @@ nonisolated enum Copy {
     static let microphone = String(localized: "Microphone")
     static let thisMac = String(localized: "This Mac")
     static let hum = String(localized: "Hum")
+    /// The Listen menus: one item per method.
+    static let listenWithMicrophone = String(localized: "Listen with Microphone")
+    static let listenToThisMac = String(localized: "Listen to This Mac")
+    static let humWhistleOrSing = String(localized: "Hum, Whistle or Sing")
 
     // MARK: Results
 
-    static func openIn(_ service: Service) -> String {
-        String(localized: "Open in \(name(of: service))")
+    static func openIn(_ name: String) -> String {
+        String(localized: "Open in \(name)")
     }
 
-    static func menuTitle(for link: ServiceLink) -> String {
-        link.isSearch ? String(localized: "\(name(of: link.service)) (search)") : name(of: link.service)
+    /// A provider in the "Open in" menus; search links are marked.
+    static func menuTitle(for link: ProviderLink, custom: CustomProvider) -> String {
+        let name = name(of: link.provider, custom: custom)
+        return link.isSearch ? String(localized: "\(name) (search)") : name
     }
 
     static let searchWeb = String(localized: "Search the web")
@@ -182,6 +188,16 @@ nonisolated enum Copy {
 
     // MARK: Services
 
+    /// A provider's display name; the custom provider shows the name the user gave it.
+    static func name(of provider: Provider, custom: CustomProvider) -> String {
+        switch provider {
+        case .service(let service): name(of: service)
+        case .custom: custom.trimmedName.isEmpty ? customProvider : custom.trimmedName
+        }
+    }
+
+    static let customProvider = String(localized: "Custom")
+
     static func name(of service: Service) -> String {
         switch service {
         case .spotify: "Spotify"
@@ -203,6 +219,16 @@ nonisolated enum Copy {
         case .twitch: "Twitch"
         case .shazam: "Shazam"
         case .genius: "Genius"
+        case .qobuz: "Qobuz"
+        case .pandora: "Pandora"
+        case .audiomack: "Audiomack"
+        case .anghami: "Anghami"
+        case .jioSaavn: "JioSaavn"
+        case .boomplay: "Boomplay"
+        case .kkbox: "KKBOX"
+        case .yandexMusic: "Yandex Music"
+        case .netEaseMusic: "NetEase Cloud Music"
+        case .lastFm: "Last.fm"
         case .web: String(localized: "Web")
         }
     }

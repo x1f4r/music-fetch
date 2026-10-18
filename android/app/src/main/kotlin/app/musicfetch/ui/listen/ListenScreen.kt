@@ -34,12 +34,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,20 +60,27 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ToggleButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -88,6 +97,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -102,13 +112,15 @@ import app.musicfetch.capture.ProjectionGrant
 import app.musicfetch.capture.SongTileService
 import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ListenMode
-import app.musicfetch.core.NoMatchReason
 import app.musicfetch.core.Notice
 import app.musicfetch.core.Phase
 import app.musicfetch.engine.MelodyDownload
 import app.musicfetch.notify.Notifications
 import app.musicfetch.platform.ListenSource
+import app.musicfetch.platform.LocalLowPower
+import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.common.Formatters
+import app.musicfetch.ui.common.tag
 import app.musicfetch.ui.components.Artwork
 import app.musicfetch.ui.components.ButtonGlyph
 import app.musicfetch.ui.components.ButtonRing
@@ -118,7 +130,10 @@ import app.musicfetch.ui.components.PitchTrace
 import app.musicfetch.ui.navigation.LocalNavigator
 import app.musicfetch.ui.navigation.LyricsRoute
 import app.musicfetch.ui.navigation.SessionRoute
+import app.musicfetch.ui.theme.TabularNumbers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlin.coroutines.cancellation.CancellationException
 
 /** Seconds of voiced input the hum ring fills to (docs/design/DESIGN.md §4.4). */
@@ -130,6 +145,7 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
     val context = LocalContext.current
     val navigator = LocalNavigator.current
     val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
     val state by viewModel.listen.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val recent by viewModel.recent.collectAsStateWithLifecycle()
@@ -137,12 +153,15 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
     val linkState by viewModel.linkState.collectAsStateWithLifecycle()
     val melodyStatus by viewModel.melodyStatus.collectAsStateWithLifecycle()
     val melodyDownload by viewModel.melodyDownload.collectAsStateWithLifecycle()
+    val listenRequest by AppIntents.listenRequest.collectAsStateWithLifecycle()
     val source = settings?.listenSource ?: ListenSource.Microphone
     var selectedSource by rememberSaveable { mutableStateOf<ListenSource?>(null) }
     val activeSource = selectedSource ?: source
     var micOff by rememberSaveable { mutableStateOf(false) }
     var phonePrePrompt by rememberSaveable { mutableStateOf(false) }
     var melodyPromptDismissed by rememberSaveable { mutableStateOf(false) }
+    // Phone audio waits for the notification prompt: its result usually arrives as a notification.
+    var phoneAfterNotifications by rememberSaveable { mutableStateOf(false) }
     var backProgress by remember { mutableFloatStateOf(0f) }
     var fieldEmpty by remember { mutableStateOf(true) }
 
@@ -155,9 +174,14 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
     }
     // musicfetch://analyze?url=…
     LaunchedEffect(Unit) {
-        app.musicfetch.ui.AppIntents.linkToAnalyze.collect { url ->
-            if (url != null) app.musicfetch.ui.AppIntents.takeLink()?.let { viewModel.analyze(it) }
+        AppIntents.linkToAnalyze.collect { url ->
+            if (url != null) AppIntents.takeLink()?.let { viewModel.analyze(it) }
         }
+    }
+    // The stage is on screen: tile and widget results open here too (ListenViewModel).
+    DisposableEffect(Unit) {
+        viewModel.stageShown(true)
+        onDispose { viewModel.stageShown(false) }
     }
 
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -168,38 +192,63 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
     }
 
     fun startPhone() {
+        // Development builds can replay a file as phone audio without the consent dialog.
+        if (viewModel.canReplayPhone()) {
+            viewModel.start(ListenSource.Phone)
+            return
+        }
         val manager = context.getSystemService(MediaProjectionManager::class.java) ?: return
         consent.launch(manager.createScreenCaptureIntent())
     }
+
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        if (phoneAfterNotifications) {
+            phoneAfterNotifications = false
+            startPhone()
+        }
+    }
+
+    /** Phone audio runs while another app is in front, so its result comes as a notification: ask first. */
+    fun startPhoneAskingForNotifications() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !Notifications.canPost(context)) {
+            phoneAfterNotifications = true
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            startPhone()
+        }
+    }
+
+    fun hasMic() = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    lateinit var startListening: (ListenSource) -> Unit
 
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         viewModel.micAsked()
         if (granted) {
             micOff = false
-            if (activeSource == ListenSource.Phone) startPhone() else viewModel.start(activeSource)
+            startListening(activeSource)
         } else {
             micOff = true
         }
     }
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-    fun hasMic() = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-    fun startListening(chosen: ListenSource) {
+    /** Select [chosen] and start listening with it, asking for what it needs first. */
+    startListening = { chosen ->
         selectedSource = chosen
         viewModel.selectSource(chosen)
+        phonePrePrompt = false
         if (!hasMic()) {
             val activity = context as? Activity
             val denied = settings?.micExplained == true &&
                 activity?.shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO) == false
             if (denied) micOff = true else micPermission.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-        micOff = false
-        if (chosen == ListenSource.Phone) {
-            if (settings?.phoneAudioExplained == true) startPhone() else phonePrePrompt = true
         } else {
-            viewModel.start(chosen)
+            micOff = false
+            if (chosen == ListenSource.Phone) {
+                if (settings?.phoneAudioExplained == true) startPhoneAskingForNotifications() else phonePrePrompt = true
+            } else {
+                viewModel.start(chosen)
+            }
         }
     }
 
@@ -209,10 +258,29 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
         }
     }
 
-    // Offer the Quick Settings tile once, after the second successful listen.
-    LaunchedEffect(settings?.successfulListens, settings?.tileOffered) {
+    // "Listen again", "Hum it" and deep links: start once the stage is shown and the settings
+    // are read (they decide the permission and pre-prompt steps).
+    val startRequested by rememberUpdatedState(startListening)
+    LaunchedEffect(Unit) {
+        AppIntents.listenRequest.collect { requested ->
+            if (requested == null) return@collect
+            viewModel.settings.first { it != null }
+            val chosen = AppIntents.takeListen() ?: return@collect
+            // A listen started elsewhere (a tile) is already running: the stage shows it.
+            if (viewModel.listen.value.isActive) return@collect
+            startRequested(chosen)
+        }
+    }
+
+    // Offer the Quick Settings tile once, after the second successful listen, when the stage
+    // has been idle for a second (never over a listen the user just asked for).
+    val stageIdle = state.phase == ListenPhase.Idle && link == LinkStage.None && !micOff && !phonePrePrompt
+    LaunchedEffect(settings?.successfulListens, settings?.tileOffered, stageIdle, listenRequest) {
         val s = settings ?: return@LaunchedEffect
-        if (s.successfulListens >= 2 && !s.tileOffered && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (s.successfulListens >= 2 && !s.tileOffered && stageIdle && listenRequest == null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        ) {
+            delay(TILE_OFFER_IDLE_MS)
             viewModel.tileOffered()
             requestSongTile(context)
         }
@@ -247,7 +315,15 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
         )
     }
 
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+    // Beside a navigation rail (landscape, wide screens) nothing else keeps the recent card
+    // clear of the gesture handle; a navigation bar consumes that inset. The keyboard still
+    // covers the stage rather than squeezing it.
+    Column(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+            .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom)),
+    ) {
         LinkField(
             enabled = !state.isActive,
             onSubmit = { text ->
@@ -259,18 +335,22 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
                 viewModel.analyzeFile(uri)
             },
             onEmptyChange = { fieldEmpty = it },
+            onFocus = viewModel::prepareForLink,
             modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp),
         )
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val slots = stageSlots(maxHeight, maxWidth)
             ClipboardSuggestion(
                 visible = fieldEmpty && !state.isActive && link !is LinkStage.Running,
                 onIdentify = { url ->
                     askNotificationsOnce()
                     viewModel.analyze(url)
                 },
-                modifier = Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 4.dp),
+                // Beside the button on wide stages, above the (idle) band.
+                modifier = Modifier.align(Alignment.TopStart).padding(start = slots.side?.columnStart ?: 16.dp, top = 4.dp),
             )
             Stage(
+                slots = slots,
                 state = state,
                 viewModel = viewModel,
                 activeSource = activeSource,
@@ -293,26 +373,27 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
                     selectedSource = it
                     viewModel.selectSource(it)
                 },
-                onTryAgain = {
-                    viewModel.dismissResult()
-                    val result = (state.phase as? ListenPhase.Done)?.result
-                    val again = when {
-                        result == null -> activeSource
-                        state.source == CaptureSource.SYSTEM_AUDIO -> ListenSource.Phone
-                        state.mode == ListenMode.HUM -> ListenSource.Hum
-                        else -> ListenSource.Microphone
+                onSuggestion = { suggestion ->
+                    val last = sourceOf(state.source, state.mode)
+                    when (suggestion) {
+                        Suggestion.TryAgain -> startListening(last)
+                        Suggestion.HumAgain, Suggestion.HumIt -> startListening(ListenSource.Hum)
+                        Suggestion.UseMicrophone -> startListening(ListenSource.Microphone)
+                        Suggestion.TypeLyric -> {
+                            viewModel.dismissResult()
+                            navigator.push(LyricsRoute)
+                        }
                     }
-                    startListening(again)
                 },
-                onHumIt = { startListening(ListenSource.Hum) },
-                onTypeLyric = {
-                    viewModel.dismissResult()
-                    navigator.push(LyricsRoute)
-                },
-                onUseMicrophone = {
-                    viewModel.dismissResult()
-                    selectedSource = ListenSource.Microphone
-                    viewModel.selectSource(ListenSource.Microphone)
+                onUseMicrophone = { startListening(ListenSource.Microphone) },
+                onSwitchToMicrophone = {
+                    // Phone audio is silent (the playing app blocks capture): listen with the
+                    // microphone instead, once the canceled session has ended.
+                    scope.launch {
+                        viewModel.cancel()
+                        viewModel.awaitIdle()
+                        startListening(ListenSource.Microphone)
+                    }
                 },
                 onOpenSettings = {
                     context.startActivity(
@@ -323,12 +404,9 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
                 onContinuePhone = {
                     phonePrePrompt = false
                     viewModel.phoneAudioExplained()
-                    startPhone()
+                    startPhoneAskingForNotifications()
                 },
                 onStopLink = { viewModel.stopLink() },
-                onDismissLinkError = {
-                    viewModel.clearLink()
-                },
                 onHumRingFull = { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick) },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -337,12 +415,11 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
             recent?.let { entry ->
                 RecentCard(
                     title = entry.track?.title ?: entry.title,
-                    subtitle = listOfNotNull(entry.track?.artist ?: entry.subtitle, Formatters.timeOfDay(entry.createdAtMs))
-                        .filter { it.isNotBlank() }
-                        .joinToString(" · "),
+                    artist = entry.track?.artist ?: entry.subtitle,
+                    time = Formatters.timeOfDay(entry.createdAtMs),
                     artworkUrl = entry.track?.artworkUrl ?: entry.artworkUrl,
                     onClick = { navigator.push(SessionRoute(entry.id)) },
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp).tag("listen.recent"),
                 )
             }
         }
@@ -352,8 +429,12 @@ fun ListenScreen(viewModel: ListenViewModel = viewModel()) {
     }
 }
 
+/** How long the stage must be idle before the "add tile" dialog may appear. */
+private const val TILE_OFFER_IDLE_MS = 1_000L
+
 @Composable
 private fun Stage(
+    slots: StageSlots,
     state: ListenState,
     viewModel: ListenViewModel,
     activeSource: ListenSource,
@@ -364,14 +445,12 @@ private fun Stage(
     backProgress: Float,
     onButton: () -> Unit,
     onSelectSource: (ListenSource) -> Unit,
-    onTryAgain: () -> Unit,
-    onHumIt: () -> Unit,
-    onTypeLyric: () -> Unit,
+    onSuggestion: (Suggestion) -> Unit,
     onUseMicrophone: () -> Unit,
+    onSwitchToMicrophone: () -> Unit,
     onOpenSettings: () -> Unit,
     onContinuePhone: () -> Unit,
     onStopLink: () -> Unit,
-    onDismissLinkError: () -> Unit,
     onHumRingFull: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -389,8 +468,11 @@ private fun Stage(
     }
     val linkActive = (link is LinkStage.Running || link is LinkStage.Preparing) && linkVisible
     val humming = state.isActive && (state.impression || state.mode == ListenMode.HUM) && phase != ListenPhase.Matching
-    val voiced by produceVoicedSeconds(viewModel, active = humming)
-    LaunchedEffect(voiced >= HUM_RING_SECONDS) { if (voiced >= HUM_RING_SECONDS) onHumRingFull() }
+    // Read in drawing code and derived states only, so the stage doesn't recompose 10 times a second.
+    val voicedState = produceVoicedSeconds(viewModel, active = humming)
+    val ringFull by remember { derivedStateOf { voicedState.value >= HUM_RING_SECONDS } }
+    val voicedWhole by remember { derivedStateOf { voicedState.value.toInt() } }
+    LaunchedEffect(ringFull) { if (ringFull) onHumRingFull() }
 
     val glyph = when {
         linkActive -> ButtonGlyph.Link
@@ -404,30 +486,32 @@ private fun Stage(
             ButtonRing.Determinate { fraction }
         }
         linkActive -> ButtonRing.Indeterminate
-        humming -> ButtonRing.Determinate { (voiced / HUM_RING_SECONDS).coerceIn(0f, 1f) }
+        humming -> ButtonRing.Determinate { (voicedState.value / HUM_RING_SECONDS).coerceIn(0f, 1f) }
         else -> ButtonRing.None
     }
-    val stateLine = stateLine(state, link, linkState, linkActive, micOff, phonePrePrompt)
+    val stateLine = stateLine(state, activeSource, link, linkState, linkActive, micOff, phonePrePrompt)
     val stateActive = state.isActive || linkActive
 
+    val side = slots.side
     Box(modifier) {
         val pitchLabel = stringResource(R.string.your_pitch)
-        val pitchValue = pluralStringResource(R.plurals.seconds_hummed, voiced.toInt(), voiced.toInt())
-        // Trace band: (width − 48) × 96, bottom edge 144 dp above the stage centre.
+        val pitchValue = pluralStringResource(R.plurals.seconds_hummed, voicedWhole, voicedWhole)
+        // Trace band: (width − 48) × 96 above the button; shorter on short stages, in the column
+        // beside the button on wide ones.
         AnimatedVisibility(
             visible = humming,
             enter = fadeIn(tween(150)),
             exit = fadeOut(tween(150)),
-            modifier = Modifier.align(Alignment.Center).offset(y = (-144 - 48).dp),
+            modifier = Modifier.align(Alignment.TopStart).stageSlot(slots, slots.bandTop),
         ) {
             PitchTrace(
                 ring = viewModel.signal.pitch,
                 color = MaterialTheme.colorScheme.primary,
                 active = state.isCapturing,
                 modifier = Modifier
-                    .padding(horizontal = 24.dp)
+                    .padding(horizontal = if (side == null) 24.dp else 0.dp)
                     .fillMaxWidth()
-                    .height(96.dp)
+                    .height(slots.bandHeight)
                     .semantics {
                         contentDescription = pitchLabel
                         stateDescription = pitchValue
@@ -443,6 +527,7 @@ private fun Stage(
                 else -> R.string.listen_value_idle
             },
         )
+        val buttonSize = 160.dp * slots.buttonScale
         ListenButton(
             glyph = glyph,
             level = { level },
@@ -450,12 +535,19 @@ private fun Stage(
             contentDescription = listenLabel,
             stateDescription = valueLabel,
             ring = ring,
+            size = buttonSize,
             lineAmplitude = if (state.impression) 0.5f else 1f,
             backProgress = backProgress,
-            modifier = Modifier.align(Alignment.Center).offset(y = (-40).dp),
+            // The button's box includes its halo (1.56 × the button), which may be taller than a
+            // short stage: measured unbounded so the button stays centred on its slot.
+            modifier = if (side == null) {
+                Modifier.align(Alignment.TopCenter).offset(y = slots.buttonCenter - buttonSize * 0.78f)
+            } else {
+                Modifier.align(Alignment.TopStart).offset(x = side.buttonCenter - buttonSize * 0.78f, y = slots.buttonCenter - buttonSize * 0.78f)
+            }.wrapContentSize(Alignment.TopCenter, unbounded = true).tag("listen.button"),
         )
-        // State line: 24 dp tall, top 60 dp below the centre.
-        Box(Modifier.align(Alignment.Center).offset(y = (60 + 12).dp).fillMaxWidth().padding(horizontal = 24.dp)) {
+        // State line: 24 dp tall (two lines at most).
+        Box(Modifier.align(Alignment.TopStart).stageSlot(slots, slots.stateTop).padding(horizontal = if (side == null) 24.dp else 0.dp)) {
             AnimatedContent(
                 targetState = stateLine,
                 transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
@@ -468,35 +560,45 @@ private fun Stage(
                     color = if (stateActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     maxLines = 2,
-                    modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                    modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }.tag("listen.state"),
                 )
             }
         }
-        // Action row: 40 dp tall, top 124 dp below the centre.
-        Box(Modifier.align(Alignment.Center).offset(y = (124 + 20).dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        // Action row: 40 dp tall. Source toggles unless something needs an answer first
+        // (docs/design/DESIGN.md §5.4): finished, failed and offline listens keep the toggles,
+        // so switching how to listen is one tap; the button repeats the selected source.
+        Box(
+            Modifier.align(Alignment.TopStart).stageSlot(slots, slots.actionTop).heightIn(min = 40.dp),
+            contentAlignment = Alignment.Center,
+        ) {
             when {
-                linkActive -> ActionRow { TextButton(onClick = onStopLink) { Text(stringResource(R.string.action_stop)) } }
-                link is LinkStage.Failed -> ActionRow {
-                    FilledTonalButton(onClick = onDismissLinkError) { Text(stringResource(R.string.action_ok)) }
+                linkActive -> ActionRow {
+                    TextButton(onClick = onStopLink, modifier = Modifier.tag("listen.action.stop")) { Text(stringResource(R.string.action_stop)) }
                 }
-                micOff -> ActionRow { FilledTonalButton(onClick = onOpenSettings) { Text(stringResource(R.string.action_open_settings)) } }
+                micOff -> ActionRow {
+                    FilledTonalButton(onClick = onOpenSettings, modifier = Modifier.tag("listen.action.openSettings")) {
+                        Text(stringResource(R.string.action_open_settings))
+                    }
+                }
                 phonePrePrompt -> ActionRow {
-                    FilledTonalButton(onClick = onContinuePhone) { Text(stringResource(R.string.action_continue)) }
-                    TextButton(onClick = onUseMicrophone) { Text(stringResource(R.string.action_use_microphone)) }
+                    FilledTonalButton(onClick = onContinuePhone, modifier = Modifier.tag("listen.action.continue")) {
+                        Text(stringResource(R.string.action_continue))
+                    }
+                    TextButton(onClick = onUseMicrophone, modifier = Modifier.tag("listen.action.useMic")) {
+                        Text(stringResource(R.string.action_use_microphone))
+                    }
                 }
                 state.isCapturing && state.notice is Notice.CaptureSilent -> ActionRow {
-                    FilledTonalButton(onClick = {
-                        viewModel.cancel()
-                        onUseMicrophone()
-                    }) { Text(stringResource(R.string.action_use_microphone)) }
+                    FilledTonalButton(onClick = onSwitchToMicrophone, modifier = Modifier.tag("listen.action.useMic")) {
+                        Text(stringResource(R.string.action_use_microphone))
+                    }
                 }
                 state.isCapturing && state.notice is Notice.RateLimited -> ActionRow {
-                    TextButton(onClick = { viewModel.stop() }) { Text(stringResource(R.string.action_stop)) }
+                    TextButton(onClick = { viewModel.stop() }, modifier = Modifier.tag("listen.action.stop")) {
+                        Text(stringResource(R.string.action_stop))
+                    }
                 }
-                done is ListenResult.NoMatch -> NoMatchActions(done.reason, onTryAgain, onHumIt, onTypeLyric, onUseMicrophone)
-                done is ListenResult.Failed -> ActionRow {
-                    FilledTonalButton(onClick = onTryAgain) { Text(stringResource(R.string.action_try_again)) }
-                }
+                done is ListenResult.NoMatch -> SuggestionRow(suggestions(done.reason, sourceOf(state.source, state.mode)), onSuggestion)
                 else -> SourceToggles(
                     selected = when {
                         state.isActive && state.source == CaptureSource.SYSTEM_AUDIO -> ListenSource.Phone
@@ -512,17 +614,22 @@ private fun Stage(
     }
 }
 
+/** A slot [top] below the stage's top edge: across the stage, or in the column beside the button. */
+private fun Modifier.stageSlot(slots: StageSlots, top: Dp): Modifier =
+    slots.side?.let { offset(x = it.columnStart, y = top).width(it.columnWidth) } ?: offset(y = top).fillMaxWidth()
+
 @Composable
 private fun produceVoicedSeconds(viewModel: ListenViewModel, active: Boolean): androidx.compose.runtime.State<Float> {
     val value = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(active) {
+    val interval = if (LocalLowPower.current) 250L else 100L
+    LaunchedEffect(active, interval) {
         if (!active) {
             value.floatValue = 0f
             return@LaunchedEffect
         }
         while (true) {
             value.floatValue = viewModel.signal.pitch.voicedSeconds()
-            delay(100)
+            delay(interval)
         }
     }
     return value
@@ -531,6 +638,7 @@ private fun produceVoicedSeconds(viewModel: ListenViewModel, active: Boolean): a
 @Composable
 private fun stateLine(
     state: ListenState,
+    activeSource: ListenSource,
     link: LinkStage,
     linkState: AnalysisState?,
     linkActive: Boolean,
@@ -565,7 +673,12 @@ private fun stateLine(
         }
         done is ListenResult.NoMatch -> stringResource(Notifications.noMatchText(done.reason))
         done is ListenResult.Failed -> done.message.ifBlank { stringResource(Notifications.errorText(done.code)) }
-        else -> stringResource(R.string.state_idle)
+        done is ListenResult.Waiting -> stringResource(R.string.state_offline)
+        else -> when (activeSource) {
+            ListenSource.Microphone -> stringResource(R.string.state_idle)
+            ListenSource.Phone -> stringResource(R.string.state_idle_phone)
+            ListenSource.Hum -> stringResource(R.string.state_hum_start)
+        }
     }
 }
 
@@ -590,22 +703,57 @@ private fun ActionRow(content: @Composable () -> Unit) {
     ) { content() }
 }
 
+/** No-match suggestions: the first is tonal, the rest are text buttons; those that don't fit are left out. */
 @Composable
-private fun NoMatchActions(
-    reason: NoMatchReason,
-    onTryAgain: () -> Unit,
-    onHumIt: () -> Unit,
-    onTypeLyric: () -> Unit,
-    onUseMicrophone: () -> Unit,
-) {
-    ActionRow {
-        if (reason == NoMatchReason.CAPTURE_SILENT) {
-            FilledTonalButton(onClick = onUseMicrophone) { Text(stringResource(R.string.action_use_microphone)) }
-            return@ActionRow
+private fun SuggestionRow(suggestions: List<Suggestion>, onSuggestion: (Suggestion) -> Unit) {
+    PriorityRow(spacing = 8.dp, modifier = Modifier.heightIn(min = 40.dp)) {
+        suggestions.forEachIndexed { index, suggestion ->
+            val label = stringResource(
+                when (suggestion) {
+                    Suggestion.TryAgain -> R.string.action_try_again
+                    Suggestion.HumAgain -> R.string.cand_hum_again
+                    Suggestion.HumIt -> R.string.action_hum_it
+                    Suggestion.TypeLyric -> R.string.action_type_lyric
+                    Suggestion.UseMicrophone -> R.string.action_use_microphone
+                },
+            )
+            val tag = "listen.action." + suggestion.name.replaceFirstChar { it.lowercase() }
+            if (index == 0) {
+                FilledTonalButton(onClick = { onSuggestion(suggestion) }, modifier = Modifier.tag(tag)) { Text(label, maxLines = 1) }
+            } else {
+                TextButton(onClick = { onSuggestion(suggestion) }, modifier = Modifier.tag(tag)) { Text(label, maxLines = 1) }
+            }
         }
-        FilledTonalButton(onClick = onTryAgain) { Text(stringResource(R.string.action_try_again)) }
-        if (reason != NoMatchReason.TOO_SHORT) TextButton(onClick = onHumIt) { Text(stringResource(R.string.action_hum_it)) }
-        if (reason == NoMatchReason.NOT_FOUND) TextButton(onClick = onTypeLyric) { Text(stringResource(R.string.action_type_lyric)) }
+    }
+}
+
+/**
+ * A centred row that places its children in order while they fit and leaves out the rest, so
+ * the most useful actions survive narrow screens and large fonts.
+ */
+@Composable
+private fun PriorityRow(spacing: Dp, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val gap = spacing.roundToPx()
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val placeables = mutableListOf<androidx.compose.ui.layout.Placeable>()
+        var width = 0
+        for (measurable in measurables) {
+            val placeable = measurable.measure(loose)
+            val next = if (placeables.isEmpty()) placeable.width else width + gap + placeable.width
+            if (next > constraints.maxWidth && placeables.isNotEmpty()) break
+            placeables += placeable
+            width = next
+        }
+        val height = placeables.maxOfOrNull { it.height } ?: 0
+        val layoutHeight = height.coerceIn(constraints.minHeight, constraints.maxHeight)
+        layout(constraints.maxWidth, layoutHeight) {
+            var x = (constraints.maxWidth - width) / 2
+            for (placeable in placeables) {
+                placeable.placeRelative(x, (layoutHeight - placeable.height) / 2)
+                x += placeable.width + gap
+            }
+        }
     }
 }
 
@@ -618,35 +766,44 @@ private fun SourceToggles(selected: ListenSource, enabled: Boolean, onSelect: (L
         Triple(ListenSource.Phone, R.string.source_phone, R.drawable.ic_smartphone),
         Triple(ListenSource.Hum, R.string.source_hum, 0),
     )
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
-        modifier = Modifier.padding(horizontal = 24.dp).alpha(if (enabled) 1f else 0.45f),
-    ) {
-        options.forEachIndexed { index, (option, label, icon) ->
-            val shapes = when (index) {
-                0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
-                options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
-                else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
-            }
-            // While a session runs the group is dimmed to 45 % but keeps showing the current
-            // source (a disabled ToggleButton would drop its checked colours).
-            ToggleButton(
-                checked = selected == option,
-                onCheckedChange = { if (enabled) onSelect(option) },
-                shapes = shapes,
-                modifier = Modifier
-                    .heightIn(min = 40.dp)
-                    .semantics { if (!enabled) disabled() },
-            ) {
-                if (icon != 0) {
-                    Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(20.dp))
-                } else {
-                    Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-                        ContourMark(androidx.compose.material3.LocalContentColor.current, width = 20.dp, strokeWidth = 2.dp)
-                    }
+    val tags = mapOf(ListenSource.Microphone to "mic", ListenSource.Phone to "phone", ListenSource.Hum to "hum")
+    // Phones narrower than 400 dp (most budget phones are 360 dp) can't fit three icons and
+    // labels; the labels stay.
+    BoxWithConstraints(contentAlignment = Alignment.Center) {
+        val showIcons = maxWidth >= 400.dp && LocalDensity.current.fontScale <= 1.15f
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+            modifier = Modifier.padding(horizontal = 24.dp).alpha(if (enabled) 1f else 0.45f),
+        ) {
+            options.forEachIndexed { index, (option, label, icon) ->
+                val shapes = when (index) {
+                    0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                    options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
                 }
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(label), maxLines = 1)
+                // While a session runs the group is dimmed to 45 % but keeps showing the current
+                // source (a disabled ToggleButton would drop its checked colours).
+                ToggleButton(
+                    checked = selected == option,
+                    onCheckedChange = { if (enabled) onSelect(option) },
+                    shapes = shapes,
+                    modifier = Modifier
+                        .heightIn(min = 40.dp)
+                        .semantics { if (!enabled) disabled() }
+                        .tag("listen.source." + tags.getValue(option)),
+                ) {
+                    if (showIcons) {
+                        if (icon != 0) {
+                            Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(20.dp))
+                        } else {
+                            Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                                ContourMark(androidx.compose.material3.LocalContentColor.current, width = 20.dp, strokeWidth = 2.dp)
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(stringResource(label), maxLines = 1)
+                }
             }
         }
     }
@@ -659,6 +816,7 @@ private fun LinkField(
     onSubmit: (String) -> Unit,
     onPickFile: (android.net.Uri) -> Unit,
     onEmptyChange: (Boolean) -> Unit,
+    onFocus: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -700,18 +858,22 @@ private fun LinkField(
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                         keyboardActions = KeyboardActions(onGo = { submit(text) }),
-                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = fieldLabel },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { if (it.isFocused) onFocus() }
+                            .semantics { contentDescription = fieldLabel }
+                            .tag("listen.link"),
                     )
                 }
                 if (text.isNotBlank()) {
-                    IconButton(onClick = { submit(text) }, enabled = enabled) {
+                    IconButton(onClick = { submit(text) }, enabled = enabled, modifier = Modifier.tag("listen.identify")) {
                         Icon(painterResource(R.drawable.ic_search), contentDescription = stringResource(R.string.field_identify))
                     }
                 } else {
                     IconButton(onClick = {
                         focus.clearFocus()
                         picker.launch(arrayOf("audio/*", "video/*"))
-                    }, enabled = enabled) {
+                    }, enabled = enabled, modifier = Modifier.tag("listen.attach")) {
                         Icon(painterResource(R.drawable.ic_attach_file), contentDescription = stringResource(R.string.field_attach))
                     }
                 }
@@ -745,7 +907,7 @@ private fun ClipboardSuggestion(visible: Boolean, onIdentify: (String) -> Unit, 
         TextButton(onClick = {
             hasLink = false
             readClipboardText(context)?.let(onIdentify)
-        }) {
+        }, modifier = Modifier.tag("listen.clipboard")) {
             Icon(painterResource(R.drawable.ic_content_paste), contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.field_clipboard_link), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -784,7 +946,14 @@ private fun readClipboardText(context: Context): String? {
 
 /** The last result (docs/design/DESIGN.md §6.2, "Recent card"). */
 @Composable
-private fun RecentCard(title: String, subtitle: String, artworkUrl: String?, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun RecentCard(
+    title: String,
+    artist: String?,
+    time: String,
+    artworkUrl: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
@@ -795,13 +964,16 @@ private fun RecentCard(title: String, subtitle: String, artworkUrl: String?, onC
             Artwork(artworkUrl, 56.dp, corner = 8.dp)
             Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                // A long artist name gives way; the time is never cut.
+                Row {
+                    val style = MaterialTheme.typography.bodyMedium
+                    val color = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (!artist.isNullOrBlank()) {
+                        Text(artist, style = style, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        Text(" · ", style = style, color = color, maxLines = 1)
+                    }
+                    Text(time, style = style.merge(TabularNumbers), color = color, maxLines = 1)
+                }
             }
             Icon(
                 painterResource(R.drawable.ic_chevron_right),

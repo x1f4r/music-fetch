@@ -89,7 +89,7 @@ fn stream_matches_batch() {
             frames.extend(s.push_detailed(c));
         }
         frames.extend(s.finish_detailed());
-        assert_eq!(frames, batch, "chunk {chunk}");
+        assert_same_frames(&frames, &batch, &format!("chunk {chunk}"));
     }
 }
 
@@ -102,7 +102,39 @@ fn short_streams_match_batch() {
         let mut s = StreamingPitch::new(t.clone());
         let mut frames = s.push_detailed(&audio);
         frames.extend(s.finish_detailed());
-        assert_eq!(frames, batch, "length {len}");
+        assert_same_frames(&frames, &batch, &format!("length {len}"));
+    }
+}
+
+/// Whether tract may round the CNN differently for different frame counts: with
+/// AVX-512 it picks matmul kernels by tensor shape, and the stream gives the CNN
+/// other frame counts than the batch chunks. Everywhere else (arm64, AVX2) the
+/// frames must be bit-identical.
+fn shape_dependent_kernels() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        std::arch::is_x86_feature_detected!("avx512f")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+/// Stream and batch frames are the same: bit for bit, or within float rounding of
+/// the model's outputs where the kernels depend on the shape.
+fn assert_same_frames(stream: &[FrameDetail], batch: &[FrameDetail], what: &str) {
+    if !shape_dependent_kernels() {
+        assert_eq!(stream, batch, "{what}");
+        return;
+    }
+    assert_eq!(stream.len(), batch.len(), "{what}: frame count");
+    for (s, b) in stream.iter().zip(batch) {
+        assert_eq!((s.t_ms, s.loudness_db), (b.t_ms, b.loudness_db), "{what}");
+        let close = |x: f32, y: f32, tol: f32| x == y || (x - y).abs() <= tol * x.abs().max(y.abs()).max(1.0);
+        assert!(close(s.hz, b.hz, 1e-4) && close(s.confidence, b.confidence, 1e-4), "{what}: {s:?} vs {b:?}");
+        let at_threshold = (s.confidence - VOICED_CONFIDENCE).abs() < 1e-4;
+        assert!(s.voiced == b.voiced || at_threshold, "{what}: {s:?} vs {b:?}");
     }
 }
 
@@ -136,6 +168,30 @@ fn whistles_above_the_model_ceiling() {
     let first: Vec<f32> = a.frames[5..25].iter().filter(|f| f.voiced).map(|f| f.hz).collect();
     assert!((median(first) - 2600.0).abs() < 30.0);
     // The stream switches to the whistle path and then agrees with the batch.
+    let mut s = StreamingPitch::new(t);
+    let mut frames = Vec::new();
+    for c in audio.chunks(320) {
+        frames.extend(s.push_detailed(c));
+    }
+    frames.extend(s.finish_detailed());
+    assert!(s.is_whistle());
+    assert_eq!(frames.len(), a.frames.len());
+    assert_eq!(frames[40..], a.frames[40..]);
+}
+
+#[test]
+fn high_whistles_take_the_4x_path() {
+    // Above the 2× path's 4.19 kHz ceiling.
+    let mut audio = Vec::new();
+    for hz in [4400.0, 4800.0, 4200.0] {
+        audio.extend((0..8000).map(|i| 0.3 * (2.0 * std::f32::consts::PI * hz * i as f32 / 16_000.0).sin()));
+    }
+    let t = tracker();
+    let a = t.analyze_detailed(&audio).expect("analysis");
+    assert!(a.whistle);
+    let at = |from: usize| median(a.frames[from..from + 20].iter().filter(|f| f.voiced).map(|f| f.hz).collect());
+    assert!((at(5) - 4400.0).abs() < 50.0, "{}", at(5));
+    assert!((at(36) - 4800.0).abs() < 50.0, "{}", at(36));
     let mut s = StreamingPitch::new(t);
     let mut frames = Vec::new();
     for c in audio.chunks(320) {

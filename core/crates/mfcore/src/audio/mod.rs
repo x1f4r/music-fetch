@@ -1,9 +1,12 @@
 //! PCM handling: streaming resampling, decoding to a 16 kHz mono PCM file,
 //! WAV helpers and frame features for segmentation.
 
+#[cfg(feature = "decode")]
 pub mod decode;
 pub mod features;
+#[cfg(feature = "decode")]
 mod mp4;
+#[cfg(feature = "decode")]
 mod opus;
 pub mod pcm;
 pub mod resample;

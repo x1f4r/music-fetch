@@ -159,6 +159,42 @@ async fn hinted_entries_verified_locally_cost_no_probe() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_title_artist_list_is_turned_around() {
+    let songs: Vec<Track> =
+        [("Tina", "Private Dancer"), ("Abba", "Waterloo"), ("Chic", "Le Freak"), ("Wham", "Freedom")]
+            .iter()
+            .map(|(artist, title)| track(artist, title, 90))
+            .collect();
+    let plays: Vec<Play> =
+        songs.iter().enumerate().map(|(k, t)| play(k as u64 * 90, k as u64 * 90 + 90, t, 0)).collect();
+    let audio = noise(360, 9);
+    let media = TempPcm::new(&audio);
+    let mut services = FakeServices::new(audio, plays);
+    for t in &songs {
+        services = services.with_preview_of(t, 20, 30);
+    }
+    // Written "Title - Artist".
+    let entries = songs
+        .iter()
+        .enumerate()
+        .map(|(k, t)| TrackHint {
+            start_ms: k as u64 * 90_000,
+            artist: t.title.clone(),
+            title: t.artist.clone(),
+            is_id: false,
+            raw: String::new(),
+        })
+        .collect();
+    let list = Tracklist { source: HintSource::Chapters, entries };
+    let report = analyze(&services, &media.pcm, MixHints { tracklist: Some(list), untimed: Vec::new() }).await;
+    assert_eq!(report.verified_locally, 4, "{:#?}", report.log);
+    let found: Vec<(String, String)> =
+        report.pieces.iter().filter_map(|p| p.track.as_ref().map(|t| (t.artist.clone(), t.title.clone()))).collect();
+    assert_eq!(found[0], ("Tina".to_string(), "Private Dancer".to_string()));
+    assert_eq!(services.calls(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_wrong_hint_is_overruled_by_the_audio() {
     let a = track("A", "First", 130);
     let actual = track("X", "Actually Played", 120);
@@ -210,6 +246,8 @@ fn next_probe_goes_past_the_end() {
         end_est: end_s.map(|e| e * 1000),
         kind: AnchorKind::Recognizer,
         odd: false,
+        speed: 0.0,
+        pitch: 0.0,
     };
     assert_eq!(next_probe(&anchor(10, Some(100))), 110_000);
     assert_eq!(next_probe(&anchor(10, Some(400))), 160_000);
@@ -230,6 +268,95 @@ fn plausible_speed_and_pitch() {
     assert!(!plausible_skew(0.0519, 0.0433));
     assert!(!plausible_skew(-0.0066, 0.0099));
     assert!(!plausible_skew(0.1009, -0.0004)); // beyond any pitch fader
+}
+
+#[test]
+fn stretching_undoes_a_pitch_fader() {
+    // 1 s of 1030 Hz (a 1000 Hz tone played 3 % fast) becomes 1000 Hz.
+    let rate = crate::audio::SAMPLE_RATE as f64;
+    let fast: Vec<i16> =
+        (0..16_000).map(|i| (8000.0 * (2.0 * std::f64::consts::PI * 1030.0 * i as f64 / rate).sin()) as i16).collect();
+    let slow = stretch(&fast, 1.03, 1_000);
+    assert_eq!(slow.len(), 16_000, "cut to the requested length");
+    let crossings = slow.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count();
+    assert!((1990..=2010).contains(&crossings), "{crossings}");
+}
+
+#[test]
+fn unanswered_probes_widen_the_step() {
+    let steps: Vec<u64> = (1..=6).map(|k| miss_step(k) / 1000).collect();
+    assert_eq!(steps, vec![25, 25, 50, 100, 150, 150]);
+}
+
+fn answer(id: &str, at_s: u64, t: &Track, start_s: i64, kind: AnchorKind) -> Anchor {
+    Anchor {
+        id: id.into(),
+        at_ms: at_s * 1000,
+        len_ms: if kind == AnchorKind::Recognizer { PROBE_MS } else { 30_000 },
+        track: t.clone(),
+        evidence: Evidence { source: EvidenceSource::Shazam, at_ms: at_s * 1000, score: 0.72, detail: None },
+        start_est: Some(start_s * 1000),
+        end_est: t.duration_ms.map(|d| start_s * 1000 + d as i64),
+        kind,
+        odd: false,
+        speed: 0.0,
+        pitch: 0.0,
+    }
+}
+
+#[test]
+fn versions_heard_in_one_play_become_one_recording() {
+    let mut edit = track("Faithless", "Insomnia (Radio Edit)", 215);
+    edit.isrc = Some("GBBKS9600001".into());
+    let mut monster = track("Faithless", "Insomnia (Monster Mix)", 520);
+    monster.isrc = Some("GBBKS9600002".into());
+    let next = track("ATB", "9 PM (Till I Come)", 320);
+    let anchors = vec![
+        answer("1", 4, &edit, -158, AnchorKind::Recognizer),
+        answer("2", 64, &edit, -158, AnchorKind::Recognizer),
+        answer("3", 154, &monster, -29, AnchorKind::Recognizer),
+        answer("4", 220, &edit, -158, AnchorKind::Recognizer),
+        answer("5", 304, &next, 240, AnchorKind::Recognizer),
+    ];
+    let unified = unify_versions(anchors);
+    let titles: Vec<&str> = unified.iter().map(|a| a.track.title.as_str()).collect();
+    assert_eq!(titles[..4], ["Insomnia (Radio Edit)"; 4]);
+    assert_eq!(unified[2].start_est, Some(-158_000), "the chosen version's timeline");
+    assert_eq!(titles[4], "9 PM (Till I Come)");
+}
+
+#[test]
+fn a_play_heard_past_its_catalog_end_has_no_known_end() {
+    // The catalog knows a 3:16 edit; the DJ plays the long version for 6 minutes.
+    let t = track("Kerri", "System (Remix)", 196);
+    let anchors = vec![answer("1", 100, &t, 0, AnchorKind::Recognizer), answer("2", 300, &t, 0, AnchorKind::Local)];
+    let fixed = forget_overrun_ends(anchors);
+    assert!(fixed.iter().all(|a| a.end_est.is_none()));
+    // Heard inside its length: the end stays.
+    let anchors = vec![answer("1", 100, &t, 0, AnchorKind::Recognizer)];
+    assert_eq!(forget_overrun_ends(anchors)[0].end_est, Some(196_000));
+}
+
+#[test]
+fn a_preview_backs_up_only_its_own_play() {
+    let t = track("Artist", "Looped", 300);
+    let answer_at = answer("1", 200, &t, 150, AnchorKind::Recognizer);
+    assert!(within_play(&answer_at, &answer("2", 250, &t, 150, AnchorKind::Local)));
+    // A preview match from an earlier play of the same record says nothing about this one.
+    assert!(!within_play(&answer_at, &answer("3", 20, &t, 0, AnchorKind::Local)));
+}
+
+#[test]
+fn a_reprise_after_the_song_stays_separate() {
+    let song = track("Band", "Song", 200);
+    let reprise = track("Band", "Song (Reprise)", 90);
+    // The reprise begins where the song ends and is heard after that.
+    let anchors = vec![
+        answer("1", 100, &song, 0, AnchorKind::Recognizer),
+        answer("2", 215, &reprise, 200, AnchorKind::Recognizer),
+    ];
+    let unified = unify_versions(anchors);
+    assert_eq!(unified[1].track.title, "Song (Reprise)");
 }
 
 #[test]

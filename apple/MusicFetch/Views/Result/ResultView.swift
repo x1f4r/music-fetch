@@ -74,13 +74,13 @@ struct ResultView: View {
                     .padding(.top, 12)
                     .modifier(Rise(revealed: revealed, delay: 0.17))
             }
-            GlassEffectContainer(spacing: 8) {
+            GlassContainer(spacing: 8) {
                 HStack(spacing: 12) {
                     OpenInButton(track: track, glassNamespace: glass)
                     ShareLink(item: shareText(track)) {
                         Image(systemName: "square.and.arrow.up").frame(width: 16, height: 16)
                     }
-                    .buttonStyle(.glass)
+                    .glassButtonStyle()
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
                     .help(Copy.share)
@@ -128,7 +128,7 @@ struct ResultView: View {
     }
 
     private func shareText(_ track: Track) -> String {
-        let link = LinkOpener.preferredLink(in: track.links, defaultService: app.defaultService)?.url
+        let link = TrackLinks(track: track, preference: app.providerPreference).primary?.url
         return [Format.artistTitle(track), link].compactMap { $0 }.joined(separator: "\n")
     }
 
@@ -173,7 +173,7 @@ struct CopyButton: View {
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 16, height: 16)
         }
-        .buttonStyle(.glass)
+        .glassButtonStyle()
         .buttonBorderShape(.circle)
         .controlSize(.large)
         .help(copied ? Copy.copied : Copy.copy)
@@ -225,7 +225,7 @@ struct HeroWash: View {
                     startPoint: .top, endPoint: .bottom)
             }
         }
-        .backgroundExtensionEffect()
+        .extendsBackgroundUnderSidebars()
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)

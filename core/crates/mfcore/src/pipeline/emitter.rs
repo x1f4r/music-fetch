@@ -13,7 +13,7 @@
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 
@@ -25,6 +25,7 @@ use crate::model::{
 use crate::platform::SessionObserver;
 use crate::store::{SessionUpdate, Store};
 use crate::util::cancel::CancelToken;
+use crate::util::rt::Instant;
 
 const LEVEL_INTERVAL: Duration = Duration::from_millis(33);
 const PITCH_INTERVAL: Duration = Duration::from_millis(100);
@@ -338,6 +339,7 @@ impl Emitter {
             Outcome::Candidates { .. } => SessionStatus::Candidates,
             Outcome::Completed { .. } => SessionStatus::Completed,
             Outcome::NoMatch { .. } => SessionStatus::NoMatch,
+            Outcome::Waiting => SessionStatus::Waiting,
         });
         if let Some(track) = update.track.as_mut() {
             fill_identity(track);
@@ -453,6 +455,17 @@ mod tests {
         assert!(matches!(events[0], SessionEvent::Started { kind: SessionKind::Listen, .. }));
         assert!(matches!(events[2], SessionEvent::Finished { .. }));
         assert_eq!(status(&store), SessionStatus::NoMatch);
+    }
+
+    #[test]
+    fn a_waiting_outcome_stores_the_session_as_waiting() {
+        let (emitter, recorder, store, _) = setup(SessionKind::Listen);
+        emitter.started(SessionKind::Listen);
+        emitter.finished(Outcome::Waiting, SessionUpdate::default());
+        let events = recorder.0.lock().clone();
+        assert!(matches!(events.last(), Some(SessionEvent::Finished { outcome: Outcome::Waiting })), "{events:?}");
+        assert_eq!(status(&store), SessionStatus::Waiting);
+        assert_eq!(store.waiting_sessions().unwrap(), vec![("s".to_string(), SessionKind::Listen)]);
     }
 
     #[test]

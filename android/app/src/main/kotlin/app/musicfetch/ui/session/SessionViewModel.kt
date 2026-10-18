@@ -11,10 +11,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
+import app.musicfetch.R
 import app.musicfetch.analysis.AnalysisState
 import app.musicfetch.analysis.SegmentFix
 import app.musicfetch.appGraph
 import app.musicfetch.core.Candidate
+import app.musicfetch.core.EngineInterface
 import app.musicfetch.core.ExportFormat
 import app.musicfetch.core.LibraryEntry
 import app.musicfetch.core.Lyrics
@@ -27,17 +29,15 @@ import app.musicfetch.core.SessionKind
 import app.musicfetch.core.SessionStatus
 import app.musicfetch.core.SourceInfo
 import app.musicfetch.core.Track
+import app.musicfetch.platform.ProviderPreference
 import app.musicfetch.ui.common.ArtworkLoader
 import app.musicfetch.widget.ListenWidget
 import com.materialkolor.ktx.themeColorOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -103,8 +103,8 @@ class SessionViewModel(app: Application, private val id: String) : AndroidViewMo
     /** Dominant artwork colour of the result, for the content-based scheme. */
     val seed: StateFlow<Color?> = _seed.asStateFlow()
 
-    val preferred: StateFlow<Service> = graph.settings.settings.map { it.defaultService }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, Service.SPOTIFY)
+    /** Where results open; null until the settings are read. */
+    val preference: StateFlow<ProviderPreference?> = graph.preference
 
     private val _messages = MutableStateFlow<String?>(null)
 
@@ -297,20 +297,30 @@ class SessionViewModel(app: Application, private val id: String) : AndroidViewMo
     }
 
     /** Confirm a mix segment's track, or replace it with an alternate. */
-    fun correct(segment: Segment, track: Track) {
+    fun correct(segment: Segment, track: Track) = edit("correction") { engine -> engine.correctSegment(id, segment.id, track) }
+
+    /** "Not this": the segment becomes unidentified and its track is kept as an alternate. */
+    fun reject(segment: Segment) = edit("rejection") { engine -> engine.rejectSegment(id, segment.id) }
+
+    private fun edit(what: String, change: (EngineInterface) -> Segment) {
         viewModelScope.launch {
             val engine = runCatching { graph.engineHost.engine() }.getOrNull() ?: return@launch
             val updated = withContext(Dispatchers.IO) {
                 try {
-                    engine.correctSegment(id, segment.id, track)
+                    change(engine)
                 } catch (e: MfException) {
-                    Log.w(TAG, "correction failed", e)
+                    Log.w(TAG, "$what failed", e)
                     null
                 }
-            } ?: return@launch
+            }
+            if (updated == null) {
+                _messages.value = getApplication<Application>().getString(R.string.error_generic)
+                return@launch
+            }
             _detail.update { d -> d?.copy(segments = d.segments.map { if (it.id == updated.id) updated else it }) }
             _live.update { l -> l?.copy(segments = l.segments.map { if (it.id == updated.id) updated else it }) }
             rebuild()
+            graph.notifyLibraryChanged()
         }
     }
 
@@ -321,13 +331,26 @@ class SessionViewModel(app: Application, private val id: String) : AndroidViewMo
 
     fun stop() = graph.analyses.cancel(id)
 
+    /** Pin or unpin at once; the engine catches up, and a failure puts the toggle back. */
     fun setPinned(pinned: Boolean) {
+        val before = _detail.value?.entry?.pinned ?: return
+        if (before == pinned) return
+        showPinned(pinned)
         viewModelScope.launch {
-            val engine = runCatching { graph.engineHost.engine() }.getOrNull() ?: return@launch
-            withContext(Dispatchers.IO) { runCatching { engine.setPinned(id, pinned) } }
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { graph.engineHost.engine().setPinned(id, pinned) }.isSuccess
+            }
+            if (!ok) {
+                showPinned(before)
+                _messages.value = getApplication<Application>().getString(R.string.error_generic)
+            }
             graph.notifyLibraryChanged()
-            load()
         }
+    }
+
+    private fun showPinned(pinned: Boolean) {
+        _detail.update { d -> d?.copy(entry = d.entry.copy(pinned = pinned)) }
+        rebuild()
     }
 
     /** Delete with Undo (heard, hummed and link sessions). */

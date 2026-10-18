@@ -9,7 +9,20 @@ extension Copy {
     static let libraryTitle = String(localized: "Library")
     static let listenAction = String(localized: "Listen")
     static let listenHint = String(localized: "Identifies what's playing")
-    static let listenHelp = String(localized: "Identify what's playing")
+    static let backToListen = String(localized: "Back to Listen")
+    static let listenMethods = String(localized: "Other Ways to Identify")
+    static let noSelection = String(localized: "No Selection")
+    static let showAll = String(localized: "Show All")
+    static let showInLibrary = String(localized: "Show in Library")
+
+    /// The toolbar Listen button's help: what its main part does.
+    static func listenHelp(_ source: ListenSource) -> String {
+        switch source {
+        case .microphone: String(localized: "Listen with the microphone")
+        case .thisMac: String(localized: "Listen to audio playing on this Mac")
+        case .hum: String(localized: "Hum, whistle or sing a tune")
+        }
+    }
     static let listenMenu = String(localized: "Listen")
     static let sessionMenu = String(localized: "Session")
     static let humming = String(localized: "Humming")
@@ -53,7 +66,6 @@ extension Copy {
     static let zoomIn = String(localized: "Zoom In")
     static let zoomOut = String(localized: "Zoom Out")
     static let actualSize = String(localized: "Actual Size")
-    static let openInDefault = String(localized: "Open in Default Service")
     static let openInMenu = String(localized: "Open in")
     static let openMusicFetch = String(localized: "Open Music Fetch")
     static let settingsTitle = String(localized: "Settings")
@@ -70,6 +82,7 @@ extension Copy {
         case .continueSystemAudio: continueAction
         case .openMicrophoneSettings: openSystemSettings
         case .stop: stop
+        case .dismiss: ok
         }
     }
 
@@ -191,6 +204,7 @@ extension Copy {
 
     static let confirm = String(localized: "Confirm")
     static let notThis = String(localized: "Not this")
+    static let notThisMenu = String(localized: "Not This")
     static let humPart = String(localized: "Hum This Part")
     static let match = String(localized: "Match")
     static let evidenceLabel = String(localized: "Evidence")
@@ -200,6 +214,7 @@ extension Copy {
     static let analyzing = String(localized: "Analyzing")
     static let stoppedPlain = String(localized: "Stopped")
     static let didNotFinish = String(localized: "Didn't finish")
+    static let waitingForConnection = String(localized: "Waiting for connection")
 
     static func useAlternate(_ track: Track) -> String {
         String(localized: "Use “\(track.title)” by \(track.artist)")
@@ -248,6 +263,29 @@ extension Copy {
         }
     }
 
+    // MARK: Settings › Audio
+
+    static let settingsAudio = String(localized: "Audio")
+    static let microphoneOrder = String(localized: "Microphone order")
+    static let microphoneOrderFooter = String(localized: "Music Fetch listens with the first connected microphone. Drag to reorder.")
+    static let listenTo = String(localized: "Listen to")
+    static let systemOutput = String(localized: "System output")
+    static let notConnected = String(localized: "Not connected")
+    static let outputFooter = String(localized: "When the chosen output isn't connected, the system output is used.")
+    static let inUse = String(localized: "In use")
+
+    static func moveUp(_ device: String) -> String {
+        String(localized: "Move \(device) up")
+    }
+
+    static func moveDown(_ device: String) -> String {
+        String(localized: "Move \(device) down")
+    }
+
+    static func forget(_ device: String) -> String {
+        String(localized: "Forget \(device)")
+    }
+
     // MARK: Library
 
     static let filterAll = String(localized: "All")
@@ -255,9 +293,12 @@ extension Copy {
     static let filterHummed = String(localized: "Hummed")
     static let filterLinks = String(localized: "Links")
     static let filterMixes = String(localized: "Mixes")
+    static let filterPinned = String(localized: "Pinned")
     static let libraryEmptyTitle = String(localized: "Nothing identified yet")
     static let libraryEmptyMessage = String(localized: "Songs you identify will show up here.")
     static let libraryEmptyFiltered = String(localized: "Nothing here yet")
+    static let noPinnedTitle = String(localized: "Nothing pinned yet")
+    static let noPinnedMessage = String(localized: "Pin songs and mixes to keep them here and in the sidebar.")
     static let pin = String(localized: "Pin")
     static let unpin = String(localized: "Unpin")
     static let pinned = String(localized: "Pinned")
@@ -292,6 +333,21 @@ extension Copy {
         track.artist.isEmpty ? track.title : "\(track.title) — \(track.artist)"
     }
 
+    // MARK: Providers
+
+    static let providerPanelTitle = String(localized: "Where do you listen?")
+    static let providerPanelMessage = String(localized: "Songs you identify open there. You can change this in Settings.")
+    static let moreProviders = String(localized: "More…")
+    static let skip = String(localized: "Skip")
+    static let providerService = String(localized: "Service")
+    static let customProviderEllipsis = String(localized: "Custom…")
+    static let providerName = String(localized: "Name")
+    static let providerNamePrompt = String(localized: "Name of the app or site")
+    static let providerAddress = String(localized: "Web address")
+    static let providerAddressPrompt = "https://example.com/search?q={query}"
+    static let providerAddressHelp = String(localized: "{query} becomes the artist and title. {artist}, {title} and {isrc} work too.")
+    static let providerAddressInvalid = String(localized: "Enter a web address with {query}, {artist}, {title} or {isrc} in it.")
+
     // MARK: Settings
 
     static let settingsGeneral = String(localized: "General")
@@ -322,6 +378,7 @@ extension Copy {
     static let melodyFooter = String(localized: "Needed to recognize humming, whistling and singing. Stays on this Mac.")
     static let whileHumming = String(localized: "While humming")
     static let alsoSearchLyrics = String(localized: "Also search lyrics you sing")
+    static let autoStopAfterPause = String(localized: "Stop automatically after a pause")
     static let onDisk = String(localized: "On disk")
     static let cachedAudio = String(localized: "Cached audio")
     static let clearCache = String(localized: "Clear Cache")

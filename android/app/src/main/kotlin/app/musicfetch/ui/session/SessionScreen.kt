@@ -4,7 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.widget.Toast
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -27,7 +28,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.ListItem
+import androidx.compose.material3.IconToggleButton
+import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,9 +40,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,30 +55,56 @@ import app.musicfetch.R
 import app.musicfetch.core.ExportFormat
 import app.musicfetch.core.LibraryEntry
 import app.musicfetch.core.SessionKind
+import app.musicfetch.core.SessionStatus
 import app.musicfetch.core.Track
-import app.musicfetch.platform.ServiceLinkOpener
+import app.musicfetch.notify.Notifications
 import app.musicfetch.ui.AppIntents
 import app.musicfetch.ui.common.ListRow
+import app.musicfetch.ui.common.LocalAppSnackbar
+import app.musicfetch.ui.common.tag
+import app.musicfetch.ui.components.MatchingIndicator
+import app.musicfetch.ui.listen.sourceOf
 import app.musicfetch.ui.navigation.LocalNavigator
 import app.musicfetch.ui.navigation.SessionRoute
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** A session: result, candidates, mix or collection by what it holds (docs/design/DESIGN.md §6.3–6.6). */
+/**
+ * A session: result, candidates, mix or collection by what it holds (docs/design/DESIGN.md §6.3–6.6).
+ * [onListenTab]: shown on the Listen destination, where results offer "Listen again".
+ */
 @Composable
-fun SessionScreen(id: String, viewModel: SessionViewModel = viewModel(key = "session-$id", factory = SessionViewModel.Factory(id))) {
+fun SessionScreen(
+    id: String,
+    onListenTab: Boolean = false,
+    viewModel: SessionViewModel = viewModel(key = "session-$id", factory = SessionViewModel.Factory(id)),
+) {
     val view by viewModel.view.collectAsStateWithLifecycle()
     val navigator = LocalNavigator.current
     val context = LocalContext.current
+    val snackbar = LocalAppSnackbar.current
     val message by viewModel.messages.collectAsStateWithLifecycle()
     LaunchedEffect(message) {
         message?.let {
-            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            snackbar.post(it)
             viewModel.message(null)
         }
     }
+    // Seen in the app: its result notification has done its job.
+    LaunchedEffect(id) { Notifications.dismissResult(context, id) }
     val onBack: () -> Unit = { navigator.back() }
     when (val v = view) {
-        SessionView.Loading -> Scaffold(topBar = { BackBar(onBack) }) { padding -> Box(Modifier.padding(padding)) }
+        SessionView.Loading -> Scaffold(topBar = { BackBar(onBack) }) { padding ->
+            // Most sessions load in a few milliseconds: show progress only after 300 ms.
+            var slow by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                delay(300)
+                slow = true
+            }
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                if (slow) MatchingIndicator(MaterialTheme.colorScheme.primary, Modifier.size(48.dp))
+            }
+        }
         SessionView.Missing -> Scaffold(topBar = { BackBar(onBack) }) { padding ->
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text(
@@ -84,42 +116,65 @@ fun SessionScreen(id: String, viewModel: SessionViewModel = viewModel(key = "ses
                 )
             }
         }
-        is SessionView.Result -> ResultContent(v, viewModel, onBack)
-        is SessionView.Candidates -> CandidatesContent(v, viewModel, onBack)
+        is SessionView.Result -> ResultContent(v, viewModel, onBack, listenAgain = onListenTab)
+        is SessionView.Candidates -> CandidatesContent(v, viewModel, onBack, listenAgain = onListenTab)
         is SessionView.Mix -> MixContent(v, viewModel, onBack)
-        is SessionView.Empty -> EmptyContent(v, viewModel, onBack)
+        is SessionView.Empty -> EmptyContent(v, viewModel, onBack, listenAgain = onListenTab && !v.running)
     }
 }
 
+/**
+ * The session app bar. [transparent] lets the result's wash show through until content scrolls
+ * beneath it ([scrollBehavior]); then the bar takes the container colour.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun BackBar(onBack: () -> Unit, actions: @Composable () -> Unit = {}, transparent: Boolean = false, title: @Composable () -> Unit = {}) {
+internal fun BackBar(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    actions: @Composable () -> Unit = {},
+    transparent: Boolean = false,
+    scrollBehavior: TopAppBarScrollBehavior? = null,
+    title: @Composable () -> Unit = {},
+) {
     TopAppBar(
         title = title,
+        modifier = modifier,
         navigationIcon = {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = onBack, modifier = Modifier.tag("session.back")) {
                 Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = stringResource(R.string.back))
             }
         },
         actions = { actions() },
+        scrollBehavior = scrollBehavior,
         colors = if (transparent) {
-            TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent, scrolledContainerColor = Color.Transparent)
+            TopAppBarDefaults.topAppBarColors(
+                containerColor = Color.Transparent,
+                scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+            )
         } else {
             TopAppBarDefaults.topAppBarColors()
         },
     )
 }
 
-/** Share and More (copy, pin, delete, export) for the session's app bar. */
+/**
+ * Pin, Share and More (copy, export, delete) for the session's app bar (docs/design/DESIGN.md
+ * §6.3). Pin is a visible toggle, so a song is one tap from being kept; unconfirmed guesses
+ * aren't shared ([withShare] false).
+ */
 @Composable
 internal fun SessionActions(
     entry: LibraryEntry?,
     viewModel: SessionViewModel,
     track: Track? = null,
     isMix: Boolean = false,
+    withShare: Boolean = true,
+    withPin: Boolean = true,
 ) {
     val context = LocalContext.current
     val navigator = LocalNavigator.current
+    val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
     var exportSheet by remember { mutableStateOf(false) }
@@ -134,16 +189,34 @@ internal fun SessionActions(
         }
     }
 
-    IconButton(onClick = {
-        scope.launch {
-            val text = if (isMix || track == null) viewModel.export(ExportFormat.TEXT) else shareText(track)
-            if (text != null) share(context, entry?.title ?: track?.title ?: "", text)
+    if (withPin && entry != null) {
+        val pinnedLabel = stringResource(if (entry.pinned) R.string.session_pinned else R.string.session_not_pinned)
+        IconToggleButton(
+            checked = entry.pinned,
+            onCheckedChange = { checked ->
+                haptics.performHapticFeedback(if (checked) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff)
+                viewModel.setPinned(checked)
+            },
+            modifier = Modifier.semantics { stateDescription = pinnedLabel }.tag("session.pin"),
+        ) {
+            Icon(
+                painterResource(if (entry.pinned) R.drawable.ic_push_pin_filled else R.drawable.ic_push_pin),
+                contentDescription = stringResource(R.string.session_pin),
+            )
         }
-    }) {
-        Icon(painterResource(R.drawable.ic_share), contentDescription = stringResource(R.string.result_share))
+    }
+    if (withShare) {
+        IconButton(onClick = {
+            scope.launch {
+                val text = if (isMix || track == null) viewModel.export(ExportFormat.TEXT) else shareText(track)
+                if (text != null) share(context, entry?.title ?: track?.title ?: "", text)
+            }
+        }, modifier = Modifier.tag("session.share")) {
+            Icon(painterResource(R.drawable.ic_share), contentDescription = stringResource(R.string.result_share))
+        }
     }
     Box {
-        IconButton(onClick = { menu = true }) {
+        IconButton(onClick = { menu = true }, modifier = Modifier.tag("session.more")) {
             Icon(painterResource(R.drawable.ic_more_vert), contentDescription = stringResource(R.string.more))
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -153,7 +226,7 @@ internal fun SessionActions(
                     onClick = {
                         menu = false
                         copy(context, "${track.artist} – ${track.title}")
-                        viewModel.message(copied)
+                        confirmCopy(viewModel, copied)
                     },
                 )
                 val link = track.links.firstOrNull { !it.isSearch }
@@ -163,7 +236,7 @@ internal fun SessionActions(
                         onClick = {
                             menu = false
                             copy(context, link.url)
-                            viewModel.message(copied)
+                            confirmCopy(viewModel, copied)
                         },
                     )
                 }
@@ -176,7 +249,7 @@ internal fun SessionActions(
                         scope.launch {
                             viewModel.export(ExportFormat.TEXT)?.let {
                                 copy(context, it)
-                                viewModel.message(copied)
+                                confirmCopy(viewModel, copied)
                             }
                         }
                     },
@@ -191,13 +264,7 @@ internal fun SessionActions(
             }
             if (entry != null) {
                 DropdownMenuItem(
-                    text = { Text(stringResource(if (entry.pinned) R.string.session_unpin else R.string.session_pin)) },
-                    onClick = {
-                        menu = false
-                        viewModel.setPinned(!entry.pinned)
-                    },
-                )
-                DropdownMenuItem(
+                    modifier = Modifier.tag("session.delete"),
                     text = { Text(stringResource(R.string.session_delete), color = MaterialTheme.colorScheme.error) },
                     onClick = {
                         menu = false
@@ -263,15 +330,19 @@ private fun ExportSheet(onDismiss: () -> Unit, onPick: (ExportFormat) -> Unit) {
 
 /** Nothing found, failed, or still starting. */
 @Composable
-private fun EmptyContent(view: SessionView.Empty, viewModel: SessionViewModel, onBack: () -> Unit) {
+private fun EmptyContent(view: SessionView.Empty, viewModel: SessionViewModel, onBack: () -> Unit, listenAgain: Boolean) {
     val navigator = LocalNavigator.current
-    Scaffold(topBar = { BackBar(onBack, actions = { SessionActions(view.entry, viewModel) }) }) { padding ->
+    val entry = view.entry
+    val liveSource = entry?.kind?.let(::sourceOf)
+    Scaffold(
+        topBar = { BackBar(onBack, actions = { SessionActions(entry, viewModel, withShare = false, withPin = false) }) },
+        bottomBar = { if (listenAgain) ListenAgainDock() },
+    ) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(24.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            val entry = view.entry
             if (entry != null && entry.title.isNotBlank()) {
                 Text(
                     entry.title,
@@ -281,29 +352,52 @@ private fun EmptyContent(view: SessionView.Empty, viewModel: SessionViewModel, o
                     maxLines = 2,
                 )
             }
+            // Saved while offline: identified automatically once the phone is connected again.
+            val waiting = entry?.status == SessionStatus.WAITING
             Text(
                 when {
+                    waiting -> stringResource(R.string.library_waiting)
                     view.running -> stringResource(R.string.library_running)
                     view.failed -> view.message ?: stringResource(R.string.error_generic)
                     else -> view.message ?: stringResource(R.string.state_no_match)
                 },
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+                modifier = Modifier.padding(top = 8.dp, bottom = if (waiting) 4.dp else 16.dp),
             )
-            if (!view.running) {
-                FilledTonalButton(onClick = {
+            when {
+                waiting -> Text(
+                    stringResource(R.string.session_waiting_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                view.running -> Unit
+                // The dock below already offers every way to listen again.
+                listenAgain && liveSource != null -> Unit
+                else -> FilledTonalButton(onClick = {
                     val url = entry?.sourceUrl
-                    if (entry?.kind == SessionKind.LINK && url != null) AppIntents.analyzeLater(url)
-                    navigator.showListen()
-                }) { Text(stringResource(R.string.action_try_again)) }
+                    when {
+                        liveSource != null -> AppIntents.listenNow(liveSource, navigator)
+                        entry?.kind == SessionKind.LINK && url != null -> {
+                            AppIntents.analyzeLater(url)
+                            navigator.showListen()
+                        }
+                        else -> navigator.showListen()
+                    }
+                }, modifier = Modifier.tag("session.tryAgain")) { Text(stringResource(R.string.action_try_again)) }
             }
         }
     }
 }
 
+/** "Copied": Android 13+ confirms clipboard writes itself. */
+private fun confirmCopy(viewModel: SessionViewModel, copied: String) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) viewModel.message(copied)
+}
+
 internal fun shareText(track: Track): String {
-    val link = ServiceLinkOpener.pick(track.links, track.links.firstOrNull()?.service ?: app.musicfetch.core.Service.SPOTIFY)
+    val link = track.links.firstOrNull { !it.isSearch } ?: track.links.firstOrNull()
     return listOfNotNull("${track.title} — ${track.artist}", link?.url).joinToString("\n")
 }
 

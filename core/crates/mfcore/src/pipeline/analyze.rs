@@ -9,13 +9,16 @@ mod survey;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
 pub use self::services::{Services, SessionServices};
 pub use self::survey::{Prior, Survey, Verdict};
-use crate::audio::{PcmFile, decode::decode_file};
+use crate::audio::PcmFile;
+#[cfg(not(target_family = "wasm"))]
+use crate::audio::decode::decode_file;
 use crate::error::{MfError, Result};
 use crate::links::{self, Resolution};
 use crate::media::{self, MediaInfo};
@@ -38,11 +41,19 @@ const COMMENTS_MIN_MS: u64 = 8 * 60_000;
 /// Survey probes are interactive below this length.
 const INTERACTIVE_MAX_MS: u64 = 10 * 60_000;
 /// Largest direct download.
+#[cfg(not(target_family = "wasm"))]
 const MAX_DIRECT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// The browser decodes a direct download from memory.
+#[cfg(target_family = "wasm")]
+const MAX_DIRECT_BYTES: u64 = 1024 * 1024 * 1024;
+/// Waits before trying a failed download again.
+#[cfg(not(target_family = "wasm"))]
+const DOWNLOAD_RETRIES: [Duration; 2] = [Duration::from_millis(1500), Duration::from_secs(4)];
 /// Impression analysis looks at the start of the media.
 const IMPRESSION_MS: u64 = 30_000;
-/// Enrichment of streaming-service tracks runs this many at a time.
-const ENRICH_PARALLEL: usize = 4;
+/// Enrichment of streaming-service tracks runs this many at a time (the
+/// catalogs' own rate limiters pace the requests).
+const ENRICH_PARALLEL: usize = 8;
 
 /// A validated analysis input.
 #[derive(Debug, Clone, PartialEq)]
@@ -98,11 +109,14 @@ pub struct AnalyzeOptions {
     pub use_hints: bool,
     /// Keep probes and decoded audio here between runs, keyed by URL.
     pub media_cache: Option<PathBuf>,
+    /// Replay from `media_cache` only: pages and probes are never fetched again
+    /// when a kept probe exists (evaluation replays stay off the sites).
+    pub offline: bool,
 }
 
 impl Default for AnalyzeOptions {
     fn default() -> Self {
-        Self { use_hints: true, media_cache: None }
+        Self { use_hints: true, media_cache: None, offline: false }
     }
 }
 
@@ -175,7 +189,15 @@ impl<S: Services> Run<'_, S> {
     async fn link(&mut self, url: &str, mode: AnalyzeMode) -> Result<Report> {
         let ctx = self.ctx;
         ctx.emitter.phase(Phase::Resolving, None);
-        let resolution = match links::resolve(&ctx.engine.http, url, ctx.engine.country(), &ctx.cancel).await {
+        let cached = cached_resolution(self.options, url);
+        let resolved = match cached {
+            Some(r) => Ok(r),
+            None => links::resolve(&ctx.engine.http, url, ctx.engine.country(), &ctx.cancel).await,
+        };
+        if let Ok(r) = &resolved {
+            store_resolution(self.options, url, r);
+        }
+        let resolution = match resolved {
             Ok(r) => r,
             // The page itself could not be read: the media backend may still fetch it.
             Err(MfError::Network { message }) if ctx.engine.media.is_some() => {
@@ -241,39 +263,47 @@ impl<S: Services> Run<'_, S> {
         self.analyze_audio(&pcm, &hints, &source, None, mode).await
     }
 
-    /// Streaming-service tracks: enrich and list them, no audio.
+    /// Streaming-service tracks, no audio: every segment at once from the
+    /// page's metadata, then each one again under the same id as its
+    /// enrichment (artwork, ISRC, links) arrives. A single track gets every
+    /// catalog; collections get the fast ones.
     async fn tracks(&mut self, source: SourceInfo, tracks: Vec<Track>) -> Result<Report> {
+        use futures_util::StreamExt;
         let ctx = self.ctx;
         let mut source = source;
         source.item_count = tracks.len().max(1) as u32;
         ctx.emitter.source(source.clone());
         let total = tracks.len() as u32;
-        let mut segments = Vec::with_capacity(tracks.len());
-        let mut done: Vec<(usize, Track)> = Vec::with_capacity(tracks.len());
-        for (chunk_index, chunk) in tracks.chunks(ENRICH_PARALLEL).enumerate() {
+        let mut segments: Vec<Segment> = tracks
+            .into_iter()
+            .enumerate()
+            .map(|(index, track)| metadata_segment(index, crate::catalog::with_search_links(track)))
+            .collect();
+        for segment in &segments {
+            ctx.emitter.segment(segment.clone());
+        }
+        let single = segments.len() == 1;
+        // Futures are built up front (no closure): the session future must stay `Send`.
+        let mut pending = Vec::with_capacity(segments.len());
+        for (index, segment) in segments.iter().enumerate() {
+            let Some(track) = segment.track.clone() else { continue };
+            let services = self.services;
+            pending.push(async move {
+                let enriched = if single { services.enrich(track).await } else { services.enrich_quick(track).await };
+                (index, enriched)
+            });
+        }
+        let mut enriched = futures_util::stream::iter(pending).buffer_unordered(ENRICH_PARALLEL);
+        while let Some((index, track)) = enriched.next().await {
             ctx.cancel.check()?;
-            let enriched = futures_util::future::join_all(chunk.iter().cloned().map(|t| self.services.enrich(t))).await;
-            for (k, track) in enriched.into_iter().enumerate() {
-                done.push((chunk_index * ENRICH_PARALLEL + k, track));
+            let segment = &mut segments[index];
+            if segment.track.as_ref() != Some(&track) {
+                segment.track = Some(track);
+                ctx.emitter.segment(segment.clone());
             }
         }
-        for (index, track) in done {
-            let segment = Segment {
-                id: format!("track-{index}"),
-                item_index: index as u32,
-                start_ms: 0,
-                end_ms: 0,
-                kind: SegmentKind::Track,
-                track: Some(track),
-                confidence: 0.99,
-                tier: crate::model::Tier::Confirmed,
-                evidence: vec![Evidence { source: EvidenceSource::Metadata, at_ms: 0, score: 0.99, detail: None }],
-                alternates: Vec::new(),
-                source_url: None,
-            };
-            ctx.emitter.segment(segment.clone());
-            segments.push(segment);
-        }
+        drop(enriched);
+        ctx.cancel.check()?;
         let update = SessionUpdate {
             title: source.title.clone(),
             track: (total == 1).then(|| segments.first().and_then(|s| s.track.clone())).flatten(),
@@ -314,7 +344,7 @@ impl<S: Services> Run<'_, S> {
     async fn impression(&mut self, pcm: &PcmFile, source: &SourceInfo) -> Result<Report> {
         let samples = pcm.read_ms(0, IMPRESSION_MS)?;
         let audio = crate::audio::resample::i16_to_f32(&samples);
-        let outcome = hum::run_impression(self.ctx, &audio, None).await?;
+        let outcome = hum::run_impression(self.ctx, &audio).await?;
         let update =
             SessionUpdate { kind: Some(SessionKind::Hum), title: source.title.clone(), ..SessionUpdate::default() };
         Ok(Report {
@@ -327,6 +357,23 @@ impl<S: Services> Run<'_, S> {
             log: Vec::new(),
             update,
         })
+    }
+}
+
+/// A streaming-service track as a segment of its collection.
+fn metadata_segment(index: usize, track: Track) -> Segment {
+    Segment {
+        id: format!("track-{index}"),
+        item_index: index as u32,
+        start_ms: 0,
+        end_ms: 0,
+        kind: SegmentKind::Track,
+        track: Some(track),
+        confidence: 0.99,
+        tier: crate::model::Tier::Confirmed,
+        evidence: vec![Evidence { source: EvidenceSource::Metadata, at_ms: 0, score: 0.99, detail: None }],
+        alternates: Vec::new(),
+        source_url: None,
     }
 }
 
@@ -343,18 +390,79 @@ pub(crate) async fn probe_media(
     {
         return media::parse_probe(&json);
     }
-    let backend = ctx.engine.media.clone().ok_or_else(|| MfError::Platform {
-        message: "Links with media need the media download tools, which are not available.".into(),
-    })?;
+    // A kept probe with comments answers a request without them too.
+    if !with_comments
+        && let Some(path) = cache_path(options, url, "probe-comments.json")
+        && let Ok(json) = std::fs::read_to_string(path)
+    {
+        return media::parse_probe(&json);
+    }
+    let Some(backend) = ctx.engine.media.clone() else {
+        // Without yt-dlp (the browser), YouTube pages and InnerTube answer instead.
+        if crate::links::youtube_api::handles(url) {
+            return crate::links::youtube_api::probe(&ctx.engine.http, url, with_comments, &ctx.cancel).await;
+        }
+        return Err(MfError::Platform {
+            message: "Links with media need the media download tools, which are not available.".into(),
+        });
+    };
     let task = TaskHandle::new(ctx.cancel.clone());
     let url_owned = url.to_string();
-    let json = tokio::task::spawn_blocking(move || backend.probe(url_owned, with_comments, task))
+    let json = crate::util::rt::spawn_blocking(move || backend.probe(url_owned, with_comments, task))
         .await
         .map_err(|e| MfError::internal(format!("probe: {e}")))??;
     if let Some(path) = cache {
         let _ = std::fs::write(path, &json);
     }
     media::parse_probe(&json)
+}
+
+/// A media resolution kept in `options.media_cache` (evaluation replays never
+/// touch the page again).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedMedia {
+    source: SourceInfo,
+    url: String,
+    direct: bool,
+}
+
+fn cached_resolution(options: &AnalyzeOptions, url: &str) -> Option<Resolution> {
+    if let Some(json) = cache_path(options, url, "resolution.json").and_then(|p| std::fs::read_to_string(p).ok())
+        && let Ok(cached) = serde_json::from_str::<CachedMedia>(&json)
+    {
+        return Some(Resolution::Media { source: cached.source, url: cached.url, direct: cached.direct });
+    }
+    if !options.offline {
+        return None;
+    }
+    // Offline replays: the kept probe describes the page well enough.
+    let canonical = links::canonicalize(url).unwrap_or_else(|_| url.to_string());
+    let (media_url, json) = [url, canonical.as_str()].iter().find_map(|u| {
+        ["probe-comments.json", "probe.json"]
+            .iter()
+            .find_map(|what| std::fs::read_to_string(cache_path(options, u, what)?).ok())
+            .map(|json| (u.to_string(), json))
+    })?;
+    let info = media::parse_probe(&json).ok()?;
+    let mut source = SourceInfo { url: Some(media_url.clone()), ..SourceInfo::default() };
+    refresh_source(&mut source, &info);
+    Some(Resolution::Media { source, url: media_url, direct: false })
+}
+
+fn store_resolution(options: &AnalyzeOptions, url: &str, resolution: &Resolution) {
+    let (Some(path), Resolution::Media { source, url: media_url, direct }) =
+        (cache_path(options, url, "resolution.json"), resolution)
+    else {
+        return;
+    };
+    // A page that did not tell the duration was probably a consent or bot wall.
+    if path.exists() || source.duration_ms.is_none() {
+        return;
+    }
+    let cached = CachedMedia { source: source.clone(), url: media_url.clone(), direct: *direct };
+    if let Ok(json) = serde_json::to_string(&cached) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 fn cache_path(options: &AnalyzeOptions, url: &str, what: &str) -> Option<PathBuf> {
@@ -378,39 +486,75 @@ pub(crate) async fn fetch_audio(
     {
         return PcmFile::open(&cached);
     }
-    std::fs::create_dir_all(dir)?;
-    ctx.emitter.phase(Phase::Downloading, Some(0.0));
-    let file = if direct { download_direct(ctx, url, dir).await? } else { download(ctx, url, dir).await? };
-    ctx.emitter.phase(Phase::Decoding, Some(0.0));
-    let out = match cache_path(options, url, "pcm") {
-        Some(path) => path.with_extension("pcm.part"),
-        None => dir.join("audio.pcm"),
-    };
-    let decoded = decode(ctx, &file, &out).await;
-    let _ = std::fs::remove_file(&file);
-    let pcm = decoded?;
-    if let Some(path) = cache_path(options, url, "pcm") {
-        std::fs::rename(pcm.path(), &path)?;
-        return PcmFile::open(&path);
+    #[cfg(not(target_family = "wasm"))]
+    {
+        std::fs::create_dir_all(dir)?;
+        ctx.emitter.phase(Phase::Downloading, Some(0.0));
+        let file = if direct { download_direct(ctx, url, dir).await? } else { download(ctx, url, dir).await? };
+        ctx.emitter.phase(Phase::Decoding, Some(0.0));
+        let out = match cache_path(options, url, "pcm") {
+            Some(path) => path.with_extension("pcm.part"),
+            None => dir.join("audio.pcm"),
+        };
+        let decoded = decode(ctx, &file, &out).await;
+        let _ = std::fs::remove_file(&file);
+        let pcm = decoded?;
+        if let Some(path) = cache_path(options, url, "pcm") {
+            std::fs::rename(pcm.path(), &path)?;
+            return PcmFile::open(&path);
+        }
+        Ok(pcm)
     }
-    Ok(pcm)
+    #[cfg(target_family = "wasm")]
+    {
+        // The browser has no media backend (capture comes with E5): direct
+        // media only, downloaded into memory and decoded into a work file.
+        let _ = dir;
+        if !direct {
+            return Err(MfError::Platform {
+                message: "Links with media need the media download tools, which are not available.".into(),
+            });
+        }
+        ctx.emitter.phase(Phase::Downloading, Some(0.0));
+        let (bytes, ext) = download_direct_bytes(ctx, url).await?;
+        ctx.emitter.phase(Phase::Decoding, Some(0.0));
+        decode_bytes(ctx, bytes, &ext, &ctx.work_name("audio.pcm")).await
+    }
 }
 
+/// Download through the media backend. Sites drop connections and refuse a
+/// stream now and then, so a failed download is tried again twice, each time
+/// into a fresh directory (a broken partial file is never taken for the result).
+#[cfg(not(target_family = "wasm"))]
 async fn download(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<PathBuf> {
     let backend = ctx.engine.media.clone().ok_or_else(|| MfError::Platform {
         message: "Links with media need the media download tools, which are not available.".into(),
     })?;
-    let emitter = ctx.emitter.clone();
-    let task = TaskHandle::with_progress(ctx.cancel.clone(), move |f| emitter.phase(Phase::Downloading, Some(f)));
-    let (url, dest) = (url.to_string(), dir.to_string_lossy().into_owned());
-    let path = tokio::task::spawn_blocking(move || backend.download_audio(url, dest, task))
-        .await
-        .map_err(|e| MfError::internal(format!("download: {e}")))??;
-    Ok(PathBuf::from(path))
+    let mut attempt = 0;
+    loop {
+        let dest = if attempt == 0 { dir.to_path_buf() } else { dir.join(format!("retry-{attempt}")) };
+        let emitter = ctx.emitter.clone();
+        let task = TaskHandle::with_progress(ctx.cancel.clone(), move |f| emitter.phase(Phase::Downloading, Some(f)));
+        let (url_owned, dest) = (url.to_string(), dest.to_string_lossy().into_owned());
+        let backend = backend.clone();
+        let result = crate::util::rt::spawn_blocking(move || backend.download_audio(url_owned, dest, task))
+            .await
+            .map_err(|e| MfError::internal(format!("download: {e}")))?;
+        match result.map_err(MfError::from) {
+            Ok(path) => return Ok(PathBuf::from(path)),
+            Err(MfError::Platform { message }) if attempt < DOWNLOAD_RETRIES.len() => {
+                tracing::info!(session = %ctx.id, "download failed ({message}); trying again");
+                ctx.cancel.sleep(DOWNLOAD_RETRIES[attempt]).await?;
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Plain HTTP download of a media file: every hop checked by the SSRF
 /// guard, at most 2 GiB.
+#[cfg(not(target_family = "wasm"))]
 async fn download_direct(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<PathBuf> {
     use tokio::io::AsyncWriteExt;
     let client = direct_client(&ctx.engine.config.app_version)?;
@@ -419,7 +563,7 @@ async fn download_direct(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<Path
     for _ in 0..=5 {
         links::ensure_public_url(current.as_str()).await?;
         let r = tokio::select! {
-            r = client.get(current.as_str()).send() => r?,
+            r = crate::util::http::prepare(client.get(current.as_str())).send() => r?,
             _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
         };
         if r.status().is_redirection()
@@ -465,12 +609,91 @@ async fn download_direct(ctx: &SessionCtx, url: &str, dir: &Path) -> Result<Path
     Ok(path)
 }
 
+/// Browser: a direct media download into memory. fetch() follows redirects
+/// itself; where it ended must still be a public address. At most 1 GiB.
+#[cfg(target_family = "wasm")]
+async fn download_direct_bytes(ctx: &SessionCtx, url: &str) -> Result<(Vec<u8>, String)> {
+    use futures_util::StreamExt;
+    links::ensure_public_url(url).await?;
+    let request = crate::util::http::prepare(ctx.engine.http.get(url)).send();
+    let response = tokio::select! {
+        r = request => r?,
+        _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
+    };
+    links::ensure_public_url(response.url().as_str()).await?;
+    if !response.status().is_success() {
+        return Err(MfError::MediaUnavailable {
+            message: format!("The file couldn't be downloaded ({}).", response.status()),
+        });
+    }
+    let too_large =
+        || MfError::MediaUnavailable { message: "The file is too large to analyze here (over 1 GB).".into() };
+    let total = response.content_length();
+    if total.is_some_and(|t| t > MAX_DIRECT_BYTES) {
+        return Err(too_large());
+    }
+    let ext = Path::new(response.url().path()).extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let ext: String = ext.chars().filter(char::is_ascii_alphanumeric).take(5).collect();
+    let mut body = Vec::with_capacity(total.unwrap_or(0) as usize);
+    let mut stream = response.bytes_stream();
+    loop {
+        let chunk = tokio::select! {
+            c = stream.next() => c,
+            _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
+        };
+        let Some(chunk) = chunk else { break };
+        let chunk = chunk?;
+        if (body.len() + chunk.len()) as u64 > MAX_DIRECT_BYTES {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+        if let Some(t) = total.filter(|t| *t > 0) {
+            ctx.emitter.phase(Phase::Downloading, Some(body.len() as f32 / t as f32));
+        }
+    }
+    Ok((body, ext))
+}
+
+/// Browser: decode `bytes` (`hint`: extension or MIME type) into the work file
+/// `output`.
+#[cfg(target_family = "wasm")]
+pub(crate) async fn decode_bytes(ctx: &SessionCtx, bytes: Vec<u8>, hint: &str, output: &str) -> Result<PcmFile> {
+    use crate::audio::PcmWriter;
+    let files = ctx.engine.files.clone();
+    let cancel = ctx.cancel.clone();
+    let emitter = ctx.emitter.clone();
+    let (hint, output) = (hint.to_string(), output.to_string());
+    crate::util::rt::spawn_blocking(move || {
+        let progress = move |f: f32| emitter.phase(Phase::Decoding, Some(f));
+        let writer = PcmWriter::create_in(files.clone(), &output)?;
+        let decoded =
+            crate::audio::decode::decode_bytes_into(Arc::from(bytes), Some(&hint), writer, &cancel, &progress);
+        if decoded.is_err() {
+            let _ = files.remove(&output);
+        }
+        decoded
+    })
+    .await
+    .map_err(|e| MfError::internal(format!("decode: {e}")))?
+}
+
+/// Browser: decode the work file `input` (a file the user picked, written by
+/// the host) into the work file `output`.
+#[cfg(target_family = "wasm")]
+pub(crate) async fn decode(ctx: &SessionCtx, input: &Path, output: &Path) -> Result<PcmFile> {
+    let name = input.to_string_lossy();
+    let bytes = ctx.engine.files.read(&name)?;
+    let hint = input.extension().and_then(|e| e.to_str()).unwrap_or("bin").to_string();
+    decode_bytes(ctx, bytes, &hint, &output.to_string_lossy()).await
+}
+
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn decode(ctx: &SessionCtx, input: &Path, output: &Path) -> Result<PcmFile> {
     let decoder = ctx.engine.decoder.clone();
     let cancel = ctx.cancel.clone();
     let emitter = ctx.emitter.clone();
     let (input, output) = (input.to_path_buf(), output.to_path_buf());
-    tokio::task::spawn_blocking(move || {
+    crate::util::rt::spawn_blocking(move || {
         let progress = move |f: f32| emitter.phase(Phase::Decoding, Some(f));
         decode_file(&input, &output, decoder.as_ref(), &cancel, &progress)
     })
@@ -533,6 +756,19 @@ pub(crate) async fn analyze_pcm<S: Services>(
         if missed_page_song && let Some(page) = survey::page_song_heard(services, pcm, &prior).await? {
             log.push(format!("the page's song {} – {} plays here (preview found)", page.artist, page.title));
             verdict = survey::prefer_page_song(verdict, page);
+        }
+        let heard = match &verdict {
+            Verdict::Single { track, .. } => Some(track.clone()),
+            _ => None,
+        };
+        verdict = survey::weigh_page(verdict, &prior, hints.official);
+        if let (Some(heard), Verdict::Single { track, .. }) = (heard, &verdict)
+            && !hints::same_song(&heard, track)
+        {
+            log.push(format!(
+                "the page's {} – {} outweighs one answer ({} – {})",
+                track.artist, track.title, heard.artist, heard.title
+            ));
         }
         match verdict {
             Verdict::Single { track, evidence, alternates } => {
@@ -642,7 +878,17 @@ async fn single_prior<S: Services>(services: &S, hints: &Hints, duration_ms: u64
         let fits = found.as_ref().and_then(|f| f.duration_ms).is_none_or(|d| within(d, duration_ms, 0.12));
         return Prior { track: Some(found.filter(|_| fits).unwrap_or_else(|| track.clone())), strong: true };
     }
-    let Some(parsed) = &hints.title_track else { return Prior::default() };
+    let Some(parsed) = &hints.title_track else {
+        // "Artist-Title" with a bare hyphen counts once the catalog knows the
+        // song by that artist (in any version).
+        let Some(loose) = &hints.loose_title_track else { return Prior::default() };
+        let known = services.find(&hints::bare_title(&loose.title), &loose.artist, None).await;
+        return match known {
+            Some(found) if hints::same_version(&found, loose) => Prior { track: Some(found), strong: false },
+            Some(_) => Prior { track: Some(loose.clone()), strong: false },
+            None => Prior::default(),
+        };
+    };
     match services.find(&parsed.title, &parsed.artist, None).await {
         Some(found) => {
             let strong = found.duration_ms.is_some_and(|d| within(d, duration_ms, 0.12));
@@ -678,6 +924,7 @@ fn refresh_source(source: &mut SourceInfo, info: &MediaInfo) {
 
 /// HTTP client for direct downloads: no automatic redirects (each hop is
 /// checked), a resolver that refuses non-public addresses, long reads allowed.
+#[cfg(not(target_family = "wasm"))]
 fn direct_client(app_version: &str) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .tls_backend_preconfigured(crate::util::http::tls_config()?)
@@ -691,8 +938,10 @@ fn direct_client(app_version: &str) -> Result<reqwest::Client> {
 }
 
 /// Resolves names only to public addresses (no DNS rebinding into the LAN).
+#[cfg(not(target_family = "wasm"))]
 struct PublicResolver;
 
+#[cfg(not(target_family = "wasm"))]
 impl reqwest::dns::Resolve for PublicResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_string();

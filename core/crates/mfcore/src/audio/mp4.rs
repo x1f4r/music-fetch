@@ -50,12 +50,17 @@ fn scale(value: u64, to: u32, from: u32) -> u64 {
 /// of an MP4/MOV file, if it trims anything.
 pub(crate) fn sound_track_edit(path: &Path, track_id: Option<u32>) -> Option<Mp4Edit> {
     let mut file = File::open(path).ok()?;
-    let moov = read_moov(&mut file)?;
+    let len = file.metadata().ok()?.len();
+    sound_track_edit_in(&mut file, len, track_id)
+}
+
+/// Like [`sound_track_edit`] for MP4 data of `len` bytes in `reader`.
+pub(crate) fn sound_track_edit_in<R: Read + Seek>(reader: &mut R, len: u64, track_id: Option<u32>) -> Option<Mp4Edit> {
+    let moov = read_moov(reader, len)?;
     parse_moov(&moov, track_id)
 }
 
-fn read_moov(file: &mut File) -> Option<Vec<u8>> {
-    let len = file.metadata().ok()?.len();
+fn read_moov<R: Read + Seek>(file: &mut R, len: u64) -> Option<Vec<u8>> {
     let mut pos = 0u64;
     for _ in 0..MAX_TOP_LEVEL {
         if pos + 8 > len {

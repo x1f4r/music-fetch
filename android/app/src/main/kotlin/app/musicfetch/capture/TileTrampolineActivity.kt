@@ -13,10 +13,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import androidx.core.net.toUri
+import app.musicfetch.MainActivity
 import app.musicfetch.R
 import app.musicfetch.appGraph
 import app.musicfetch.core.CaptureSource
 import app.musicfetch.core.ListenMode
+import app.musicfetch.platform.ListenSource
+import app.musicfetch.ui.AppIntents
 
 /**
  * Invisible activity behind the Quick Settings tiles and the widget: asks for the microphone
@@ -29,11 +33,22 @@ class TileTrampolineActivity : ComponentActivity() {
     private lateinit var origin: ListenOrigin
 
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted[Manifest.permission.RECORD_AUDIO] == true || hasMicrophone()) {
-            proceed()
-        } else {
-            Toast.makeText(this, R.string.state_mic_off, Toast.LENGTH_LONG).show()
-            finish()
+        when {
+            granted[Manifest.permission.RECORD_AUDIO] == true || hasMicrophone() -> proceed()
+            // Denied for good: Android won't ask again. The app's stage explains it and links
+            // to the settings ("Microphone access is off." · Open settings).
+            !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO) -> {
+                val listen = if (source == CaptureSource.SYSTEM_AUDIO) ListenSource.Phone else ListenSource.Microphone
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, AppIntents.listenUri(listen).toUri(), this, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                finish()
+            }
+            else -> {
+                Toast.makeText(this, R.string.state_mic_off, Toast.LENGTH_LONG).show()
+                finish()
+            }
         }
     }
 

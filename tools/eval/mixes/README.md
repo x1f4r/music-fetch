@@ -10,6 +10,11 @@
 - **single** — one song that must come back as exactly one segment (`expect`).
 - **playlist** — entries in order (`null` for an entry that is not a song).
 
+Cases marked `heldout: true` were added after the pipeline was tuned and are
+never used for tuning: reports list them in their own tables so overfitting
+shows. While tuning, run with `--heldout exclude`; `--heldout only` runs just
+them.
+
 Only public URLs and published tracklists are stored. The tracklists were parsed
 from chapters, descriptions or comments with `mf eval mix-draft <url>`, corrected
 by hand where the published text was malformed, and cross-checked against the
@@ -27,6 +32,9 @@ mf eval mixes tools/eval/mixes/manifest.json --mode both \
   second run replays without network calls. Probes that miss the cache are spaced
   `--spacing` seconds apart (default 10; never go below 9).
 - `--cached-only` never calls the recognizer; uncached probes count as no match.
+  It also implies `--offline`: pages and probes are not fetched again when a
+  kept probe exists, so replays (also several in parallel, each with a copy of
+  the cache DB) stay off the video sites, which answer bursts with bot checks.
 - Downloads are decoded once and kept in `media/` next to the cache DB; previews
   in `previews/`.
 - `--mode blind` disables every hint (tracklists, titles, playlist metadata) and

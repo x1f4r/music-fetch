@@ -2,14 +2,23 @@ import MusicFetchCore
 import SwiftUI
 
 /// The inspector column (§3.1): details for the matched track, the selected
-/// candidate or the selected mix segment. Empty otherwise.
+/// candidate or mix segment, or what to do with several selected library rows.
+/// "No Selection" otherwise.
 struct InspectorView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        ScrollView {
-            Group {
-                if let model = inspected {
+        let selection = librarySelection
+        if let selection, selection.count >= 2 {
+            ScrollView {
+                SelectionInspector(ids: selection)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        } else if let model = inspected, hasDetails(model) {
+            ScrollView {
+                Group {
                     switch model.presentation {
                     case .result:
                         if let track = model.track { TrackInspector(model: model, track: track) }
@@ -21,20 +30,80 @@ struct InspectorView: View {
                         EmptyView()
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
+            .scrollBounceBehavior(.basedOnSize)
+        } else {
+            Text(Copy.noSelection)
+                .font(.title3)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    /// The selected Library rows while the list (not a session) is on screen.
+    private var librarySelection: [String]? {
+        guard app.route == .library, app.libraryPath.isEmpty else { return nil }
+        return app.library.selection.sorted()
     }
 
     /// The session in the detail column, or the selected (not opened) library row.
     private var inspected: SessionModel? {
-        if app.route == .library, app.libraryPath.isEmpty {
-            guard app.library.selection.count == 1 else { return nil }
+        if let selection = librarySelection {
+            guard selection.count == 1 else { return nil }
             return app.inspectedLibrarySession
         }
         return app.currentSession
+    }
+
+    private func hasDetails(_ model: SessionModel) -> Bool {
+        switch model.presentation {
+        case .result: model.track != nil
+        case .candidates: model.selectedCandidate != nil
+        case .timeline, .collection: model.selectedSegment != nil
+        case .running, .empty: false
+        }
+    }
+}
+
+/// Several library rows selected: how many, and what to do with all of them.
+struct SelectionInspector: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.undoManager) private var undoManager
+    var ids: [String]
+
+    var body: some View {
+        let library = app.library!
+        let pinnedCount = ids.filter(library.isPinned).count
+        VStack(alignment: .leading, spacing: 16) {
+            Text(Copy.sessionsCount(ids.count))
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            VStack(spacing: 8) {
+                if pinnedCount < ids.count {
+                    Button {
+                        library.setPinned(ids, pinned: true, undoManager: undoManager)
+                    } label: {
+                        Label(Copy.pin, systemImage: "pin").frame(maxWidth: .infinity)
+                    }
+                }
+                if pinnedCount > 0 {
+                    Button {
+                        library.setPinned(ids, pinned: false, undoManager: undoManager)
+                    } label: {
+                        Label(Copy.unpin, systemImage: "pin.slash").frame(maxWidth: .infinity)
+                    }
+                }
+                Button(role: .destructive) {
+                    app.requestDelete(ids, undoManager: undoManager)
+                } label: {
+                    Label(Copy.delete, systemImage: "trash").frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+        }
     }
 }
 
@@ -196,7 +265,7 @@ struct SegmentInspector: View {
                     Button {
                         app.humSegment(segment, in: model)
                     } label: {
-                        Label(Copy.humIt, image: "ContourMark").frame(maxWidth: .infinity)
+                        Label(Copy.humIt, image: "contour.mark").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
@@ -206,7 +275,8 @@ struct SegmentInspector: View {
     }
 }
 
-/// "Not this": pick an alternate, or hum the part.
+/// "Not this": the segment becomes unidentified (its track stays as an alternate). The
+/// full form's menu also offers the alternates, humming the part and typing a lyric.
 struct NotThisMenu: View {
     @Environment(AppModel.self) private var app
     var model: SessionModel
@@ -214,24 +284,33 @@ struct NotThisMenu: View {
     var iconOnly = false
 
     var body: some View {
-        Menu {
-            ForEach(segment.alternates, id: \.identityKey) { alternate in
-                Button(Copy.useAlternate(alternate)) { app.correct(segmentID: segment.id, in: model.id, with: alternate) }
+        if iconOnly {
+            Button(action: reject) {
+                Image(systemName: "xmark").frame(width: 14, height: 14)
             }
-            if !segment.alternates.isEmpty { Divider() }
-            Button(Copy.humPart) { app.humSegment(segment, in: model) }
-            Button(Copy.typeLyric) { app.presentLyricSearch() }
-        } label: {
-            if iconOnly {
-                Image(systemName: "xmark")
-            } else {
+            .help(Copy.notThis)
+            .accessibilityLabel(Copy.notThis)
+        } else {
+            Menu {
+                ForEach(segment.alternates, id: \.identityKey) { alternate in
+                    Button(Copy.useAlternate(alternate)) { app.correct(segmentID: segment.id, in: model.id, with: alternate) }
+                }
+                if !segment.alternates.isEmpty { Divider() }
+                Button(Copy.humPart) { app.humSegment(segment, in: model) }
+                Button(Copy.typeLyric) { app.presentLyricSearch() }
+            } label: {
                 Text(Copy.notThis)
+            } primaryAction: {
+                reject()
             }
+            .fixedSize()
+            .help(Copy.notThis)
+            .accessibilityLabel(Copy.notThis)
         }
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(Copy.notThis)
-        .accessibilityLabel(Copy.notThis)
+    }
+
+    private func reject() {
+        app.reject(segmentID: segment.id, in: model.id)
     }
 }
 

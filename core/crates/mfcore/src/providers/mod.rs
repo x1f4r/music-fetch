@@ -31,7 +31,7 @@ pub struct ProviderMatch {
 /// Send `request`, racing cancellation, and return the JSON body of a 2xx answer.
 async fn send_json(request: reqwest::RequestBuilder, cancel: &CancelToken, service: &str) -> Result<Value> {
     let response = tokio::select! {
-        r = request.timeout(REQUEST_TIMEOUT).send() => r,
+        r = crate::util::http::prepare(request.timeout(REQUEST_TIMEOUT)).send() => r,
         _ = cancel.canceled() => return Err(MfError::Canceled),
     };
     let response = response.map_err(|e| transport_error(&e, service))?;
@@ -57,7 +57,7 @@ async fn send_json(request: reqwest::RequestBuilder, cancel: &CancelToken, servi
 fn transport_error(e: &reqwest::Error, service: &str) -> MfError {
     if e.is_timeout() {
         MfError::network(format!("{service} did not answer in time."))
-    } else if e.is_connect() {
+    } else if crate::util::http::is_connect(e) {
         MfError::network(format!("Could not connect to {service}."))
     } else {
         MfError::network(format!("The connection to {service} failed."))

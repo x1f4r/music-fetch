@@ -13,7 +13,7 @@ use crate::pipeline::analyze::services::Services;
 use crate::pipeline::hints;
 use crate::pipeline::mix::{PROBE_MS, Probe};
 use crate::pipeline::recognize::RecognitionHit;
-use crate::pipeline::stitch::VERIFIED_HINT;
+use crate::pipeline::stitch::{SAME_START_MS, VERIFIED_HINT};
 use crate::shazam::Priority;
 
 /// Windows quieter than this (dBFS RMS) are moved to find audible audio.
@@ -116,7 +116,7 @@ pub async fn page_song_heard<S: Services>(services: &S, pcm: &PcmFile, prior: &P
     let Some(preview) = services.preview(track).await else { return Ok(None) };
     let media = pcm.clone();
     let cancel = services.cancel().clone();
-    let found = tokio::task::spawn_blocking(move || -> Result<bool> {
+    let found = crate::util::rt::spawn_blocking(move || -> Result<bool> {
         let peaks = fingerprint::peaks_in(&media, 0, media.duration_ms(), &cancel)?;
         let mut index = fingerprint::Index::new();
         index.add(&fingerprint::peaks(&preview));
@@ -178,7 +178,15 @@ impl<S: Services> State<'_, S> {
             Err(e) => return Err(e),
         };
         self.log.push(match &hit {
-            Some(h) => format!("survey {:.0} % → {} – {}", fraction * 100.0, h.track.artist, h.track.title),
+            Some(h) => format!(
+                "survey {:.0} % → {} – {} (starts {:+.0} s, speed {:+.1} %, pitch {:+.1} %)",
+                fraction * 100.0,
+                h.track.artist,
+                h.track.title,
+                h.offset_ms.map_or(f64::NAN, |o| (at as f64 - o as f64) / 1000.0),
+                h.timeskew * 100.0,
+                h.frequency_skew * 100.0
+            ),
             None => format!("survey {:.0} % → no match", fraction * 100.0),
         });
         self.probes.push(Probe { at_ms: at, len_ms: len, hit });
@@ -248,7 +256,13 @@ fn decide(probes: &[Probe], prior: &Prior) -> Verdict {
     }
     let big = groups.iter().filter(|g| g.len() >= 2).count();
     if big >= 2 {
-        return Verdict::Mix { probes: probes.to_vec() };
+        if !interleaved(&groups) {
+            return Verdict::Mix { probes: probes.to_vec() };
+        }
+        // Answers that alternate (A B A A B) are one recording known under two
+        // names: a DJ set or compilation containing the song, a record sampling
+        // it. Consecutive songs never alternate.
+        return single_of(preferred_group(&groups, prior), probes, prior);
     }
     // One clear majority with stray answers (samples, interpolations).
     if groups[0].len() >= 3 && groups[1..].iter().all(|g| g.len() == 1) {
@@ -269,6 +283,52 @@ fn decide(probes: &[Probe], prior: &Prior) -> Verdict {
     }
     // Ambiguous: never split a short file on weak evidence.
     single_of(&groups[0], probes, prior)
+}
+
+/// Some group's answers have another group's answer between them in time.
+fn interleaved(groups: &[Vec<&Probe>]) -> bool {
+    let mut order: Vec<(u64, usize)> =
+        groups.iter().enumerate().flat_map(|(g, probes)| probes.iter().map(move |p| (p.at_ms, g))).collect();
+    order.sort_unstable();
+    let mut finished: Vec<usize> = Vec::new();
+    let mut current = None;
+    for (_, g) in order {
+        if current == Some(g) {
+            continue;
+        }
+        if finished.contains(&g) {
+            return true;
+        }
+        if let Some(c) = current {
+            finished.push(c);
+        }
+        current = Some(g);
+    }
+    false
+}
+
+/// The group a single verdict should come from: the page's song, else the
+/// recording that begins with the media (its answers place its start near
+/// 0), else the biggest group.
+fn preferred_group<'g, 'p>(groups: &'g [Vec<&'p Probe>], prior: &Prior) -> &'g [&'p Probe] {
+    if let Some(page) = &prior.track
+        && let Some(g) =
+            groups.iter().find(|g| g.iter().any(|p| p.hit.as_ref().is_some_and(|h| hints::same_song(&h.track, page))))
+    {
+        return g;
+    }
+    let start_offset = |g: &Vec<&Probe>| -> i64 {
+        let mut starts: Vec<i64> = g
+            .iter()
+            .filter_map(|p| {
+                let hit = p.hit.as_ref()?;
+                Some((p.at_ms as i64 - hit.offset_ms?).abs())
+            })
+            .collect();
+        starts.sort_unstable();
+        starts.get(starts.len() / 2).copied().unwrap_or(i64::MAX)
+    };
+    groups.iter().min_by_key(|g| (start_offset(g) > 30_000, std::cmp::Reverse(g.len()))).map_or(&[], |g| g.as_slice())
 }
 
 /// The songs' start estimates put each one after the previous one was heard.
@@ -366,18 +426,84 @@ fn single(probes: &[Probe], prior: Option<&Prior>) -> Verdict {
             acc
         });
     // The page names a version (a live performance, a remix) of the song the
-    // recognizer only knows in its original: show the page's version, keep the
-    // original as the first alternate.
+    // recognizer only knows in its original, or whose versions the answers
+    // disagree on (none named twice): show the page's version, keep the
+    // recognizer's as the first alternate.
+    // Answers count for the recording itself only when they place its start
+    // alike: a remix built on another heard twice at unrelated offsets is not
+    // that remix.
+    let best_votes = consistent_votes(&hits, &best.track);
     if let Some(page) = prior_track
         && hints::same_song(page, &best.track)
         && !hints::version_key(&page.title).is_empty()
-        && hints::version_key(&best.track.title).is_empty()
+        && !hints::same_version(page, &best.track)
+        && (hints::version_key(&best.track.title).is_empty() || best_votes < 2)
     {
         alternates.insert(0, best.track);
         return Verdict::Single { track: page.clone(), evidence, alternates };
     }
     Verdict::Single { track: best.track, evidence, alternates }
 }
+
+/// The most answers of `track`'s recording whose start estimates agree
+/// within a few seconds.
+fn consistent_votes(hits: &[(&Probe, &RecognitionHit)], track: &Track) -> usize {
+    let starts: Vec<Option<i64>> = hits
+        .iter()
+        .filter(|(_, h)| hints::same_recording(&h.track, track))
+        .map(|(p, h)| h.offset_ms.map(|o| p.at_ms as i64 - (o as f64 / (1.0 + h.timeskew as f64)) as i64))
+        .collect();
+    starts
+        .iter()
+        .map(|s| match s {
+            Some(s) => starts.iter().flatten().filter(|t| (**t - s).abs() <= SAME_START_MS).count(),
+            None => 1,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Weigh the page's song against a verdict that names another song. One
+/// recognizer answer (the other probes silent or disagreeing) does not
+/// outweigh the page; neither does a cover of the page's song by another
+/// artist when the artist's own channel uploaded the media (`official`).
+/// The overruled answer stays as the first alternate.
+pub fn weigh_page(verdict: Verdict, prior: &Prior, official: bool) -> Verdict {
+    let Some(page) = prior.track.as_ref() else { return verdict };
+    let Verdict::Single { track, evidence, mut alternates } = verdict else { return verdict };
+    if hints::same_song(&track, page) {
+        return Verdict::Single { track, evidence, alternates };
+    }
+    let votes = evidence
+        .iter()
+        .filter(|e| matches!(e.source, EvidenceSource::Shazam | EvidenceSource::AudD | EvidenceSource::AcrCloud))
+        .count();
+    let cover = official && hints::same_song(&Track { artist: String::new(), ..track.clone() }, page);
+    if votes >= 2 && !cover {
+        return Verdict::Single { track, evidence, alternates };
+    }
+    alternates.insert(0, track);
+    let page_evidence = if official || prior.strong {
+        Evidence {
+            source: EvidenceSource::Metadata,
+            at_ms: 0,
+            score: OFFICIAL_PAGE,
+            detail: Some("the artist's own upload names this song".into()),
+        }
+    } else {
+        Evidence {
+            source: EvidenceSource::PageHint,
+            at_ms: 0,
+            score: crate::pipeline::stitch::UNVERIFIED_HINT,
+            detail: Some("from the title; the recognizer's answer was not confirmed".into()),
+        }
+    };
+    Verdict::Single { track: page.clone(), evidence: vec![page_evidence], alternates }
+}
+
+/// Confidence of a song named by the artist's own upload that the recognizer
+/// did not contradict convincingly.
+const OFFICIAL_PAGE: f32 = 0.8;
 
 #[cfg(test)]
 mod tests;

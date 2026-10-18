@@ -1,11 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/mfcore", "crates/mf-cli", "crates/uniffi-bindgen"]
+members = ["crates/mfcore", "crates/mfcore-wasm", "crates/mf-cli", "crates/uniffi-bindgen"]
 # Patched third-party sources (see vendor/opus-decoder/VENDORED.md), not workspace crates.
 exclude = ["vendor"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.99"
@@ -16,7 +16,9 @@ uniffi = { version = "=0.32.2" }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time", "sync", "process", "io-util", "fs", "net"] }
+# What every target can build; wasm32-unknown-unknown has no tokio runtime. Native
+# crates add the runtime features (mfcore's native target dependencies, mf-cli).
+tokio = { version = "1.53", default-features = false, features = ["macros", "sync"] }
 tracing = "0.1"
 anyhow = "1"
 
@@ -26,6 +28,27 @@ lto = "thin"
 codegen-units = 1
 panic = "unwind"
 strip = "debuginfo"
+
+# Development and evaluation builds (`--profile release-fast`): release optimizations
+# with parallel codegen and no LTO, several times faster to build. Shipping builds use
+# `release`.
+[profile.release-fast]
+inherits = "release"
+codegen-units = 16
+lto = false
+
+# The browser engine module (crates/mfcore-wasm/build.sh): one optimized unit,
+# and panics abort (wasm32 cannot unwind; the host restarts the Worker).
+[profile.wasm]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# Faster browser builds for development and tests (`build.sh --dev`).
+[profile.wasm-dev]
+inherits = "release-fast"
+panic = "abort"
 
 [profile.dev.package."*"]
 opt-level = 2

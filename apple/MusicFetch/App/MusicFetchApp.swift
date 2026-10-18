@@ -8,6 +8,12 @@ struct MusicFetchApp: App {
 
     init() {
         Preferences.registerDefaults()
+        if RenderHarness.isActive {
+            // The offscreen harness: no Dock icon, never active.
+            NSApplication.shared.setActivationPolicy(.prohibited)
+        } else {
+            ProviderPreference.migrate()
+        }
         _app = State(initialValue: AppModel())
     }
 
@@ -17,6 +23,8 @@ struct MusicFetchApp: App {
                 .environment(app)
         }
         .defaultSize(width: 1180, height: 760)
+        .defaultLaunchBehavior(RenderHarness.isActive ? .suppressed : .automatic)
+        .restorationBehavior(RenderHarness.isActive ? .disabled : .automatic)
         .commands { MusicFetchCommands(app: app) }
 
         Settings {
@@ -24,11 +32,11 @@ struct MusicFetchApp: App {
                 .environment(app)
         }
 
-        MenuBarExtra(isInserted: $showMenuBarExtra) {
+        MenuBarExtra(isInserted: RenderHarness.isActive ? .constant(false) : $showMenuBarExtra) {
             MenuBarContent()
                 .environment(app)
         } label: {
-            Image("ContourMark")
+            Image("contour.mark")
                 .accessibilityLabel(Copy.appName)
         }
         .menuBarExtraStyle(.window)
