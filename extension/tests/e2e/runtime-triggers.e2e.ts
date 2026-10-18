@@ -217,7 +217,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     await trigger(app, { command: 'identify-tab', tabId });
     expect(await sawBadge(app, '•')).toBe(true);
     const note = await waitForNote(app, since, (n) => n.id.startsWith('mf-') && !n.id.startsWith('mf-problem'));
-    expect(note.title).toBe('Test Signal B — Music Fetch Test Signals');
+    expect(note.title).toBe('Bravo Signal — Music Fetch Test Signals');
     expect(note.buttons).toEqual(['Open in Spotify', 'Pin']);
     await shot(page, join(ARTIFACTS, 'triggers-chromium-tab.png'));
     await page.close();
@@ -228,7 +228,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const tabId = await invoke(page);
     const since = Date.now();
     await trigger(app, { click: { menuItemId: 'mf-identify-tab', pageUrl: page.url() }, tabId });
-    const note = await waitForNote(app, since, (n) => n.title.startsWith('Test Signal A'));
+    const note = await waitForNote(app, since, (n) => n.title.startsWith('Alpha Signal'));
     expect(note.buttons).toEqual(['Open in Spotify', 'Pin']);
     await page.close();
   });
@@ -238,7 +238,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const tabId = await invoke(page);
     const since = Date.now();
     await trigger(app, { click: { menuItemId: 'mf-identify-audio', srcUrl: `${server.origin}/media/song-d.wav`, pageUrl: page.url() }, tabId });
-    expect((await waitForNote(app, since, (n) => n.title.startsWith('Test Signal D'))).title).toContain('Music Fetch Test Signals');
+    expect((await waitForNote(app, since, (n) => n.title.startsWith('Delta Signal'))).title).toContain('Music Fetch Test Signals');
     await page.close();
   });
 
@@ -349,14 +349,14 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     await trigger(tab, { command: 'identify-tab', tabId });
     expect(await sawBadge(tab, '•')).toBe(true);
     const note = await waitForNote(tab, since, (n) => n.id.startsWith('mf-') && !n.id.startsWith('mf-problem'));
-    expect(note.title).toBe('Test Signal A — Music Fetch Test Signals');
+    expect(note.title).toBe('Alpha Signal — Music Fetch Test Signals');
   });
 
   it('identifies a playing audio element from its menu', async () => {
     const tabId = await activate(`${server.origin}/pages/generic.html`);
     const since = Date.now();
     await trigger(tab, { click: { menuItemId: 'mf-identify-audio', srcUrl: `${server.origin}/media/song-a.wav` }, tabId });
-    expect((await waitForNote(tab, since, (n) => n.title.startsWith('Test Signal A'))).buttons).toBeDefined();
+    expect((await waitForNote(tab, since, (n) => n.title.startsWith('Alpha Signal'))).buttons).toBeDefined();
   });
 
   it('answers a catalog link from its menu', async () => {
