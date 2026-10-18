@@ -348,6 +348,7 @@ fn engine(args: &MixesArgs, paths: &Paths) -> anyhow::Result<Arc<EngineCtx>> {
         enrichment: true,
         credentials: parking_lot::RwLock::new(Credentials::default()),
         melody: parking_lot::RwLock::new(None),
+        encoder: parking_lot::RwLock::new(None),
         pitch: OnceLock::new(),
         media: Some(media),
         decoder: None,

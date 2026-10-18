@@ -232,6 +232,7 @@ pub fn session_with_media(
         budget: Default::default(),
         credentials: Default::default(),
         melody: Default::default(),
+        encoder: Default::default(),
         pitch: Default::default(),
         media,
         decoder: None,

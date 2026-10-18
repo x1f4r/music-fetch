@@ -9,6 +9,7 @@ use parking_lot::RwLock;
 
 use crate::config::{Credentials, EngineConfig};
 use crate::error::Result;
+use crate::melody::encoder::EncoderIndex;
 use crate::melody::{MelodyIndex, PitchTracker};
 use crate::model::Track;
 use crate::pipeline::emitter::Emitter;
@@ -35,6 +36,9 @@ pub struct EngineCtx {
     pub budget: CallBudget,
     pub credentials: RwLock<Credentials>,
     pub melody: RwLock<Option<Arc<MelodyIndex>>>,
+    /// The learned encoder of the installed index, with the index it was opened
+    /// against (see [`melody_encoder`](Self::melody_encoder)).
+    pub encoder: RwLock<Option<(Arc<MelodyIndex>, Arc<EncoderIndex>)>>,
     pub pitch: OnceLock<Arc<PitchTracker>>,
     pub media: Option<Arc<dyn MediaBackend>>,
     pub decoder: Option<Arc<dyn PlatformDecoder>>,
@@ -71,6 +75,12 @@ impl EngineCtx {
 
     pub fn melody_index(&self) -> Option<Arc<MelodyIndex>> {
         self.melody.read().clone()
+    }
+
+    /// The learned encoder for `index`, when one is installed for exactly that
+    /// index (an index swap never pairs it with another).
+    pub fn melody_encoder(&self, index: &Arc<MelodyIndex>) -> Option<Arc<EncoderIndex>> {
+        self.encoder.read().as_ref().filter(|(i, _)| Arc::ptr_eq(i, index)).map(|(_, e)| e.clone())
     }
 
     pub fn country(&self) -> &str {
