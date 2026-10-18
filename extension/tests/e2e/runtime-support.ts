@@ -189,6 +189,38 @@ export async function rpc<T = unknown>(page: Page, port: 'mf-engine' | 'mf-host'
   )) as T;
 }
 
+/**
+ * Keep a port to the engine open in `page` and record every session's events there, so
+ * a failing test can say why a session failed (`eventsOf`).
+ */
+export async function trackEvents(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const w = globalThis as unknown as { __mfEvents?: Record<string, unknown[]>; browser?: unknown; chrome?: unknown };
+    if (w.__mfEvents) return;
+    w.__mfEvents = {};
+    const api = (w.browser ?? w.chrome) as { runtime: { sendMessage(m: unknown): Promise<unknown>; connect(o: { name: string }): { onMessage: { addListener(f: (m: never) => void): void } } } };
+    await api.runtime.sendMessage({ type: 'mf:host.ensure' });
+    const port = api.runtime.connect({ name: 'mf-engine' });
+    port.onMessage.addListener((m: { t?: string; topic?: string; payload?: { sessionId: string; event?: unknown; status?: unknown } }) => {
+      if (m?.t !== 'evt' || !m.payload?.sessionId) return;
+      const list = (w.__mfEvents![m.payload.sessionId] ??= []);
+      const e = m.topic === 'capture' ? { capture: m.payload.status } : m.payload.event;
+      // Levels are many and say little here.
+      if (!(e && typeof e === 'object' && 'Level' in e)) list.push(e);
+    });
+  });
+}
+
+/** The recorded events of `id` (names, plus the payload of failures and notices). */
+export async function eventsOf(page: Page, id: string): Promise<string> {
+  return page.evaluate((sid) => {
+    const list = ((globalThis as unknown as { __mfEvents?: Record<string, unknown[]> }).__mfEvents ?? {})[sid] ?? [];
+    return list
+      .map((e) => (typeof e === 'string' ? e : JSON.stringify(e).slice(0, 160)))
+      .join(' | ');
+  }, id);
+}
+
 export interface SessionSummary {
   status: string;
   title: string;

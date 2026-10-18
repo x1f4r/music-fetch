@@ -3,9 +3,31 @@ import { join } from 'node:path';
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ARTIFACTS, HEADLESS, tempProfile } from './support';
-import { E2E_OUTPUT, RUNTIME_E2E, echoed, micFile, rpc, sleep, startFixtureServer, waitForSession, type FixtureServer } from './runtime-support';
+import { writeFileSync } from 'node:fs';
+import { E2E_OUTPUT, RUNTIME_E2E, echoed, eventsOf, micFile, rpc, sleep, startFixtureServer, trackEvents, waitForSession, type FixtureServer } from './runtime-support';
 
 const CHROMIUM = process.env.CHROMIUM_BIN ?? '/usr/bin/chromium';
+const offscreenLog: string[] = [];
+
+/** The offscreen document's console, for a failing run (it is no page puppeteer can open). */
+function watchOffscreen(browser: Browser) {
+  browser.on('targetchanged', async (target) => {
+    if (!target.url().includes('/offscreen.html') || (target as unknown as { mfWatched?: boolean }).mfWatched) return;
+    (target as unknown as { mfWatched?: boolean }).mfWatched = true;
+    try {
+      const cdp = await target.createCDPSession();
+      cdp.on('Runtime.consoleAPICalled', (e: { type: string; args: { value?: unknown; description?: string }[] }) =>
+        offscreenLog.push(`${e.type} ${e.args.map((a) => a.value ?? a.description).join(' ')}`),
+      );
+      cdp.on('Runtime.exceptionThrown', (e: { exceptionDetails: { text: string; exception?: { description?: string } } }) =>
+        offscreenLog.push(`exception ${e.exceptionDetails.exception?.description ?? e.exceptionDetails.text}`),
+      );
+      await cdp.send('Runtime.enable');
+    } catch (error) {
+      offscreenLog.push(`no CDP session: ${String(error)}`);
+    }
+  });
+}
 
 /**
  * The runtime in Chromium: the offscreen engine host and its Worker, tab capture, the
@@ -34,13 +56,12 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
         '--disable-gpu',
         '--window-size=1280,860',
         // Output goes to the runner's private null sink (PULSE_SINK). Not --disable-audio-output:
-        // without an output device the captured tab audio comes out garbled.
+        // without an output device the captured tab audio comes out garbled. No fake media
+        // devices either: they replace tab capture too (the microphone test has its own browser).
         '--autoplay-policy=no-user-gesture-required',
-        '--use-fake-ui-for-media-stream',
-        '--use-fake-device-for-media-stream',
-        `--use-file-for-fake-audio-capture=${micFile('b')}`,
       ],
     });
+    watchOffscreen(browser);
     const deadline = Date.now() + 180_000;
     while (!id && Date.now() < deadline) {
       id = [...(await browser.extensions()).values()].find((e) => e.name === 'Music Fetch')?.id ?? '';
@@ -54,9 +75,11 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     await welcome!.close();
     app = await browser.newPage();
     await app.goto(`chrome-extension://${id}/app.html#/library`);
+    await trackEvents(app);
   });
 
   afterAll(async () => {
+    writeFileSync(join(ARTIFACTS, 'rt-chromium-offscreen.log'), offscreenLog.join('\n'));
     await browser?.close();
     await server?.close();
   });
@@ -102,7 +125,13 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const page = await playingTab('/pages/generic.html?src=/media/song-a.wav&autoplay');
     const popup = await openPopup(page);
     await listenFrom(popup, 'This tab');
-    await popup.waitForFunction(() => document.querySelector('.hero .ttl')?.textContent?.includes('Test Signal A'), { timeout: 45_000 });
+    await popup
+      .waitForFunction(() => document.querySelector('.hero .ttl')?.textContent?.includes('Test Signal A'), { timeout: 45_000 })
+      .catch(async (error: unknown) => {
+        await popup.screenshot({ path: join(ARTIFACTS, 'rt-chromium-tab-failed.png') }).catch(() => undefined);
+        const [newest] = await rpc<{ id: string }[]>(app, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
+        throw new Error(`no Test Signal A: ${newest ? await eventsOf(app, newest.id) : 'no session'} · sources ${JSON.stringify(await rpc(app, 'mf-host', 'sources'))}`, { cause: error });
+      });
     await popup.screenshot({ path: join(ARTIFACTS, 'rt-chromium-tab-result.png') });
     expect(browser.targets().some((t) => t.url() === `chrome-extension://${id}/offscreen.html`)).toBe(true);
     await popup.close();
@@ -120,6 +149,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     await sleep(15_000);
     app = await browser.newPage();
     await app.goto(`chrome-extension://${id}/app.html#/library`);
+    await trackEvents(app);
     const [newest] = await rpc<{ id: string; title: string; status: string }[]>(app, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
     expect(newest).toMatchObject({ title: 'Test Signal C', status: 'Matched' });
     const notifications = await app.evaluate(() => (globalThis as unknown as { chrome: { notifications: { getAll(): Promise<Record<string, unknown>> } } }).chrome.notifications.getAll());
@@ -139,19 +169,45 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
   });
 
   it('listens to the microphone in the offscreen document after the one-time grant', async () => {
-    const grant = await browser.newPage();
-    await grant.goto(`chrome-extension://${id}/app.html#/grant-mic`);
+    // Fake media devices replace every capture source, so this test gets its own browser.
+    const micBrowser = await puppeteer.launch({
+      executablePath: CHROMIUM,
+      headless: HEADLESS,
+      pipe: true,
+      enableExtensions: [E2E_OUTPUT.chromium],
+      userDataDir: tempProfile('rt-chromium-mic'),
+      defaultViewport: null,
+      args: [
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-gpu',
+        '--window-size=1280,860',
+        '--use-fake-ui-for-media-stream',
+        '--use-fake-device-for-media-stream',
+        `--use-file-for-fake-audio-capture=${micFile('b')}`,
+      ],
+    });
+    let micId = '';
+    while (!micId) {
+      micId = [...(await micBrowser.extensions()).values()].find((e) => e.name === 'Music Fetch')?.id ?? '';
+      if (!micId) await sleep(500);
+    }
+    const welcome = await (await micBrowser.waitForTarget((t) => t.url().startsWith(`chrome-extension://${micId}/app.html#/welcome`), { timeout: 60_000 })).asPage();
+    await welcome!.evaluate(() => (globalThis as unknown as { chrome: { storage: { sync: { set(v: unknown): Promise<void> } } } }).chrome.storage.sync.set({ providerDecision: { provider: 'spotify', skipped: true } }));
+    const grant = await micBrowser.newPage();
+    await grant.goto(`chrome-extension://${micId}/app.html#/grant-mic`);
     await grant.waitForSelector('.grant .acts .btn.filled', { timeout: 15_000 });
     await grant.click('.grant .acts .btn.filled');
     await grant.waitForFunction(() => /allowed|this tab only/i.test(document.querySelector('.grant h1')?.textContent ?? ''), { timeout: 15_000 }).catch(() => undefined);
-    const page = await browser.newPage();
+    const page = await micBrowser.newPage();
     await page.goto(`${server.origin}/blank`);
-    const popup = await openPopup(page);
+    await page.bringToFront();
+    await (await micBrowser.extensions()).get(micId)!.triggerAction(page);
+    const popup = (await (await micBrowser.waitForTarget((t) => t.url() === `chrome-extension://${micId}/popup.html`, { timeout: 15_000 })).asPage())!;
+    await popup.waitForSelector('.listen .disc', { timeout: 20_000 });
     await listenFrom(popup, 'Microphone');
     await popup.waitForFunction(() => document.querySelector('.hero .ttl')?.textContent?.includes('Test Signal B'), { timeout: 45_000 });
-    await popup.close();
-    await page.close();
-    if (!grant.isClosed()) await grant.close();
+    await micBrowser.close();
   });
 
   it('rewrites the engine’s requests with the header rules and leaves the page’s alone', async () => {
@@ -199,8 +255,8 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const started = Date.now();
     const session = await rpc<string>(app, 'mf-engine', 'analyze', [url, 'Mix', { tab_id: tabId, url, title: 'Fake Mix', facts: null }]);
     const result = await waitForSession(app, session, (s) => s !== 'Running', 120_000);
-    expect(result.status).toBe('Completed');
-    expect(result.segments.map((s) => s.title)).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
+    expect(result.status, await eventsOf(app, session)).toBe('Completed');
+    expect(result.segments.map((s) => s.title), JSON.stringify(result.segments)).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
     expect(Math.abs(result.segments[0]!.end_ms - 20_000)).toBeLessThanOrEqual(2000);
     expect(Math.abs(result.segments[1]!.end_ms - 40_000)).toBeLessThanOrEqual(2000);
     // 60 s of media at 4×: well under a minute, ad included.
@@ -220,7 +276,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const tabId = await tabIdOf(url);
     const session = await rpc<string>(app, 'mf-engine', 'analyze', [url, 'Mix', { tab_id: tabId, url, title: 'Fake Mix', facts: null }]);
     const result = await waitForSession(app, session, (s) => s !== 'Running', 120_000);
-    expect(result.segments.map((s) => s.title)).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
+    expect(result.segments.map((s) => s.title), `${JSON.stringify(result.segments)} ${await eventsOf(app, session)}`).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
     expect(await page.evaluate(() => document.querySelector('video')!.muted)).toBe(false);
     await page.close();
   });
