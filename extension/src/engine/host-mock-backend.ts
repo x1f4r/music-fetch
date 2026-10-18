@@ -84,6 +84,8 @@ export async function kvPersistence(kv: Kv, key = 'mock.engine'): Promise<MockPe
 class LiveProbe {
   readonly timeline = new ToneTimeline();
   heardMs = 0;
+  /** Ms of audio with signal (a capture often starts with some silence). */
+  signalMs = 0;
   hasAudio = false;
   private signal = false;
   private silentNoticed = false;
@@ -100,7 +102,10 @@ class LiveProbe {
     this.timeline.push(chunk);
     this.heardMs += (chunk.samples.length / (chunk.sampleRate / (chunk.speed || 1))) * 1000;
     const { rms, peak } = levelOf(chunk.samples);
-    if (peak > 1e-4) this.signal = true;
+    if (peak > 1e-4) {
+      this.signal = true;
+      this.signalMs += (chunk.samples.length / (chunk.sampleRate / (chunk.speed || 1))) * 1000;
+    }
     this.emit({ Level: { rms: perceptual(rms), peak: perceptual(peak) } });
     if (!this.signal && !this.silentNoticed && this.heardMs >= SILENT_NOTICE_MS) {
       this.silentNoticed = true;
@@ -130,9 +135,11 @@ class LiveProbe {
 
   private outcome(final: boolean): MockLiveOutcome | null | undefined {
     if (this.match) return { matched: this.match };
-    if (this.hasAudio && !this.signal && this.heardMs >= SILENT_NOTICE_MS) return { noMatch: 'CaptureSilent' };
+    const silent = this.hasAudio && !this.signal;
+    if (silent && (final || this.heardMs >= MAX_LIVE_MS || this.heardMs >= 2 * SILENT_NOTICE_MS)) return { noMatch: 'CaptureSilent' };
     if (final || this.heardMs >= MAX_LIVE_MS) return null;
-    if (this.hasAudio && !this.promising() && this.heardMs >= 2000) return null;
+    // Real music that isn't a test song: give up once enough of it was heard.
+    if (this.signalMs >= 4000 && !this.promising()) return null;
     return undefined;
   }
 

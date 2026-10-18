@@ -4,7 +4,9 @@ import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import webExt from 'web-ext';
 import { HEADLESS } from './support';
-import { E2E_OUTPUT, RUNTIME_E2E, echoed, rpc, sleep, startFixtureServer, waitForSession, type FixtureServer } from './runtime-support';
+import { join } from 'node:path';
+import { ARTIFACTS } from './support';
+import { E2E_OUTPUT, RUNTIME_E2E, echoed, eventsOf, rpc, sleep, startFixtureServer, trackEvents, waitForSession, type FixtureServer } from './runtime-support';
 
 const FIREFOX = process.env.FIREFOX_BIN ?? '/usr/bin/firefox';
 const FRAME = 'mf-rt-frame';
@@ -72,6 +74,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     tab = (await target.asPage())!;
     await tab.waitForSelector('.welcome', { timeout: 30_000 });
     await tab.evaluate(() => (globalThis as unknown as { browser: Api }).browser.storage.sync.set({ providerDecision: { provider: 'spotify', skipped: true } }));
+    await trackEvents(tab);
   });
 
   afterAll(async () => {
@@ -102,7 +105,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     const sources = await rpc<{ sessionId: string; via: string; frames: number }[]>(tab, 'mf-host', 'sources');
     expect(sources.find((s) => s.sessionId === id)).toMatchObject({ via: 'element' });
     const result = await waitForSession(tab, id, (s) => s !== 'Running', 45_000);
-    expect(result).toMatchObject({ status: 'Matched', title: 'Test Signal A' });
+    expect(result, await eventsOf(tab, id)).toMatchObject({ status: 'Matched', title: 'Test Signal A' });
   });
 
   it('listens a fake YouTube mix through at 4×, muted, and restores the player', async () => {
@@ -110,9 +113,12 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     const tabId = await openTab(url);
     await sleep(1500);
     const session = await rpc<string>(tab, 'mf-engine', 'analyze', [url, 'Mix', { tab_id: tabId, url, title: 'Fake Mix', facts: null }]);
-    const result = await waitForSession(tab, session, (s) => s !== 'Running', 120_000);
-    expect(result.status).toBe('Completed');
-    expect(result.segments.map((s) => s.title)).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
+    const result = await waitForSession(tab, session, (s) => s !== 'Running', 120_000).catch(async (error: Error) => {
+      throw new Error(`${error.message} ${await eventsOf(tab, session)}`);
+    });
+    const where = `${JSON.stringify(result.segments)} ${await eventsOf(tab, session)}`;
+    expect(result.status, where).toBe('Completed');
+    expect(result.segments.map((s) => s.title), where).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
     expect(Math.abs(result.segments[0]!.end_ms - 20_000)).toBeLessThanOrEqual(2000);
     expect(Math.abs(result.segments[1]!.end_ms - 40_000)).toBeLessThanOrEqual(2000);
   });
@@ -152,7 +158,11 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
         FRAME,
         fn,
       ) as unknown as Promise<T>;
-    await inFrame("return doc.querySelector('.listen .disc')");
+    await inFrame("return doc.querySelector('.listen .disc')").catch(async (error: unknown) => {
+      await tab.screenshot({ path: join(ARTIFACTS, 'rt-firefox-mic-popup.png') }).catch(() => undefined);
+      const html = await tab.evaluate((id) => (document.getElementById(id) as HTMLIFrameElement).contentDocument?.body?.innerHTML.slice(0, 600) ?? 'no frame', FRAME);
+      throw new Error(`popup did not render: ${html}`, { cause: error });
+    });
     await tab.evaluate((id) => {
       const doc = (document.getElementById(id) as HTMLIFrameElement).contentDocument!;
       [...doc.querySelectorAll<HTMLButtonElement>('.sources button')].find((b) => b.textContent?.trim() === 'Microphone')?.click();
