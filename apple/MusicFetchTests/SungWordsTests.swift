@@ -149,6 +149,23 @@ struct SungWordsTests {
         try await until { backend.canceled }
     }
 
+    @Test func stoppingWhileTheRecognizerStartsStillReadsTheHum() async throws {
+        let log = HeardLog()
+        let made = BackendSlot()
+        let words = SungWordsTranscriber(language: "en-US", lowPower: false, handler: { log.add($0) }) { onText in
+            try? await Task.sleep(for: .milliseconds(200))
+            let backend = ScriptedBackend(finalText: RecognizedText(text: "hello from the other side"), onText: onText)
+            made.set(backend)
+            return backend
+        }
+        words.activate()
+        for _ in 0..<3 { words.append(stereoSecond(), sampleRate: 16_000, channels: 2) }
+        words.finish()
+        try await until { !log.finals.isEmpty }
+        #expect(made.value?.samples == 3 * 16_000)
+        #expect(log.finals.map(\.text) == ["hello from the other side"])
+    }
+
     @Test func cancelReportsNothingMore() async throws {
         let log = HeardLog()
         let (words, made) = transcriber(final: RecognizedText(text: "too late"), log: log)

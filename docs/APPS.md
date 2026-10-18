@@ -13,7 +13,7 @@ views. Visual design and copy: [design/DESIGN.md](design/DESIGN.md).
 | System audio | Core Audio process tap (`CATapDescription` global tap excluding own process) + private aggregate device | `AudioPlaybackCapture` via `MediaProjection` in a `mediaProjection` foreground service |
 | Media backend | none: `EngineConfig.media_tools` points at the bundled Python + yt-dlp + qjs (`MediaRuntime`) | `ChaquopyMediaBackend` (Python 3.13 + yt-dlp + bundled `libqjs.so`) |
 | Decoder fallback | `AVFoundationDecoder` (AVAssetReader → 16-bit mono WAV) | `MediaCodecDecoder` (MediaExtractor + MediaCodec) |
-| Speech | `SpeechTranscriberService` (macOS 26: SpeechAnalyzer/SpeechTranscriber, DictationTranscriber for other locales; macOS 15: `SFSpeechRecognizer`; on-device only) | `AndroidSpeechToText` (`createOnDeviceSpeechRecognizer`, `EXTRA_AUDIO_SOURCE` on API 33+) |
+| Speech | Live sessions: `SungWordsTranscriber` feeds the microphone audio to the on-device recognizer during capture and pushes each result (`LiveSession.pushTranscript`, `ListenOptions.transcripts`); macOS 26: SpeechAnalyzer with SpeechTranscriber, DictationTranscriber for other locales; macOS 15: `SFSpeechAudioBufferRecognitionRequest` with on-device recognition only. Files: `SpeechTranscriberService` (`SpeechToText`, same recognizers on a WAV). `SpeechModel` checks readiness and asks for the macOS 15 permission once, on the stage, before the first hum | `AndroidSpeechToText` (`createOnDeviceSpeechRecognizer`, `EXTRA_AUDIO_SOURCE` on API 33+) |
 | Credentials | Keychain (generic passwords, service `local.musicfetch.app.credentials`) | DataStore with values encrypted by an Android Keystore AES-GCM key |
 | Settings | `@AppStorage` / `UserDefaults` | DataStore preferences |
 | Background work | not needed (app keeps running) | link/file analysis in a foreground service (`dataSync`, `mediaProcessing` on API 35+) with a progress notification |
@@ -32,7 +32,10 @@ platforms.
   (a source toggle: chooses the method without listening and leaves a finished state).
   On macOS the toggles stay on the stage in every state; recovery actions (Try again,
   Hum it, Type a lyric, …) sit in their own row below them. Try again repeats the last
-  method, or analyzes the same link or file again. Android: anything outside the stage
+  method, or analyzes the same link or file again. While someone hums, `liveAnswers`
+  holds the progressive search's Strong and Possible answers (`Candidates { is_final:
+  false }`; long shots are not shown), drawn in two fixed rows under the toggles on
+  macOS; clicking one stops and selects it in the final list. Android: anything outside the stage
   that starts a listen ("Listen again", "Hum it", deep links) goes through
   `AppIntents.listenNow(source)`, which shows the stage and lets it start the listen with
   its own permission, pre-prompt and consent steps.
@@ -47,8 +50,10 @@ platforms.
   the main thread and registers Undo. Android: the pinned sessions of the filter for the
   section above the day groups, and a selection (ids) for pinning, sharing and deleting
   several sessions at once; Undo restores each session's own pin.
-- `SettingsModel` — default service, credentials, melody index status/install/remove,
-  storage usage/clear cache, platform toggles.
+- `SettingsModel` — default service, credentials, melody index status/install/remove
+  (with the index's encoder file, shown as the melody model: installed size, or a
+  download when the installed index lacks it), storage usage/clear cache, platform
+  toggles.
 
 Rules:
 

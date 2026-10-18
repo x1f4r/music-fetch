@@ -37,6 +37,7 @@ nonisolated struct RecognizedText: Equatable, Sendable {
 /// a microphone session turns out to be humming. Until then the last seconds are kept,
 /// so the first words aren't lost.
 nonisolated final class SungWordsTranscriber: Sendable {
+    /// Called on recognizer or timer threads, in order; must not block or call back.
     typealias Handler = @Sendable (HeardWords) -> Void
 
     /// Audio kept before activation.
@@ -96,7 +97,8 @@ nonisolated final class SungWordsTranscriber: Sendable {
         Task.detached(priority: lowPower ? .utility : .userInitiated) { [self] in
             let backend = await makeBackend { [weak self] text, isLast in self?.receive(text, isLast: isLast) }
             let finishNow = state.withLock { state -> Bool? in
-                guard !state.canceled else { return nil }
+                // Canceled, or the deadline already sent the final without it.
+                guard !state.canceled, !state.sentFinal else { return nil }
                 guard let backend else {
                     state.backendFailed = true
                     return state.finished
@@ -117,7 +119,6 @@ nonisolated final class SungWordsTranscriber: Sendable {
                 if finishNow { sendFinal() }
             } else if finishNow {
                 backend?.finish()
-                scheduleDeadline()
             }
         }
     }
@@ -154,18 +155,18 @@ nonisolated final class SungWordsTranscriber: Sendable {
         let (wasActive, backend, failed) = state.withLock { state -> (Bool, (any SpeechBackend)?, Bool) in
             guard !state.finished, !state.canceled else { return (false, nil, true) }
             state.finished = true
-            state.pending = []
+            // A recognizer still starting gets the kept audio when it is ready.
+            if !state.active { state.pending = [] }
             return (state.active, state.backend, state.backendFailed)
         }
         guard wasActive, !failed else {
             sendFinal()
             return
         }
-        if let backend {
-            backend.finish()
-            scheduleDeadline()
-        }
-        // Still starting: the start task finishes the backend.
+        // Still starting (no backend yet): the start task finishes it.
+        backend?.finish()
+        // Counted from the end of capture: the engine waits 2 s at most.
+        scheduleDeadline()
     }
 
     /// Stops at once; nothing more is reported.
@@ -185,29 +186,28 @@ nonisolated final class SungWordsTranscriber: Sendable {
             sendFinal(text)
             return
         }
-        let words = state.withLock { state -> HeardWords? in
-            guard !state.canceled, !state.sentFinal else { return nil }
+        // Delivered under the lock, so a partial can never overtake the final.
+        state.withLock { state in
+            guard !state.canceled, !state.sentFinal else { return }
             let trimmed = text.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, trimmed != state.latest.text else { return nil }
+            guard !trimmed.isEmpty, trimmed != state.latest.text else { return }
             state.latest = RecognizedText(text: trimmed, alternatives: text.alternatives, confidence: text.confidence)
-            return HeardWords(text: trimmed, language: state.language, isFinal: false)
+            handler(HeardWords(text: trimmed, language: state.language, isFinal: false))
         }
-        if let words { handler(words) }
     }
 
     /// The one final result: `text`, or the newest partial when the recognizer gave up.
     private func sendFinal(_ text: RecognizedText? = nil) {
-        let (words, backend) = state.withLock { state -> (HeardWords?, (any SpeechBackend)?) in
-            guard !state.canceled, !state.sentFinal else { return (nil, nil) }
+        let backend = state.withLock { state -> (any SpeechBackend)? in
+            guard !state.canceled, !state.sentFinal else { return nil }
             state.sentFinal = true
             let best = text.flatMap { $0.text.isEmpty ? nil : $0 } ?? state.latest
-            let words = HeardWords(
-                text: best.text.trimmingCharacters(in: .whitespacesAndNewlines), alternatives: best.alternatives,
-                language: state.language, confidence: best.confidence, isFinal: true)
-            return (words, text == nil ? state.backend : nil)
+            handler(
+                HeardWords(
+                    text: best.text.trimmingCharacters(in: .whitespacesAndNewlines), alternatives: best.alternatives,
+                    language: state.language, confidence: best.confidence, isFinal: true))
+            return text == nil ? state.backend : nil
         }
-        guard let words else { return }
-        handler(words)
         // The deadline passed before the recognizer finished: stop it.
         backend?.cancel()
     }

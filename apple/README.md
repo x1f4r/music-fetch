@@ -43,15 +43,29 @@ touches the real library, network or Keychain), e.g. for screenshots:
 open -n "dist/Music Fetch.app" --args -MFDemoState mix
 ```
 
-States: `idle`, `listening`, `hum`, `matching`, `result`, `candidates`, `mix`,
-`collection`, `library`, `session`, `noMatch`, `captureSilent`, `downloading`,
-`prePrompt`, `micDenied`, `melodyPrompt`, `lyrics`, `failed`, `providers`,
-`providers-custom`, `settings-general`, `settings-general-custom`, `settings-services`,
-`settings-melody`, `settings-melody-downloading`, `settings-storage`, `settings-about`.
+States: `idle`, `listening`, `hum`, `hum-answers`, `matching`, `result`, `candidates`,
+`candidates-unsure`, `mix`, `collection`, `library`, `session`, `noMatch`,
+`captureSilent`, `downloading`, `prePrompt`, `speechPrePrompt`, `micDenied`,
+`melodyPrompt`, `lyrics`, `failed`, `providers`, `providers-custom`, `settings-general`,
+`settings-general-custom`, `settings-services`, `settings-melody`,
+`settings-melody-model`, `settings-melody-speech-off`, `settings-melody-downloading`,
+`settings-storage`, `settings-about`.
 Add `-NSRequiresAquaSystemAppearance YES` for the light appearance.
 
 Debug builds also accept `-MFLegacyUI YES`, which takes every pre-macOS 26 branch (no
 Liquid Glass, `SFSpeechRecognizer`), to check the macOS 15 fallbacks on a newer Mac.
+
+## Sung words
+
+While someone hums or sings, the microphone audio also goes to the on-device speech
+recognizer and its text to the engine's lyric search (`SungWordsTranscriber`). macOS 26
+needs no permission (SpeechAnalyzer); macOS 15 explains speech recognition on the stage
+before the first hum, once. To see that again:
+
+```sh
+tccutil reset SpeechRecognition local.musicfetch.app
+defaults delete local.musicfetch.app speechPermissionAsked
+```
 
 ## Testing the melody library download
 

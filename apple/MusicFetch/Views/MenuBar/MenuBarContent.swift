@@ -32,13 +32,19 @@ struct MenuBarContent: View {
                     .padding(.top, 8)
             }
 
-            if let recent = app.library.recent {
+            // While humming, the answers so far take the last result's place.
+            if listen.showsLiveAnswers {
+                Divider().padding(.top, 16)
+                LiveAnswersView(listen: listen)
+                    .frame(height: LiveAnswersView.height)
+                    .padding(.vertical, 8)
+            } else if let recent = app.library.recent {
                 Divider().padding(.top, 16)
                 MenuBarResultRow(entry: recent) { showMainWindow(then: { app.showOnListen(recent.id) }) }
                     .padding(.vertical, 10)
             }
 
-            Divider().padding(.top, app.library.recent == nil ? 16 : 0)
+            Divider().padding(.top, app.library.recent == nil && !listen.showsLiveAnswers ? 16 : 0)
             HStack {
                 Button(Copy.openMusicFetch) { showMainWindow() }
                     .buttonStyle(.plain)
