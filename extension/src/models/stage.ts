@@ -332,6 +332,14 @@ export function failedStage(base: StageState, code: ErrorCode | CaptureErrorCode
   };
 }
 
+/**
+ * A question before anything starts (plan §5.4): a pasted media link that only plays on
+ * its page ("Open and analyze"), or a site Music Fetch may not read yet ("Allow").
+ */
+export function promptStage(line: Message, input: string): StageState {
+  return { ...idleStage(), phase: 'failed', kind: 'Link', input, line, lineActive: true };
+}
+
 /** The engine answered the start call with `sessionId`: follow that session from now on. */
 export function adoptSession(state: StageState, sessionId: string): StageState {
   if (state.download) return state.download.sessionId === sessionId ? state : { ...state, download: { ...state.download, sessionId } };
@@ -389,7 +397,9 @@ export type RecoveryAction =
   | 'siteSettings'
   | 'ok'
   | 'open'
-  | 'cancelDownload';
+  | 'cancelDownload'
+  | 'openAndAnalyze'
+  | 'allowHost';
 
 export interface Recovery {
   action: RecoveryAction;
@@ -412,6 +422,8 @@ export function recoveryActions(state: StageState): Recovery[] {
       return actions;
     }
     case 'failed': {
+      if (state.line.key === 'page.playsOnPage') return [{ action: 'openAndAnalyze', primary: true }];
+      if (state.line.key === 'page.allowHost') return [{ action: 'allowHost', primary: true }];
       const code = state.error?.code;
       if (code && isCaptureErrorCode(code)) {
         switch (code) {

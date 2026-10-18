@@ -41,8 +41,11 @@ export interface MicPreference {
 /** What the browser said about the microphone, as last seen in an extension page. */
 export type MicGrant = 'unknown' | 'granted' | 'denied' | 'session';
 
-/** How to analyze a long video on a site, once the user said "Don't ask again". */
-export type AnalyzeChoice = 'whole' | 'quick';
+/**
+ * How to analyze a video on a site, once the user said "Don't ask again": a long one
+ * whole or as a quick check; a short one checked (3 short parts) or just listened to.
+ */
+export type AnalyzeChoice = 'whole' | 'quick' | 'check' | 'listen';
 
 /** One stored preference. The same shape as WXT's storage items, so either backs it. */
 export interface Setting<T> {

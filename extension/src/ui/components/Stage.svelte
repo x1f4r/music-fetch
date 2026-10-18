@@ -36,9 +36,12 @@
     /** "Allow the microphone": the grant tab. */
     onallowmic?: () => void;
     onsitesettings?: () => void;
+    /** "Open and analyze" a pasted media link; "Allow" reading a site. */
+    onopenlink?: (url: string) => void;
+    onallowhost?: (url: string) => void;
   }
 
-  let { listen, sources, iconsOnly = false, equal = false, ontypelyric, onopensession, onallowmic, onsitesettings }: Props = $props();
+  let { listen, sources, iconsOnly = false, equal = false, ontypelyric, onopensession, onallowmic, onsitesettings, onopenlink, onallowhost }: Props = $props();
 
   const stage = $derived(listen.stage);
   const running = $derived(isRunning(stage));
@@ -74,6 +77,8 @@
     ok: { key: 'action.ok' },
     open: { key: 'action.open' },
     cancelDownload: { key: 'action.cancel' },
+    openAndAnalyze: { key: 'page.openAndAnalyze', icon: 'ic-arrow-out' },
+    allowHost: { key: 'page.allow' },
   };
 
   function run(action: RecoveryAction) {
@@ -100,6 +105,12 @@
         return;
       case 'cancelDownload':
         return void listen.cancelDownload();
+      case 'openAndAnalyze':
+        if (stage.input) onopenlink?.(stage.input);
+        return;
+      case 'allowHost':
+        if (stage.input) onallowhost?.(stage.input);
+        return;
     }
   }
 </script>

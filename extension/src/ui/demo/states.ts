@@ -69,6 +69,8 @@ export interface DemoState {
   directive?: string;
   /** The melody library download stops at this fraction (a still picture of it). */
   holdDownload?: number;
+  /** Sites the engine may not read yet (the optional host permission). */
+  needsHost?: string[];
   /** Clicks and keys after the page is up (menus open, rows selected, …). */
   actions?: DemoAction[];
   /** The design prototype to compare with (`ext-design/png/<name>.png`). */
@@ -241,6 +243,37 @@ export const DEMO_STATES: DemoState[] = [
     { prototype: 'popup-states' },
   ),
   replay('popup-firefox-hum', 'Firefox popup · humming: keep this open', { kind: 'Hum', source: 'Microphone', events: hum(5000), onFinish: humFinish }, { browser: 'firefox', settings: { ...DECIDED, 'local:lastSource': 'Hum' } }),
+  {
+    ...POPUP,
+    id: 'popup-from-page',
+    title: 'Popup · answered by the page (Spotify), listen instead',
+    settings: DECIDED,
+    tab: {
+      url: 'https://open.spotify.com/track/demo',
+      title: 'Houdini - song and lyrics by Dua Lipa | Spotify',
+      audible: true,
+      facts: { adapter: 'streaming', url: 'https://open.spotify.com/track/demo', title: 'Houdini', ogTitle: 'Houdini', ogType: 'music.song', nowPlaying: { title: 'Houdini', artist: 'Dua Lipa', album: 'Radical Optimism' }, media: [] },
+    },
+    actions: [{ click: '.chip' }, { waitFor: '.hero .ttl' }],
+  },
+  { ...POPUP, id: 'popup-check-video', title: 'Popup · check a short video?', settings: DECIDED, tab: YOUTUBE_SONG, actions: [{ click: '.chip' }, { waitFor: '.sheet' }] },
+  {
+    ...POPUP,
+    id: 'popup-plays-on-page',
+    title: 'Popup · a pasted video link plays on its page',
+    settings: DECIDED,
+    tab: BLANK_TAB,
+    actions: [{ type: 'https://www.youtube.com/watch?v=demo-video', into: '.top input' }, { key: 'Enter', on: '.top input' }],
+  },
+  {
+    ...POPUP,
+    id: 'popup-allow-host',
+    title: 'Popup · allow reading a site',
+    settings: DECIDED,
+    tab: { url: 'https://radio.example.org/live', title: 'Live radio', audible: true, facts: null },
+    needsHost: ['radio.example.org'],
+    actions: [{ click: '.chip' }],
+  },
   {
     ...POPUP,
     id: 'popup-ask',

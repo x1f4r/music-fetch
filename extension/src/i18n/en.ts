@@ -120,6 +120,7 @@ export const en = {
   'result.moreProviders': 'Open in another service',
   'result.fromTab': 'From this tab · %@',
   'result.fromPage': 'From the page · %@',
+  'result.listenInstead': 'Listen instead',
   'result.copy': 'Copy',
   'result.copyArtistTitle': 'Copy artist and title',
   'result.copied': 'Copied',
@@ -231,6 +232,11 @@ export const en = {
   'ask.check.message': 'To check, Music Fetch plays 3 short parts of this video with the sound off.',
   'ask.check.go': 'Check',
   'ask.check.listen': 'Just listen instead',
+
+  'page.playsOnPage': 'This link plays on its page.',
+  'page.openAndAnalyze': 'Open and analyze',
+  'page.allowHost': 'Allow Music Fetch to read %@?',
+  'page.allow': 'Allow',
 
   'export.menu': 'Export',
   'export.copyTracklist': 'Copy tracklist',

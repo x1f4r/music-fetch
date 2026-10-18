@@ -15,6 +15,8 @@ const OUT = resolve(process.env.SCREENS_DIR ?? '.screens');
 const ONLY = (process.env.SCREENS ?? '').split(',').filter(Boolean);
 const THEMES = (process.env.SCREENS_THEMES ?? 'light,dark').split(',') as ('light' | 'dark')[];
 const SCALE = Number(process.env.SCREENS_SCALE ?? 2);
+/** Top of each stage slot in the 380 × 560 popup (design spec §4). */
+const POPUP_SLOTS: Record<string, number> = { '.top': 10, '.chip-slot': 52, '.listen': 196, '.state:not(.two)': 312, '.sources': 352, '.recovery': 404, '.footer': 512 };
 
 describe.skipIf(!existsSync(CHROMIUM) || !existsSync(OUTPUT.chromium))('demo states', () => {
   let browser: Browser;
@@ -65,6 +67,24 @@ describe.skipIf(!existsSync(CHROMIUM) || !existsSync(OUTPUT.chromium))('demo sta
           await ready().catch(ready);
           const problems = await page.$eval('html', (html) => html.dataset.demoProblems ?? null);
           if (problems) failures.push(`${state.id}/${theme}: ${problems}`);
+          // The popup's slots stay where the design puts them in every state (design spec §4).
+          const tops = await page.evaluate((slots) => {
+            const out: Record<string, number | null> = {};
+            for (const selector of Object.keys(slots)) {
+              const el = document.querySelector(`.popup > ${selector}`);
+              out[selector] = el ? Math.round(el.getBoundingClientRect().top) : null;
+            }
+            const root = document.querySelector('main, .app') as HTMLElement | null;
+            out.overflow = root ? root.scrollWidth - root.clientWidth : 0;
+            return out;
+          }, POPUP_SLOTS);
+          for (const [selector, top] of Object.entries(tops)) {
+            if (selector === 'overflow') {
+              if ((top ?? 0) > 1) failures.push(`${state.id}/${theme}: ${top}px sideways overflow`);
+            } else if (top !== null && Math.abs(top - POPUP_SLOTS[selector]!) > 1) {
+              failures.push(`${state.id}/${theme}: ${selector} at ${top}, design ${POPUP_SLOTS[selector]}`);
+            }
+          }
           const file = `${state.id}-${theme}.png`;
           await page.screenshot({ path: join(OUT, file) as `${string}.png` });
           shots.push({ id: state.id, title: state.title, theme, file, prototype: state.prototype ?? null, problems, width: state.width, height: state.height });

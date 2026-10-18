@@ -213,6 +213,7 @@
           onopen={(url) => void platform.openUrl(url)}
           oncopy={(text) => void platform.copyText(text)}
           onshare={() => void share()}
+          onlisteninstead={surface.resultFromPage && surface.sources.includes('Tab') ? () => void listen.listenWith('Tab') : undefined}
         />
       {:else}
         <CandidatesView
@@ -232,17 +233,18 @@
     {@render chip()}
     {#if touch}
       <div class="stage">
-        <Stage {listen} sources={surface.sources} equal ontypelyric={() => field?.focus()} onopensession={(id) => openApp(`/session/${id}`)} onallowmic={() => openApp('/grant-mic')} onsitesettings={() => void platform.openSiteSettings()} />
+        <Stage {listen} sources={surface.sources} equal ontypelyric={() => field?.focus()} onopensession={(id) => openApp(`/session/${id}`)} onallowmic={() => openApp('/grant-mic')} onsitesettings={() => void platform.openSiteSettings()} onopenlink={(url) => void surface.openAndAnalyze(url)} onallowhost={(url) => void surface.allowHost(url)} />
       </div>
       {@render recentRow()}
     {:else}
-      <Stage {listen} sources={surface.sources} ontypelyric={() => field?.focus()} onopensession={(id) => openApp(`/session/${id}`)} onallowmic={() => openApp('/grant-mic')} onsitesettings={() => void platform.openSiteSettings()} />
+      <Stage {listen} sources={surface.sources} ontypelyric={() => field?.focus()} onopensession={(id) => openApp(`/session/${id}`)} onallowmic={() => openApp('/grant-mic')} onsitesettings={() => void platform.openSiteSettings()} onopenlink={(url) => void surface.openAndAnalyze(url)} onallowhost={(url) => void surface.allowHost(url)} />
       {@render recentRow()}
     {/if}
     {@render footer()}
   {/if}
   {#if surface.ask}
     <AskSheet
+      kind={surface.ask.kind}
       title={surface.ask.title}
       site={surface.ask.site}
       durationMs={surface.ask.durationMs}

@@ -363,3 +363,4 @@ body.surface-gallery { overflow: auto; height: auto; }
 .track .track-main .text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .track .track-main .text > *, .cand .cand-main > * { display: block; }
 .track .track-main:disabled { cursor: default; }
+.hero .listen-instead { margin-top: 6px; }

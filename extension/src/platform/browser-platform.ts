@@ -11,6 +11,18 @@ export function browserPlatform(): Platform {
     activeTab,
     // The capture coordinator (task X4) reads facts in the page; until then nothing is known.
     pageFacts: async () => null,
+    async hostAccess(url) {
+      try {
+        const origin = `${new URL(url).origin}/*`;
+        return (await browser.permissions.contains({ origins: [origin] })) ? 'granted' : 'needed';
+      } catch {
+        return 'granted';
+      }
+    },
+    requestHost(url) {
+      // No await before this call: permissions.request needs the click's user gesture.
+      return browser.permissions.request({ origins: [`${new URL(url).origin}/*`] }).catch(() => false);
+    },
     openApp,
     openPanel,
     async openUrl(url) {
