@@ -79,6 +79,9 @@
     <div class="acts">
       {@render openIn(track)}
       <button class="btn outlined" onclick={() => oncopy(`${track.artist} – ${track.title}`)}><span class="ic ic-copy s12"></span>{t('result.copyArtistTitle')}</button>
+      {#if subject.kind === 'track' && subject.sessionId}
+        <button class="btn text" onclick={() => onopensession?.(subject.sessionId!)}>{t('action.open')}</button>
+      {/if}
     </div>
   {:else if subject.kind === 'candidate'}
     {@const candidate = subject.candidate}
@@ -92,7 +95,10 @@
       </div>
     {/if}
     <div class="dsec"><Facts facts={candidateFacts(candidate)} /></div>
-    <div class="acts">{@render openIn(candidate.track)}</div>
+    <div class="acts">
+      {@render openIn(candidate.track)}
+      {#if subject.sessionId}<button class="btn text" onclick={() => onopensession?.(subject.sessionId!)}>{t('action.open')}</button>{/if}
+    </div>
   {:else if subject.kind === 'segment'}
     {@const segment = subject.segment}
     {@const site = sourceSite(subject.detail) ?? ''}

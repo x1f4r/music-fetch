@@ -20,6 +20,8 @@
    */
   interface Props {
     narrow: boolean;
+    /** The details column is on screen: a click shows a session there, a double click opens it. */
+    columns: boolean;
     pinnedOnly?: boolean;
     onopen: (sessionId: string) => void;
     onlisten: () => void;
@@ -27,7 +29,7 @@
     ondetails: (subject: DetailSubject | null) => void;
   }
 
-  let { narrow, pinnedOnly = false, onopen, onlisten, onsettings, ondetails }: Props = $props();
+  let { narrow, columns, pinnedOnly = false, onopen, onlisten, onsettings, ondetails }: Props = $props();
   const { engine, platform } = useSurface();
   const library = new LibraryController(engine);
   let searchOpen = $state(false);
@@ -62,9 +64,9 @@
     const shape = sessionShape(view);
     if (shape === 'single') {
       const track = singleTrack(view);
-      return ondetails(track ? { kind: 'track', track, heard: heardRows(detail) } : null);
+      return ondetails(track ? { kind: 'track', track, heard: heardRows(detail), sessionId: detail.entry.id } : null);
     }
-    if (shape === 'candidates' && detail.candidates[0]) return ondetails({ kind: 'candidate', candidate: detail.candidates[0] });
+    if (shape === 'candidates' && detail.candidates[0]) return ondetails({ kind: 'candidate', candidate: detail.candidates[0], sessionId: detail.entry.id });
     if (shape === 'mix' || shape === 'playlist') return ondetails({ kind: 'session', detail });
     ondetails(null);
   });
@@ -143,7 +145,7 @@
 {/if}
 <div class="pane">
   <div class="list">
-    <LibraryList {library} selectable art={narrow ? 44 : 40} onopen={(entry) => onopen(entry.id)} oncopy={(text) => void platform.copyText(text)} />
+    <LibraryList {library} selectable art={narrow ? 44 : 40} clickOpens={!columns} onopen={(entry) => onopen(entry.id)} oncopy={(text) => void platform.copyText(text)} />
   </div>
   {#if library.toast}
     <Toast toast={library.toast} onundo={() => void library.undo()} />

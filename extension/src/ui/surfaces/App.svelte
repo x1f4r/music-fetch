@@ -110,7 +110,7 @@
       <GrantMicRoute initial={route.state} />
     {:else if route.name === 'library'}
       {#key route.pinned}
-        <LibraryRoute {narrow} pinnedOnly={route.pinned} onopen={(id) => go({ name: 'session', id })} onlisten={() => go({ name: 'listen' })} onsettings={() => go({ name: 'settings', pane: 'general' })} ondetails={(subject) => (details = subject)} />
+        <LibraryRoute {narrow} columns={withDetails} pinnedOnly={route.pinned} onopen={(id) => go({ name: 'session', id })} onlisten={() => go({ name: 'listen' })} onsettings={() => go({ name: 'settings', pane: 'general' })} ondetails={(subject) => (details = subject)} />
       {/key}
     {:else if route.name === 'session'}
       {#key route.id}
