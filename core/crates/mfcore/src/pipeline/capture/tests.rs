@@ -1,6 +1,6 @@
 use super::*;
 use crate::audio::SAMPLE_RATE;
-use crate::model::{SessionEvent, SessionKind};
+use crate::model::{Phase, SessionEvent, SessionKind};
 use crate::pipeline::testutil::{FakeServices, noise, play, session, track};
 
 fn temp_dir() -> std::path::PathBuf {
@@ -91,7 +91,7 @@ async fn a_listen_through_is_analyzed_as_a_mix() {
     assert!(segments.iter().any(|(t, _)| t == "One"), "{segments:?}");
     // The mix pipeline places the boundary (its own accuracy is tested elsewhere).
     assert!(segments.iter().any(|(t, s)| t == "Two" && s.abs_diff(600_000) <= 30_000), "{segments:?}");
-    assert!(events.iter().any(|e| matches!(e, SessionEvent::Progress { .. })));
+    assert!(events.iter().any(|e| matches!(e, SessionEvent::Phase { phase: Phase::Listening, fraction: Some(_) })));
     assert!(matches!(events.last(), Some(SessionEvent::Finished { .. })), "{:?}", events.last());
     drop(events);
     let _ = std::fs::remove_dir_all(dir);

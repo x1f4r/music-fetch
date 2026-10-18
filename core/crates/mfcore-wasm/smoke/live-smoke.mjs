@@ -3,7 +3,8 @@
 //
 //   node core/crates/mfcore-wasm/smoke/live-smoke.mjs [--pkg DIR] [--wav FILE] [--stub URL]
 //
-//   --pkg   wasm-bindgen output (default: extension/src/engine/wasm, see build.sh)
+//   --pkg   the JS glue (default: extension/src/engine/wasm, see build.sh)
+//   --wasm  the module (default: extension/public/engine/mfcore.wasm)
 //   --wav   16-bit PCM WAV to listen to (default: 12 s of synthetic music)
 //   --stub  a running stub recognizer (e.g. `mf dev stub-recognizer`); without it a
 //           built-in one answers every query with the canned "Get Lucky" match
@@ -24,7 +25,7 @@ const pkg = path.resolve(args.pkg ?? path.join(repo, 'extension/src/engine/wasm'
 
 const t0 = performance.now();
 const wasm = await import(pathToFileURL(path.join(pkg, 'mfcore_wasm.js')).href);
-const bytes = fs.readFileSync(path.join(pkg, 'mfcore_wasm_bg.wasm'));
+const bytes = fs.readFileSync(path.resolve(args.wasm ?? path.join(repo, 'extension/public/engine/mfcore.wasm')));
 const compiled = await WebAssembly.compile(bytes);
 const tCompile = performance.now();
 wasm.initSync({ module: compiled });

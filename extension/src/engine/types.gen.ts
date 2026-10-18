@@ -323,5 +323,6 @@ export interface WebEngineConfig {
   low_power?: boolean;
   shazam_base_url?: string | null;
   offline_catalog?: boolean;
+  test_pacing_ms?: number | null;
   log_level?: string;
 }

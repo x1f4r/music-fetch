@@ -64,7 +64,7 @@ describe('the engine host', () => {
     const id = await ui.startListening('Tab', 'Auto', { auto_stop: true });
     const source = platform.sources[0]!;
     source.play(renderSong(SYNTHETIC_SONGS[2]!, 48_000, 9000, 1000));
-    await vi.waitFor(() => expect(matched).toBe('Test Signal C'), { timeout: 5000 });
+    await vi.waitFor(() => expect(matched).toBe('Charlie Signal'), { timeout: 5000 });
     expect(events).toContain('Level');
     expect(source.stopped).toBe(true);
     const detail = await ui.session(id);
@@ -152,7 +152,7 @@ describe('the engine host', () => {
     platform.sources[0]!.play(renderSong(SYNTHETIC_SONGS[5]!, 48_000, 5000));
     platform.sources[0]!.end();
     await vi.waitFor(async () => expect((await ui.session(id))?.entry.status).toBe('Matched'), { timeout: 5000 });
-    expect((await ui.session(id))?.entry.title).toBe('Test Signal F');
+    expect((await ui.session(id))?.entry.title).toBe('Foxtrot Signal');
   });
 
   it('remembers what was running when the host went away', async () => {

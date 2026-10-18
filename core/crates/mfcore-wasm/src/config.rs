@@ -24,6 +24,9 @@ pub struct WebEngineConfig {
     pub shazam_base_url: Option<String>,
     /// Tests only: no catalog enrichment.
     pub offline_catalog: bool,
+    /// Tests only: pace recognizer requests this many ms apart instead of the
+    /// product's spacing (only with `shazam_base_url`).
+    pub test_pacing_ms: Option<u64>,
     /// Console log level: "error", "warn" (default), "info", "debug".
     pub log_level: String,
 }
@@ -40,6 +43,7 @@ impl Default for WebEngineConfig {
             low_power: false,
             shazam_base_url: None,
             offline_catalog: false,
+            test_pacing_ms: None,
             log_level: "warn".into(),
         }
     }

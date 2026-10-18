@@ -12,6 +12,8 @@ mod media;
 mod melody;
 mod session;
 mod shazam;
+mod stub;
+mod youtube_record;
 
 #[derive(Parser)]
 #[command(name = "mf", version, about = "Music Fetch engine CLI")]
@@ -38,6 +40,9 @@ enum Cli {
     /// Measure recognition quality on evaluation sets.
     #[command(subcommand)]
     Eval(EvalCommand),
+    /// Developer tools: the stub recognizer, the header policy.
+    #[command(subcommand)]
+    Dev(stub::Command),
 }
 
 #[derive(Subcommand)]
@@ -71,6 +76,7 @@ fn main() -> anyhow::Result<()> {
         Cli::Index(IndexCommand::Engine(command)) => session::run_index(command)?,
         Cli::Eval(EvalCommand::Lyrics(command)) => lyrics::run(lyrics::Command::Eval(command))?,
         Cli::Eval(EvalCommand::Melody(command)) => melody::run(melody::MelodyCommand::Eval(command))?,
+        Cli::Dev(command) => stub::run(command)?,
     }
     Ok(())
 }

@@ -3,7 +3,8 @@
 //!
 //! The library and caches default to the app's folders; pass `--data-dir` /
 //! `--cache-dir` (or set `MF_DATA_DIR` / `MF_CACHE_DIR`) to keep experiments
-//! apart. Paid providers are read from `MF_AUDD_TOKEN`, `MF_ACR_HOST`,
+//! apart. `--stub <url>` (or `MF_STUB_URL`) sends every request to a local
+//! `mf dev stub-recognizer` instead of the public services. Paid providers are read from `MF_AUDD_TOKEN`, `MF_ACR_HOST`,
 //! `MF_ACR_KEY`, `MF_ACR_SECRET` and `MF_ACR_HUM_HOST`, `MF_ACR_HUM_KEY`,
 //! `MF_ACR_HUM_SECRET`.
 
@@ -21,7 +22,9 @@ use mfcore::audio::decode::decode_file;
 use mfcore::audio::wav::WavReader;
 use mfcore::engine::{Engine, EngineOptions, LiveSession};
 use mfcore::platform::{SessionObserver, SpeechToText};
+use mfcore::shazam::{CallBudget, QueuePolicy};
 use mfcore::util::cancel::{CancelToken, TaskHandle};
+use mfcore::util::endpoints::TestEndpoints;
 use mfcore::{
     AcrCredentials, AnalyzeMode, CaptureSource, Credentials, EngineConfig, LibraryQuery, ListenMode, MediaToolsConfig,
     PlatformError, SessionEvent,
@@ -58,6 +61,13 @@ pub struct EngineArgs {
     /// Skip catalog enrichment (no Deezer/iTunes lookups).
     #[arg(long)]
     offline_catalog: bool,
+    /// Send every request to the stub recognizer at this 127.0.0.1 URL
+    /// (`mf dev stub-recognizer`) [default: $MF_STUB_URL]; nothing else is contacted.
+    #[arg(long, value_name = "URL")]
+    stub: Option<String>,
+    /// With --stub: keep the public recognizer's pacing instead of the fast test pacing.
+    #[arg(long)]
+    real_pacing: bool,
 }
 
 #[derive(Args)]
@@ -224,7 +234,22 @@ fn open_engine(
         Some(dir) => dir.clone(),
         None => default_dir("MF_CACHE_DIR", true)?,
     };
-    let manifest = args.manifest.clone().or_else(|| std::env::var("MF_MELODY_MANIFEST").ok()).unwrap_or_default();
+    let mut options = EngineOptions { offline_catalog: args.offline_catalog, ..EngineOptions::default() };
+    let stub = args.stub.clone().or_else(|| std::env::var("MF_STUB_URL").ok()).filter(|s| !s.trim().is_empty());
+    if let Some(url) = &stub {
+        // Loopback only (checked); the public endpoints are never reached.
+        mfcore::util::endpoints::install(Some(TestEndpoints::stub(url)?));
+        if !args.real_pacing {
+            options.shazam_policy = Some(stub_pacing());
+            options.call_budget = Some(CallBudget::new(1000.0, Duration::from_millis(10)));
+        }
+    }
+    let manifest = args
+        .manifest
+        .clone()
+        .or_else(|| std::env::var("MF_MELODY_MANIFEST").ok())
+        .or_else(|| stub.as_ref().map(|url| format!("{}/melody/manifest.json", url.trim_end_matches('/'))))
+        .unwrap_or_default();
     let config = EngineConfig {
         data_dir: data_dir.to_string_lossy().into_owned(),
         cache_dir: cache_dir.to_string_lossy().into_owned(),
@@ -234,10 +259,25 @@ fn open_engine(
         media_tools,
         melody_index_manifest_url: manifest,
     };
-    let options = EngineOptions { offline_catalog: args.offline_catalog, ..EngineOptions::default() };
     let engine = Engine::with_options(config, None, None, speech, options)?;
     engine.set_credentials(credentials_from_env());
     Ok(engine)
+}
+
+/// Pacing against the local stub: tests need not wait 9 s between probes. Only
+/// ever used with test endpoints, which can point at loopback addresses only.
+fn stub_pacing() -> QueuePolicy {
+    QueuePolicy {
+        interactive_spacing: Duration::from_millis(20),
+        batch_spacing: Duration::from_millis(40),
+        jitter: Duration::ZERO,
+        interactive_max_wait: Duration::from_secs(10),
+        batch_max_wait: Duration::from_secs(60),
+        breaker_base: Duration::from_secs(1),
+        breaker_max: Duration::from_secs(5),
+        retry_delays: vec![Duration::from_millis(100), Duration::from_millis(300)],
+        request_timeout: Duration::from_secs(15),
+    }
 }
 
 /// Prints events as JSON lines and reports the terminal one.

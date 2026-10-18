@@ -21,7 +21,8 @@ const ARTIST_SEPARATORS: [&str; 7] = [", ", " & ", " feat. ", " ft. ", " featuri
 const ARTWORK_SIZE: u32 = 1000;
 
 /// `None` when the response has no match or no usable track.
-pub(crate) fn parse_match(body: &Value, country: &str) -> Option<ShazamMatch> {
+/// Also used by `mf dev stub-recognizer` to check its own answers.
+pub fn parse_match(body: &Value, country: &str) -> Option<ShazamMatch> {
     let first = body.get("matches")?.as_array()?.first()?;
     let track = body.get("track")?;
     let title = text(track, "title")?;

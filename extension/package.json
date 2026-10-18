@@ -23,6 +23,7 @@
     "postinstall": "wxt prepare",
     "screens": "vitest run --config vitest.screens.config.ts",
     "build:e2e": "wxt build -b chrome --mode e2e && wxt build -b firefox --mv3 --mode e2e",
+    "build:engine": "../core/crates/mfcore-wasm/build.sh",
     "e2e:runtime": "npm run build:e2e && MF_RUNTIME_E2E=1 vitest run --config vitest.e2e.config.ts tests/e2e/runtime-"
   },
   "devDependencies": {

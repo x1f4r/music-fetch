@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Builds the browser engine: mfcore-wasm for wasm32-unknown-unknown, then
-# wasm-bindgen (web target) and wasm-opt, into extension/src/engine/wasm/ (or --out).
+# wasm-bindgen (web target) and wasm-opt. The JS glue goes to extension/src/engine/wasm/
+# (bundled with the engine Worker), the module to extension/public/engine/mfcore.wasm
+# (copied as is: bundlers would otherwise inline 20 MB as base64 in some bundles).
 #
-#   crates/mfcore-wasm/build.sh [--dev] [--no-opt] [--out DIR]
+#   crates/mfcore-wasm/build.sh [--dev] [--no-opt] [--out DIR] [--wasm-out FILE]
 #
 #   --dev     the wasm-dev profile (no LTO, parallel codegen; several times faster)
 #   --no-opt  skip wasm-opt
@@ -19,12 +21,14 @@ repo="$(cd "$core/.." && pwd)"
 profile=wasm
 opt=1
 out="$repo/extension/src/engine/wasm"
+wasm_out="$repo/extension/public/engine/mfcore.wasm"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dev) profile=wasm-dev ;;
     --no-opt) opt=0 ;;
     --out) out="$2"; shift ;;
-    -h | --help) sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --wasm-out) wasm_out="$2"; shift ;;
+    -h | --help) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "error: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -56,11 +60,18 @@ module="$target_dir/wasm32-unknown-unknown/$profile/mfcore_wasm.wasm"
 
 mkdir -p "$out"
 wasm-bindgen --target web --out-dir "$out" --out-name mfcore_wasm "$module"
+# The glue's default module URL (`new URL('…_bg.wasm', import.meta.url)`) makes bundlers
+# inline the 20 MB module into the worker bundle. Callers always pass the module (or
+# its URL) to init, so the default goes.
+sed -i.bak "s|new URL('mfcore_wasm_bg.wasm', import.meta.url)|undefined|" "$out/mfcore_wasm.js" && rm -f "$out/mfcore_wasm.js.bak"
+grep -q "import.meta.url" "$out/mfcore_wasm.js" && { echo "error: the glue still names its module URL" >&2; exit 1; }
+mkdir -p "$(dirname "$wasm_out")"
 if (( opt )) && command -v wasm-opt >/dev/null; then
   wasm-opt -Oz --enable-simd --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
     --enable-mutable-globals --enable-reference-types --enable-multivalue \
-    "$out/mfcore_wasm_bg.wasm" -o "$out/mfcore_wasm_bg.wasm.opt"
-  mv "$out/mfcore_wasm_bg.wasm.opt" "$out/mfcore_wasm_bg.wasm"
+    "$out/mfcore_wasm_bg.wasm" -o "$wasm_out"
+  rm -f "$out/mfcore_wasm_bg.wasm"
+else
+  mv "$out/mfcore_wasm_bg.wasm" "$wasm_out"
 fi
-printf '*\n!.gitignore\n' > "$out/.gitignore"
-ls -l "$out"/mfcore_wasm_bg.wasm | awk '{printf "%s: %.1f MB\n", $NF, $5 / 1048576}'
+ls -l "$wasm_out" | awk '{printf "%s: %.1f MB\n", $NF, $5 / 1048576}'

@@ -192,6 +192,7 @@ fn engine_in_with(
         shazam_policy: Some(policy),
         call_budget: Some(CallBudget::new(1000.0, Duration::from_millis(1))),
         offline_catalog: true,
+        ..EngineOptions::default()
     };
     let engine = Engine::with_options(config, None, None, speech, options).expect("engine");
     Fixture { engine, dir: TempDir(dir) }

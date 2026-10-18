@@ -3,9 +3,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use mfcore::engine::EngineOptions;
 use mfcore::pipeline::capture::{CaptureSink, PageMedia};
+use mfcore::pipeline::recognize::CallBudget;
+use mfcore::shazam::QueuePolicy;
 use mfcore::store::Store;
 use mfcore::store::opfs::BrowserStorage;
 use mfcore::util::files::FileStore;
@@ -103,9 +106,19 @@ impl WasmEngine {
             media_tools: None,
             melody_index_manifest_url: config.melody_index_manifest_url,
         };
+        // A local stub recognizer in tests answers at once: no need to pace.
+        let fast = config.test_pacing_ms.filter(|_| config.shazam_base_url.is_some()).map(Duration::from_millis);
         let options = EngineOptions {
             shazam_base_url: config.shazam_base_url,
             offline_catalog: config.offline_catalog,
+            shazam_policy: fast.map(|spacing| QueuePolicy {
+                interactive_spacing: spacing,
+                batch_spacing: spacing,
+                jitter: Duration::ZERO,
+                retry_delays: vec![spacing],
+                ..QueuePolicy::default()
+            }),
+            call_budget: fast.map(|spacing| CallBudget::new(1e6, spacing)),
             ..EngineOptions::default()
         };
         let engine = js(mfcore::Engine::in_browser(engine_config, store, files, None, config.low_power, options))?;
@@ -451,6 +464,31 @@ impl WasmEngine {
     ) -> Result<Option<String>, JsValue> {
         let track: Track = from_js(track, "the track")?;
         Ok(mfcore::custom_provider_link(track, template))
+    }
+
+    /// Test tooling (stub recognizers): the peaks of a Shazam signature
+    /// (`data:audio/vnd.shazam.sig;base64,…` or raw bytes), as `[frame, fbin,
+    /// magnitude]` per band (8 ms frames, `fbin × 0.1220703125` Hz).
+    #[wasm_bindgen(js_name = decodeSignature, unchecked_return_type = "{ sample_rate: number; sample_count: number; bands: [number, number, number][][] }")]
+    pub fn decode_signature(signature: &[u8]) -> Result<JsValue, JsValue> {
+        let decoded = js(mfcore::shazam::signature::decode(signature))?;
+        let bands: Vec<Vec<[u32; 3]>> = decoded
+            .bands
+            .iter()
+            .map(|band| band.iter().map(|p| [p.frame, u32::from(p.fbin), u32::from(p.magnitude)]).collect())
+            .collect();
+        to_js(&serde_json::json!({
+            "sample_rate": decoded.sample_rate,
+            "sample_count": decoded.sample_count,
+            "bands": bands,
+        }))
+    }
+
+    /// Test tooling (stub recognizers): the Shazam signature the engine would
+    /// send for 16 kHz mono audio (its middle 12 s at most).
+    #[wasm_bindgen(js_name = shazamSignature)]
+    pub fn shazam_signature(samples: &[i16]) -> Vec<u8> {
+        mfcore::shazam::signature::generate(samples).bytes
     }
 
     /// True when `text` looks like a link the engine can analyze.
