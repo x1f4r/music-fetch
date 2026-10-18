@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/mfcore", "crates/mf-cli", "crates/uniffi-bindgen"]
+members = ["crates/mfcore", "crates/mfcore-wasm", "crates/mf-cli", "crates/uniffi-bindgen"]
 # Patched third-party sources (see vendor/opus-decoder/VENDORED.md), not workspace crates.
 exclude = ["vendor"]
 

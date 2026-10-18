@@ -759,6 +759,12 @@ impl Engine {
         ))
     }
 
+    /// Pin or unpin several sessions in one transaction; unknown ids are
+    /// skipped. (Rust only for now, so the app bindings stay as they are.)
+    pub fn set_pinned_many(&self, ids: Vec<String>, pinned: bool) -> Result<()> {
+        self.ctx.store.set_pinned_many(&ids, pinned).map(drop)
+    }
+
     /// Browser: reads the installed melody index into memory if it is not
     /// loaded yet (humming needs it); false when none is installed. Natively the
     /// index is mapped at start-up, so this only reports whether it is there.
