@@ -196,7 +196,7 @@ pub fn search_with(index: &MelodyIndex, query: &MelodyQuery, k: usize, options: 
         return Vec::new();
     };
     let mut refs = References::new(index);
-    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true, None);
+    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true);
     let ranked = rerank(&q, &mut refs, placements, options);
     best_per_song(index, &q, &mut refs, ranked, k, options.popularity_weight)
 }
@@ -217,14 +217,14 @@ pub fn candidates(index: &MelodyIndex, query: &MelodyQuery, options: &MatchOptio
         return Vec::new();
     };
     let mut refs = References::new(index);
-    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true, None);
+    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true);
     let ranked = rerank(&q, &mut refs, placements, options);
-    ranked.into_iter().map(|s| candidate(s, &mut refs)).collect()
+    ranked.into_iter().map(candidate).collect()
 }
 
-fn candidate(s: Scored, refs: &mut References) -> Candidate {
+fn candidate(s: Scored) -> Candidate {
     Candidate {
-        work: refs.work(s.song),
+        work: s.work,
         song: s.song,
         track: s.track,
         ref_frames: s.ref_frames,
@@ -246,12 +246,12 @@ pub fn trace(index: &MelodyIndex, query: &MelodyQuery, options: &MatchOptions, s
         songs.filter(|s| seen.insert(*s)).position(|s| s == song).map(|p| p + 1)
     };
     let mut coarse = Coarse::default();
-    let placements = retrieve_all(index, &q, &mut refs, options, &|_| true, Some(&mut coarse));
+    let placements = retrieve_traced(index, &q, &mut refs, options, &|_| true, Some(&mut coarse));
     let windows = song_rank(&mut coarse.windows.iter().filter_map(|&(t, _)| index.track_song(t)));
     let notes = song_rank(&mut coarse.notes.iter().filter_map(|&(t, _)| index.track_song(t)));
     let retrieval = song_rank(&mut placements.iter().filter_map(|p| index.track_song(p.track)));
     let unlimited = MatchOptions { pool: usize::MAX, ..options.clone() };
-    let all = retrieve_all(index, &q, &mut refs, &unlimited, &|_| true, None);
+    let all = retrieve_all(index, &q, &mut refs, &unlimited, &|_| true);
     let unpooled = song_rank(&mut all.iter().filter_map(|p| index.track_song(p.track)));
     let mut quick = quick_stage(&q, &mut refs, placements, usize::MAX);
     let linear = song_rank(&mut quick.iter().filter_map(|(_, p)| refs.get(p.track).map(|r| r.song)));
@@ -271,7 +271,7 @@ pub fn score_song(index: &MelodyIndex, query: &MelodyQuery, song_id: u32) -> Opt
     let options = MatchOptions { pool: 64, rerank: 12, ..MatchOptions::default() };
     // The index's own evidence for this song, so the features read as in a search...
     let wanted = tracks.clone();
-    let mut placements = retrieve_all(index, &q, &mut refs, &options, &|t| wanted.contains(&t), None);
+    let mut placements = retrieve_all(index, &q, &mut refs, &options, &|t| wanted.contains(&t));
     // ...plus every place the song's windows resemble the query's, without vote evidence.
     for t in tracks {
         if let Some(r) = refs.get(t) {
@@ -408,9 +408,24 @@ fn record(coarse: Option<&mut Vec<(u32, f32)>>, pre: &[(u32, f32)]) {
     }
 }
 
-/// Placements from both retrieval paths, interleaved, merged where they agree
-/// (same track, the query's middle within 1 s).
+/// Stage 1: placements from both retrieval paths, interleaved, merged where they
+/// agree (same track, the query's middle within 1 s), at most `options.pool` from
+/// each path, best first. Only tracks `allow` accepts take part. Another recall
+/// stage can add its own placements to these before [`rerank`], which gives each
+/// the quick check and the best `options.rerank` the full alignment and the score
+/// model.
 fn retrieve_all(
+    index: &MelodyIndex,
+    q: &Query,
+    refs: &mut References,
+    options: &MatchOptions,
+    allow: &dyn Fn(u32) -> bool,
+) -> Vec<Placement> {
+    retrieve_traced(index, q, refs, options, allow, None)
+}
+
+/// [`retrieve_all`], keeping the coarse votes of both paths (for evaluation).
+fn retrieve_traced(
     index: &MelodyIndex,
     q: &Query,
     refs: &mut References,
@@ -1004,6 +1019,8 @@ impl<'a> References<'a> {
 #[derive(Debug, Clone)]
 struct Scored {
     song: u32,
+    /// The song's work (see [`work_key`]).
+    work: u64,
     track: u32,
     ref_frames: u32,
     features: Features,
@@ -1017,7 +1034,9 @@ struct Scored {
     path: TimePath,
 }
 
-/// Stages 2–5 for a set of placements.
+/// Stages 2–5 for a set of placements (from [`retrieve_all`] and any other recall
+/// stage): the quick check ranks them all, the best `options.rerank` get linear
+/// scaling, DTW and the score model; best first, several per song possible.
 fn rerank(q: &Query, refs: &mut References, placements: Vec<Placement>, options: &MatchOptions) -> Vec<Scored> {
     let quick = quick_stage(q, refs, placements, options.rerank);
     full_stage(q, refs, quick)
@@ -1092,6 +1111,7 @@ fn full_stage(q: &Query, refs: &mut References, quick: Vec<(f32, Placement)>) ->
         };
         scored.push(Scored {
             song: r.song,
+            work: 0,
             track: p.track,
             ref_frames: r.voiced,
             features: Features {
@@ -1112,6 +1132,9 @@ fn full_stage(q: &Query, refs: &mut References, quick: Vec<(f32, Placement)>) ->
             anchor_ms,
             path,
         });
+    }
+    for s in &mut scored {
+        s.work = refs.work(s.song);
     }
     score_all(&mut scored, q.none);
     scored.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -1374,13 +1397,18 @@ fn utility(f: &Features) -> f32 {
 fn score_all(scored: &mut [Scored], none: f32) {
     let z: Vec<f32> = scored.iter().map(|s| utility(&s.features)).collect();
     let top = z.iter().copied().fold(none, f32::max);
-    // Songs compete, not placements: each song enters with its best placement.
-    let mut best: HashMap<u32, f32> = HashMap::with_capacity(scored.len());
+    // Songs compete, not placements: each song enters with its best placement
+    // (summed in first-seen order, so equal inputs give equal scores).
+    let mut slot: HashMap<u32, usize> = HashMap::with_capacity(scored.len());
+    let mut best: Vec<f32> = Vec::with_capacity(scored.len());
     for (s, &z) in scored.iter().zip(&z) {
-        let e = best.entry(s.song).or_insert(f32::NEG_INFINITY);
-        *e = e.max(z);
+        let i = *slot.entry(s.song).or_insert_with(|| {
+            best.push(f32::NEG_INFINITY);
+            best.len() - 1
+        });
+        best[i] = best[i].max(z);
     }
-    let total = (none - top).exp() + best.values().map(|z| (z - top).exp()).sum::<f32>();
+    let total = (none - top).exp() + best.iter().map(|z| (z - top).exp()).sum::<f32>();
     for (s, z) in scored.iter_mut().zip(z) {
         let p = (z - top).exp() / total;
         s.score = 1.0 / (1.0 + (-(CALIBRATION.0 + CALIBRATION.1 * logit(p))).exp());
