@@ -420,9 +420,8 @@ export class MockBackend implements EngineBackend {
     return id;
   }
 
-  /** Media pages and local test pages are captured; streaming and catalog links resolve as metadata. */
+  /** Media pages are captured; streaming and catalog links resolve as metadata. */
   private wantsCapture(url: URL, mode: AnalyzeMode): boolean {
-    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') return true;
     const shape = routeLink(url).shape;
     return mode === 'Mix' || shape === 'media' || shape === 'mix';
   }

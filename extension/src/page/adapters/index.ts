@@ -12,8 +12,8 @@ export const ADAPTERS: Record<AdapterId, SiteAdapter> = { youtube, soundcloud, m
 
 /**
  * The adapter for a page, by host (YouTube, SoundCloud, …), else the generic one. The
- * e2e build also honours `<meta name="mf-test-adapter">`, so local fixture pages on
- * 127.0.0.1 can stand in for the sites; release builds don't contain that branch.
+ * e2e build also honours a test meta tag, so local fixture pages can stand in for the
+ * sites; release builds don't contain that branch.
  */
 export function siteAdapter(hostname: string, doc?: Document): SiteAdapter {
   if (import.meta.env.MODE === 'e2e' && doc) {
