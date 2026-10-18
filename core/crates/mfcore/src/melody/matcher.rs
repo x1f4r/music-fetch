@@ -987,6 +987,12 @@ fn retrieve(
     let mut stamp = vec![u32::MAX; tracks];
     // Forced tracks' postings beyond one window's neighbour limit.
     let mut extra: Vec<(u32, f32, f32, f32)> = Vec::new();
+    let mut forced = vec![false; if force.is_empty() { 0 } else { tracks }];
+    for &t in force {
+        if let Some(f) = forced.get_mut(t as usize) {
+            *f = true;
+        }
+    }
     for (wi, &(ti, start, ref vec)) in q.windows.iter().enumerate() {
         probe_cells(index, books, vec, options.probe, &mut probed);
         if probed.is_empty() {
@@ -1045,7 +1051,7 @@ fn retrieve(
         if found.len() > WINDOW_NEIGHBOURS {
             found.select_nth_unstable_by(WINDOW_NEIGHBOURS, |a, b| a.2.total_cmp(&b.2));
             if !force.is_empty() {
-                extra.extend(found[WINDOW_NEIGHBOURS..].iter().copied().filter(|f| force.contains(&f.0)));
+                extra.extend(found[WINDOW_NEIGHBOURS..].iter().copied().filter(|f| forced[f.0 as usize]));
             }
             found.truncate(WINDOW_NEIGHBOURS);
         }
