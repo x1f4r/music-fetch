@@ -276,16 +276,6 @@ export function summarize(keys: StoredKeys): Record<ProviderId, ProviderSummary>
   return { acrHumming: acr(keys.acrHumming), acr: acr(keys.acr), audd: { set: Boolean(keys.audd), host: null, keyHint: null } };
 }
 
-/** Every secret value in `keys`: what must never appear in a log, export or report. */
-export function secretValues(keys: StoredKeys): string[] {
-  return [keys.acrHumming?.accessSecret, keys.acr?.accessSecret, keys.audd?.token].filter((v): v is string => typeof v === 'string' && v.length >= 4);
-}
-
-/** `text` with every secret of `keys` replaced by "••••" (for messages that might echo input). */
-export function redactSecrets(text: string, keys: StoredKeys): string {
-  return secretValues(keys).reduce((out, secret) => out.split(secret).join('••••'), text);
-}
-
 // MARK: change notices
 
 const CHANNEL = 'mf-secrets';

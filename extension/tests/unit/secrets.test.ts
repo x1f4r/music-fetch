@@ -9,7 +9,6 @@ import {
   loadProviderKeys,
   memoryVault,
   normalizeAcrHost,
-  redactSecrets,
   saveProviderKeys,
   summarize,
   useMemorySecrets,
@@ -19,6 +18,8 @@ import {
 } from '@/src/platform/secrets';
 import { settings } from '@/src/settings/settings';
 import { demoSnapshot } from '@/src/ui/demo/library';
+import type { MockBackend } from '@/src/engine/host-mock-backend';
+import { InProcessWorker, mockFactory } from './support/host-fakes';
 
 /** Values that must never show up outside the encrypted vault. */
 const SECRET = 'Sx9-unit-test-access-secret-7Qp';
@@ -143,6 +144,21 @@ describe('provider keys at rest', () => {
     expect(await loadCredentials()).toMatchObject({ audd_token: TOKEN });
   });
 
+  it('reach the engine Worker straight from the vault, at start and after a change', async () => {
+    await saveProviderKeys('acrHumming', HUM);
+    const worker = new InProcessWorker(mockFactory());
+    const engine = new MessageChannel();
+    const capture = new MessageChannel();
+    worker.postMessage({ type: 'mf:worker.init', config: { target: 'chromium', android: false, lowPower: false, cpus: 8 }, engine: engine.port2, capture: capture.port2 });
+    const providers = () => (worker.backend as MockBackend | null)?.providers;
+    await vi.waitFor(() => expect(providers()).toEqual({ audd: false, acr: false, acrHumming: true }));
+    await saveProviderKeys('audd', { token: TOKEN });
+    await vi.waitFor(() => expect(providers()).toEqual({ audd: true, acr: false, acrHumming: true }));
+    worker.terminate();
+    engine.port1.close();
+    capture.port1.close();
+  });
+
   it('stay out of every session export', async () => {
     await saveProviderKeys('acrHumming', HUM);
     await saveProviderKeys('audd', { token: TOKEN });
@@ -164,10 +180,6 @@ describe('provider keys at rest', () => {
     } finally {
       useMemorySecrets(null);
     }
-  });
-
-  it('redacts secrets from text', () => {
-    expect(redactSecrets(`failed with ${SECRET} and ${TOKEN}`, { acrHumming: HUM, audd: { token: TOKEN } })).toBe('failed with •••• and ••••');
   });
 });
 
