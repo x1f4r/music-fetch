@@ -22,6 +22,12 @@ export interface Capabilities {
   menus: boolean;
   /** Keyboard shortcuts (`commands`); absent on Firefox for Android. */
   shortcuts: boolean;
+  /**
+   * Where listening by microphone and humming run. Firefox for Android never gives
+   * extension pages the microphone (S2: NotAllowedError in the popup and in tabs, no
+   * prompt), so there both hand off to the Music Fetch app.
+   */
+  microphone: 'extension' | 'app';
 }
 
 /** The parts of the `browser` namespace the probe looks at. */
@@ -46,5 +52,6 @@ export function probeCapabilities(api: ProbeApi, userAgent: string, target: Targ
     tabCapture: target === 'chromium' && Boolean(api.tabCapture),
     menus: !android && Boolean(api.contextMenus ?? api.menus),
     shortcuts: !android && Boolean(api.commands),
+    microphone: android ? 'app' : 'extension',
   };
 }

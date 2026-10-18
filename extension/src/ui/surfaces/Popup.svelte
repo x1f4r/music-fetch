@@ -29,7 +29,7 @@
   // svelte-ignore state_referenced_locally
   provideSurface({ engine, platform });
   // svelte-ignore state_referenced_locally
-  const surface = new ListenSurface(engine, platform);
+  const surface = new ListenSurface(engine, platform, { closeOnHandOff: true });
   // svelte-ignore state_referenced_locally
   const caps = platform.capabilities;
   const listen = surface.listen;

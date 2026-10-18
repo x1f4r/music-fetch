@@ -49,13 +49,13 @@ html[data-theme="dark"] { --outline-text: var(--outline); }
 /* ---------- Shell sizes: the prototypes are fixed frames, the browser gives us the real size ---------- */
 html, body { height: 100%; }
 body.surface-popup { width: 380px; height: 560px; overflow: hidden; }
-body.surface-popup.mobile-body { width: auto; height: 100vh; }
+body.surface-popup.mobile-body { width: auto; height: 100vh; height: 100dvh; }
 body.surface-panel, body.surface-app { overflow: hidden; }
 #root { height: 100%; }
 :focus-visible { outline: none; }
 
-.panel { width: 100%; height: 100vh; }
-.mobile { width: 100%; height: 100vh; }
+.panel { width: 100%; height: 100vh; height: 100dvh; }
+.mobile { width: 100%; height: 100vh; height: 100dvh; }
 .mobile .scroll { flex: 1; min-height: 0; overflow-y: auto; }
 
 /* ---------- Artwork from URLs ---------- */
@@ -222,7 +222,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .grant .mini-disc { margin-bottom: 18px; }
 
 /* ---------- App tab shell (app-*.html): sidebar, content, details column ---------- */
-.app { width: 100%; height: 100vh; }
+.app { width: 100%; height: 100vh; height: 100dvh; }
 .app .content { min-height: 0; }
 .app .sidebar .grow { flex: 1; }
 .app .sidebar .nav-list .ni.more { color: var(--on-surface-variant); }
@@ -273,6 +273,10 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .tl-scroll.zoomed { overflow-x: auto; scrollbar-width: thin; }
 .strip .seg { min-width: 3px; }
 
+/* Listen opens the Music Fetch app (Microphone and Hum on Firefox for Android) */
+.state .out { margin-right: 6px; vertical-align: -1px; }
+.touch .state .out { width: 16px; height: 16px; margin-right: 8px; vertical-align: -2px; }
+
 /* Listen in the app tab */
 .listen-page { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 8px 24px 24px; }
 .listen-page.dragging { box-shadow: inset 0 0 0 2px var(--primary); border-radius: var(--r-l); }
@@ -320,7 +324,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .settings.narrow .frow { flex-wrap: wrap; }
 
 /* ---------- App tab, narrow (< 700, app-narrow-library.html) ---------- */
-.app.narrow { width: 100%; height: 100vh; flex-direction: column; }
+.app.narrow { width: 100%; height: 100vh; height: 100dvh; flex-direction: column; }
 .app.narrow .content { flex: 1; }
 .app.narrow .content .toolbar { padding: 0 8px 0 16px; }
 .app.narrow .list { padding: 0 8px 24px; }

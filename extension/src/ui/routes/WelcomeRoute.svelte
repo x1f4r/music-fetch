@@ -4,12 +4,15 @@
   import { settings, type ProviderSettings } from '../../settings/settings';
   import MicGrant from '../components/MicGrant.svelte';
   import ProviderPicker from '../components/ProviderPicker.svelte';
+  import StepDots from '../components/StepDots.svelte';
   import { useSurface } from '../context';
 
   /**
    * First run (extension plan §5.2), opened by `onInstalled`: "Where do you listen?",
    * then the microphone, then the shortcut tip (desktop) or where to find it (Android).
    * Each step is remembered, and the provider decision is stored only by Choose or Skip.
+   * Firefox for Android has no microphone step: the extension can't use it there, and
+   * Microphone and Hum open the Music Fetch app.
    */
   interface Props {
     providers: ProviderSettings | null;
@@ -20,10 +23,13 @@
   const { platform } = useSurface();
   const caps = platform.capabilities;
   let step = $state<number | null>(null);
-  const STEPS = 3;
+  /** Stored step numbers: 0 provider, 1 microphone, 2 shortcut or where to find it, 3 done. */
+  const flow = caps.microphone === 'app' ? [0, 2] : [0, 1, 2];
+  const DONE = 3;
 
   onMount(async () => {
-    step = await settings.welcomeStep.getValue();
+    const stored = await settings.welcomeStep.getValue();
+    step = flow.includes(stored) || stored >= DONE ? stored : 2;
   });
 
   // A decision stored elsewhere (the popup) moves past the first step.
@@ -32,9 +38,10 @@
   });
 
   async function advance(next: number) {
+    if (next < DONE && !flow.includes(next)) next = flow.find((s) => s > next) ?? DONE;
     step = next;
     await settings.welcomeStep.setValue(next);
-    if (next >= STEPS) onfinish();
+    if (next >= DONE) onfinish();
   }
 
   const shortcutsLabel = caps.target === 'firefox' ? 'about:addons' : 'chrome://extensions/shortcuts';
@@ -43,11 +50,11 @@
 {#if step === 0 && providers}
   <div class="welcome">
     <div class="col">
-      <ProviderPicker savedCustom={providers.custom} ondecided={() => void advance(1)} />
+      <ProviderPicker savedCustom={providers.custom} steps={flow.length} ondecided={() => void advance(1)} />
     </div>
   </div>
 {:else if step === 1}
-  <MicGrant step={{ index: 1, count: STEPS }} onsitesettings={() => void platform.openSiteSettings()} ondone={() => void advance(2)} />
+  <MicGrant step={{ index: 1, count: flow.length }} onsitesettings={() => void platform.openSiteSettings()} ondone={() => void advance(2)} />
 {:else if step === 2}
   <div class="grant">
     <div class="mini-disc" aria-hidden="true"><span class="ic ic-mark"></span></div>
@@ -61,8 +68,8 @@
     {/if}
     <div class="acts">
       {#if !caps.android && caps.shortcuts}<button class="btn text" onclick={() => void platform.openShortcuts()}>{t('settings.shortcuts.change')}</button>{/if}
-      <button class="btn filled" onclick={() => void advance(3)}>{t('action.continue')}</button>
+      <button class="btn filled" onclick={() => void advance(DONE)}>{t('action.continue')}</button>
     </div>
-    <div class="dots" role="img" aria-label={t('welcome.step', 3, STEPS)}><i></i><i></i><i class="on"></i></div>
+    <StepDots index={flow.length - 1} count={flow.length} />
   </div>
 {/if}

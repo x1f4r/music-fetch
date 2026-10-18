@@ -3,6 +3,7 @@ import { isLink } from '../engine/links';
 import type { LibraryEntry, PageContext, Track } from '../engine/types';
 import { t } from '../i18n';
 import { isRunning, promptStage } from '../models/stage';
+import { nativeListenUrl } from '../platform/native-app';
 import { isAnalyzablePage, type ActiveTab } from '../platform/surfaces';
 import { primaryLink, providerLinks } from '../providers/links';
 import { serviceName } from '../providers/services';
@@ -54,9 +55,24 @@ export class ListenSurface {
   constructor(
     readonly engine: EngineClient,
     readonly platform: Platform,
-    options: { recentLimit?: number } = {},
+    options: { recentLimit?: number; closeOnHandOff?: boolean } = {},
   ) {
-    this.listen = new ListenController(engine, { recentLimit: options.recentLimit ?? 8, tabCapture: this.sources.includes('Tab') });
+    const close = options.closeOnHandOff ?? false;
+    this.listen = new ListenController(engine, {
+      recentLimit: options.recentLimit ?? 8,
+      tabCapture: this.sources.includes('Tab'),
+      handOff: platform.capabilities.microphone === 'app' ? (source) => this.handOff(source, close) : undefined,
+    });
+  }
+
+  /**
+   * Microphone and Hum where the extension can't use the microphone (Firefox for Android):
+   * the app's Listen stage, through a tab Firefox offers to open in the app. The popup
+   * closes so that tab shows.
+   */
+  private async handOff(source: 'Microphone' | 'Hum', close: boolean): Promise<void> {
+    await this.platform.openUrl(nativeListenUrl(source === 'Hum' ? 'hum' : 'mic'));
+    if (close) this.platform.close();
   }
 
   /** The source toggles this browser offers: "This tab" needs tab or element capture. */

@@ -10,6 +10,8 @@ export const en = {
   'state.listening': 'Listening',
   'state.moveCloser': 'Move closer to the sound',
   'state.humStart': 'Hum, whistle or sing',
+  'state.inApp.hum': 'Hum in the Music Fetch app',
+  'state.inApp.mic': 'Listen in the Music Fetch app',
   'state.keepGoing': 'Keep going',
   'state.matching': 'Matching',
   'state.resolving': 'Resolving link',
@@ -70,7 +72,7 @@ export const en = {
 
   'mic.allow': 'Allow the microphone',
   'mic.allowMessage':
-    'The browser asks once. Music Fetch only listens while a session runs, and nothing you record leaves this computer.',
+    'The browser asks once. Music Fetch only listens while a session runs, and nothing you record leaves this device.',
   'mic.allowButton': 'Allow',
   'mic.notNow': 'Not now',
   'mic.granted': 'Microphone allowed',
@@ -334,10 +336,12 @@ export const en = {
 
   'file.drop': 'Drop an audio or video file',
   'file.choose': 'Choose a file',
-  'file.hint': 'MP3, M4A, FLAC, OGG, WAV or video. It stays on this computer.',
+  'file.hint': 'MP3, M4A, FLAC, OGG, WAV or video. It stays on this device.',
 
   'settings.general': 'General',
   'settings.listening': 'Listening',
+  'settings.inApp': 'Microphone and humming',
+  'settings.inApp.sub': "Firefox for Android doesn't let extensions use the microphone, so these open the Music Fetch app.",
   'settings.melody': 'Melody',
   'settings.storage': 'Storage',
   'settings.privacy': 'Privacy',

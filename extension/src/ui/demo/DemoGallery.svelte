@@ -11,6 +11,7 @@
     { title: 'Side panel and sidebar', surface: 'panel' },
     { title: 'App tab', surface: 'app' },
     { title: 'Firefox for Android', surface: 'popup', android: true },
+    { title: 'Firefox for Android · app tab', surface: 'app', android: true },
   ];
   const CARD = 300;
 

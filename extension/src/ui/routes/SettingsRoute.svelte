@@ -117,7 +117,7 @@
     const custom = await settings.customProvider.getValue();
     customName = custom?.name ?? '';
     customTemplate = custom?.template ?? '';
-    connected = await platform.microphones();
+    if (caps.microphone === 'extension') connected = await platform.microphones();
     shortcuts = await platform.shortcuts();
     melody = await engine.melodyIndexStatus().catch(() => null);
     usage = await engine.storageUsage().catch(() => null);
@@ -274,35 +274,43 @@
         </div>
       {:else if pane === 'listening'}
         <h2 class="sr-only">{t('settings.listening')}</h2>
-        <div class="group">
-          <div class="frow">
-            <div class="k">{t('settings.microphone')}<span class="sub">{micStatus}</span></div>
-            <div class="v">
-              {#if micGrant === 'granted' || micGrant === 'denied'}
-                <button class="btn small text" onclick={() => void platform.openSiteSettings()}>{t('mic.siteSettings')}</button>
-              {/if}
-              {#if micGrant !== 'granted'}
-                <a class="btn small" href="#/grant-mic">{t('mic.allowButton')}</a>
-              {/if}
+        {#if caps.microphone === 'app'}
+          <div class="group">
+            <div class="frow">
+              <div class="k">{t('settings.inApp')}<span class="sub">{t('settings.inApp.sub')}</span></div>
             </div>
           </div>
-        </div>
-        <h3 class="ghead">{t('settings.micPriority')}</h3>
-        <div class="group" role="list" aria-label={t('settings.micPriority.label')}>
-          {#each devices as device, i (device.id)}
-            <div class="dev" role="listitem">
-              <span class="n tnum">{i + 1}</span>
-              <span class="name truncate">{device.label}</span>
-              <span class="st">{device.state === 'notConnected' ? t('settings.micPriority.notConnected') : device.state === 'inUse' ? t('settings.micPriority.inUse') : ''}</span>
-              <span class="reorder">
-                <button class="btn icon plain small" aria-label={t('settings.micPriority.up', device.label)} disabled={i === 0} onclick={() => void move(i, -1)}><span class="ic ic-chev-down s14 up"></span></button>
-                <button class="btn icon plain small" aria-label={t('settings.micPriority.down', device.label)} disabled={i === devices.length - 1} onclick={() => void move(i, 1)}><span class="ic ic-chev-down s14"></span></button>
-              </span>
+        {:else}
+          <div class="group">
+            <div class="frow">
+              <div class="k">{t('settings.microphone')}<span class="sub">{micStatus}</span></div>
+              <div class="v">
+                {#if micGrant === 'granted' || micGrant === 'denied'}
+                  <button class="btn small text" onclick={() => void platform.openSiteSettings()}>{t('mic.siteSettings')}</button>
+                {/if}
+                {#if micGrant !== 'granted'}
+                  <a class="btn small" href="#/grant-mic">{t('mic.allowButton')}</a>
+                {/if}
+              </div>
             </div>
-          {/each}
-          <div class="dev" role="listitem"><span class="n tnum">{devices.length + 1}</span><span class="name truncate secondary">{t('settings.micPriority.any')}</span></div>
-        </div>
-        <div class="gfoot">{t('settings.micPriority.footer')}</div>
+          </div>
+          <h3 class="ghead">{t('settings.micPriority')}</h3>
+          <div class="group" role="list" aria-label={t('settings.micPriority.label')}>
+            {#each devices as device, i (device.id)}
+              <div class="dev" role="listitem">
+                <span class="n tnum">{i + 1}</span>
+                <span class="name truncate">{device.label}</span>
+                <span class="st">{device.state === 'notConnected' ? t('settings.micPriority.notConnected') : device.state === 'inUse' ? t('settings.micPriority.inUse') : ''}</span>
+                <span class="reorder">
+                  <button class="btn icon plain small" aria-label={t('settings.micPriority.up', device.label)} disabled={i === 0} onclick={() => void move(i, -1)}><span class="ic ic-chev-down s14 up"></span></button>
+                  <button class="btn icon plain small" aria-label={t('settings.micPriority.down', device.label)} disabled={i === devices.length - 1} onclick={() => void move(i, 1)}><span class="ic ic-chev-down s14"></span></button>
+                </span>
+              </div>
+            {/each}
+            <div class="dev" role="listitem"><span class="n tnum">{devices.length + 1}</span><span class="name truncate secondary">{t('settings.micPriority.any')}</span></div>
+          </div>
+          <div class="gfoot">{t('settings.micPriority.footer')}</div>
+        {/if}
         <div class="group">
           {@render toggle(t('settings.autoStop'), null, autoStop, (v) => {
             autoStop = v;
