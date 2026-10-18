@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- A local stand-in for a YouTube watch page (no YouTube traffic in tests): the player
+     element with the movie_player API, ytInitialPlayerResponse / ytInitialData with a
+     description tracklist and chapters, a pre-roll "ad" (?preroll=<s>) and SPA navigation
+     (window.fakeNavigate). The e2e build reads mf-test-adapter to use the YouTube adapter
+     on 127.0.0.1. Media: ?src=<wav> (default /media/mix.wav). -->
+<meta name="mf-test-adapter" content="youtube">
+<meta property="og:title" content="Fake Mix">
+<title>Fake Mix - YouTube</title>
+<style>body{font:14px system-ui;margin:20px}#movie_player{width:480px;height:270px;background:#111}video{width:100%;height:100%}</style>
+</head>
+<body>
+<div id="movie_player" class="html5-video-player">
+  <video class="html5-main-video" preload="auto" playsinline></video>
+</div>
+<p id="status"></p>
+<script>
+  var params = new URLSearchParams(location.search);
+  var content = params.get('src') || '/media/mix.wav';
+  var ytInitialPlayerResponse = {
+    videoDetails: {
+      videoId: 'fakemix0001',
+      title: 'Fake Mix',
+      author: 'Test Channel',
+      lengthSeconds: params.get('length') || '60',
+      shortDescription: 'Tracklist:\n0:00 Music Fetch Test Signals - Test Signal A\n0:20 Music Fetch Test Signals - Test Signal B\n0:40 Music Fetch Test Signals - Test Signal C',
+      isLiveContent: false
+    }
+  };
+  var ytInitialData = {
+    currentVideoEndpoint: { watchEndpoint: { videoId: 'fakemix0001' } },
+    playerOverlays: { playerOverlayRenderer: { decoratedPlayerBarRenderer: { decoratedPlayerBarRenderer: { playerBar: { multiMarkersPlayerBarRenderer: { markersMap: [
+      { key: 'DESCRIPTION_CHAPTERS', value: { chapters: [
+        { chapterRenderer: { title: { simpleText: 'Test Signal A' }, timeRangeStartMillis: 0 } },
+        { chapterRenderer: { title: { simpleText: 'Test Signal B' }, timeRangeStartMillis: 20000 } },
+        { chapterRenderer: { title: { simpleText: 'Test Signal C' }, timeRangeStartMillis: 40000 } }
+      ] } }
+    ] } } } } } }
+  };
+  var player = document.getElementById('movie_player');
+  var video = player.querySelector('video');
+  var quality = 'hd720';
+  var preroll = Number(params.get('preroll') || 0);
+  function showContent() {
+    player.classList.remove('ad-showing');
+    var at = video.dataset.resume ? Number(video.dataset.resume) : 0;
+    video.src = content;
+    video.currentTime = at;
+  }
+  if (preroll > 0 && params.get('ad') !== 'done') {
+    player.classList.add('ad-showing');
+    video.src = '/media/ad.wav';
+    video.addEventListener('timeupdate', function onAd() {
+      if (video.currentTime >= preroll && player.classList.contains('ad-showing')) {
+        video.removeEventListener('timeupdate', onAd);
+        var playing = !video.paused;
+        showContent();
+        // YouTube resets the speed after an ad.
+        video.playbackRate = 1;
+        if (playing) video.play();
+      }
+    });
+  } else {
+    video.src = content;
+  }
+  player.seekTo = function (s) { video.currentTime = s; };
+  player.getCurrentTime = function () { return video.currentTime; };
+  player.getDuration = function () { return player.classList.contains('ad-showing') ? 0 : video.duration; };
+  player.pauseVideo = function () { video.pause(); };
+  player.playVideo = function () { video.play(); };
+  player.getPlayerResponse = function () { return ytInitialPlayerResponse; };
+  player.getPlaybackQuality = function () { return quality; };
+  player.setPlaybackQualityRange = function (min) { quality = min; document.getElementById('status').textContent = 'quality ' + quality; };
+  window.fakeQuality = function () { return quality; };
+  // In-page navigation to another video, like YouTube's SPA.
+  window.fakeNavigate = function (id, title) {
+    history.pushState({}, '', '/watch?v=' + id);
+    ytInitialPlayerResponse = { videoDetails: { videoId: id, title: title || 'Another video', author: 'Test Channel', lengthSeconds: '30', shortDescription: '' } };
+    window.dispatchEvent(new Event('yt-navigate-finish'));
+  };
+</script>
+</body>
+</html>

@@ -135,7 +135,7 @@ impl Drop for InstallGuard {
 }
 
 /// The Music Fetch engine: one per app, shared by every session.
-#[derive(uniffi::Object)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct Engine {
     ctx: Arc<EngineCtx>,
     runtime: Mutex<Option<tokio::runtime::Runtime>>,
@@ -143,11 +143,11 @@ pub struct Engine {
     index: Arc<IndexState>,
 }
 
-#[uniffi::export]
+#[cfg_attr(feature = "ffi", uniffi::export)]
 impl Engine {
     /// Create the engine. `media` overrides the built-in yt-dlp subprocess backend
     /// (`config.media_tools`); `decoder` and `speech` are optional.
-    #[uniffi::constructor]
+    #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(
         config: EngineConfig,
         media: Option<Arc<dyn MediaBackend>>,
@@ -170,6 +170,18 @@ impl Engine {
         mode: ListenMode,
         observer: Arc<dyn SessionObserver>,
     ) -> Result<Arc<LiveSession>> {
+        self.start_listening_with(source, mode, ListenOptions::default(), observer)
+    }
+
+    /// Start a live session with options (impression auto-stop, candidates while
+    /// humming).
+    pub fn start_listening_with(
+        &self,
+        source: CaptureSource,
+        mode: ListenMode,
+        options: ListenOptions,
+        observer: Arc<dyn SessionObserver>,
+    ) -> Result<Arc<LiveSession>> {
         let kind = live::session_kind(source, mode);
         let ctx = self.open_session(kind, "", None, observer, true)?;
         let input = LiveInput::new();
@@ -186,26 +198,13 @@ impl Engine {
             emitter: ctx.emitter.clone(),
             runtime: self.ctx.runtime.clone(),
         });
-        if let Err(e) = live::spawn(ctx.clone(), source, mode, input, move || registry.remove(&id)) {
+        if let Err(e) = live::spawn(ctx.clone(), source, mode, options, input, move || registry.remove(&id)) {
             // Nothing was announced yet: report the error here only.
             self.registry.remove(&ctx.id);
             let _ = self.ctx.store.delete_sessions(std::slice::from_ref(&ctx.id));
             return Err(e);
         }
         Ok(session)
-    }
-
-    /// Start a live session with options (e.g. no impression auto-stop).
-    pub fn start_listening_with(
-        &self,
-        source: CaptureSource,
-        mode: ListenMode,
-        options: ListenOptions,
-        observer: Arc<dyn SessionObserver>,
-    ) -> Result<Arc<LiveSession>> {
-        // Options are applied by the live pipeline (wave 3); until then they are ignored.
-        let _ = options;
-        self.start_listening(source, mode, observer)
     }
 
     /// Reduce CPU and memory use (weak devices, battery saver). The engine also
@@ -749,7 +748,7 @@ impl Drop for Engine {
 }
 
 /// A running live session (microphone or system audio).
-#[derive(uniffi::Object)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct LiveSession {
     id: String,
     input: Arc<LiveInput>,
@@ -758,7 +757,7 @@ pub struct LiveSession {
     runtime: tokio::runtime::Handle,
 }
 
-#[uniffi::export]
+#[cfg_attr(feature = "ffi", uniffi::export)]
 impl LiveSession {
     /// The session id (also the library entry id).
     pub fn id(&self) -> String {
@@ -806,7 +805,7 @@ impl LiveSession {
 }
 
 /// A running analysis (link, file, lyric search, index download).
-#[derive(uniffi::Object)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct AnalysisSession {
     id: String,
     cancel: CancelToken,
@@ -814,7 +813,7 @@ pub struct AnalysisSession {
     runtime: tokio::runtime::Handle,
 }
 
-#[uniffi::export]
+#[cfg_attr(feature = "ffi", uniffi::export)]
 impl AnalysisSession {
     /// The session id (the library entry id, except for melody index downloads).
     pub fn id(&self) -> String {

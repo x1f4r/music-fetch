@@ -1,0 +1,1297 @@
+# Evergreen tunes that charts miss: see melody_index/evergreen.py for the fields.
+#
+# Transcriptions ([[item]] with abc) are of public-domain melodies, written for this project
+# and released under CC0-1.0. They hold the part people hum (usually the opening or the
+# refrain), not the whole piece. Recordings ([[group]]) are resolved on Deezer like chart
+# songs; only melody features are derived from them.
+
+# ---------------------------------------------------------------------- children's songs
+
+[[item]]
+title = "Happy Birthday to You"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "children"
+licence = "public-domain melody (Good Morning to All, 1893); transcription CC0-1.0"
+aliases = ["Happy Birthday", "Zum Geburtstag viel Glück", "Cumpleaños feliz", "Joyeux anniversaire"]
+abc = '''
+L:1/8
+Q:1/4=110
+K:C
+G3/2G/2 | A2 G2 c2 | B4 G3/2G/2 | A2 G2 d2 | c4 G3/2G/2 | g2 e2 c2 | B2 A2 f3/2f/2 | e2 c2 d2 | c6 |
+'''
+
+[[item]]
+title = "Twinkle, Twinkle, Little Star"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "children"
+licence = "public-domain melody (Ah! vous dirai-je, maman); transcription CC0-1.0"
+aliases = ["Twinkle Twinkle Little Star", "Ah! vous dirai-je, maman", "Morgen kommt der Weihnachtsmann", "ABC Song", "Alphabet Song", "Baa, Baa, Black Sheep"]
+abc = '''
+L:1/4
+Q:1/4=100
+K:C
+C C G G | A A G2 | F F E E | D D C2 | G G F F | E E D2 | G G F F | E E D2 |
+C C G G | A A G2 | F F E E | D D C2 |
+'''
+
+[[item]]
+title = "Mary Had a Little Lamb"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=110
+K:C
+E D C D | E E E2 | D D D2 | E G G2 | E D C D | E E E E | D D E D | C4 |
+'''
+
+[[item]]
+title = "Row, Row, Row Your Boat"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["Row Row Row Your Boat"]
+abc = '''
+L:1/8
+Q:3/8=60
+K:C
+C3 C3 | C2 D E3 | E2 D E2 F | G6 | ccc GGG | EEE CCC | G2 F E2 D | C6 |
+'''
+
+[[item]]
+title = "Old MacDonald Had a Farm"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=120
+K:G
+G G G D | E E D2 | B B A A | G3 D | G G G D | E E D2 | B B A A | G4 |
+'''
+
+[[item]]
+title = "London Bridge Is Falling Down"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/8
+Q:1/4=110
+K:C
+G3 A G2 F2 | E2 F2 G4 | D2 E2 F4 | E2 F2 G4 | G3 A G2 F2 | E2 F2 G4 | D4 G4 | E2 C6 |
+'''
+
+[[item]]
+title = "Frère Jacques"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["Bruder Jakob", "Are You Sleeping", "Brother John"]
+abc = '''
+L:1/4
+Q:1/4=110
+K:C
+C D E C | C D E C | E F G2 | E F G2 | G/A/ G/F/ E C | G/A/ G/F/ E C | C G, C2 | C G, C2 |
+'''
+
+[[item]]
+title = "Alle meine Entchen"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=110
+K:C
+C D E F | G2 G2 | A A A A | G4 | A A A A | G4 | F F F F | E2 E2 | D D D D | C4 |
+'''
+
+[[item]]
+title = "Hänschen klein"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["Hänschen klein ging allein", "Lightly Row"]
+abc = '''
+L:1/4
+Q:1/4=110
+K:C
+G E E2 | F D D2 | C D E F | G G G2 | G E E2 | F D D2 | C E G G | C4 |
+'''
+
+[[item]]
+title = "Ach, du lieber Augustin"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["O du lieber Augustin", "Oh du lieber Augustin", "The More We Get Together"]
+abc = '''
+L:1/4
+Q:1/4=150
+K:C
+G3/2 A/2 G F | E C C | D G, G, | E C C | G3/2 A/2 G F | E C C | D G, G, | C3 |
+'''
+
+[[item]]
+title = "Hot Cross Buns"
+artist = "Traditional"
+kind = "symbolic"
+fame = 3
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=110
+K:C
+E D C2 | E D C2 | C/C/C/C/ D/D/D/D/ | E D C2 |
+'''
+
+[[item]]
+title = "This Old Man"
+artist = "Traditional"
+kind = "symbolic"
+fame = 3
+category = "children"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=120
+K:C
+G E G2 | G E G2 | A G F E | D E F2 | E F G C | C C C/D/ E/F/ | G D D F | E D C2 |
+'''
+
+[[item]]
+title = "Brahms' Lullaby"
+artist = "Johannes Brahms"
+kind = "both"
+fame = 1
+category = "children"
+licence = "public-domain melody (Wiegenlied, Op. 49 No. 4); transcription CC0-1.0; melody features of a recording"
+aliases = ["Wiegenlied", "Wiegenlied, Op. 49 No. 4", "Guten Abend, gut' Nacht", "Cradle Song", "Lullaby"]
+abc = '''
+L:1/8
+Q:1/4=80
+K:C
+E E | G4 E E | G4 E G | c2 B3 A | A2 G2 D E | F2 D2 D E | F4 D F | B A G2 B2 | c6 |
+'''
+
+# ---------------------------------------------------------------------- Christmas
+
+[[item]]
+title = "Jingle Bells"
+artist = "James Lord Pierpont"
+kind = "both"
+fame = 1
+category = "christmas"
+licence = "public-domain melody (1857); transcription CC0-1.0; melody features of a recording"
+aliases = ["Jingle Bells (One Horse Open Sleigh)"]
+abc = '''
+L:1/4
+Q:1/4=130
+K:C
+E E E2 | E E E2 | E G C3/2 D/2 | E4 | F F F3/2 F/2 | F E E E/E/ | E D D E | D2 G2 |
+E E E2 | E E E2 | E G C3/2 D/2 | E4 | F F F F | F E E E/E/ | G G F D | C4 |
+'''
+
+[[item]]
+title = "Silent Night"
+artist = "Franz Xaver Gruber"
+kind = "both"
+fame = 1
+category = "christmas"
+licence = "public-domain melody (1818); transcription CC0-1.0; melody features of a recording"
+aliases = ["Stille Nacht", "Stille Nacht, heilige Nacht", "Douce nuit", "Noche de paz"]
+abc = '''
+L:1/8
+Q:3/8=50
+K:C
+G3/2 A/2 G E3 | G3/2 A/2 G E3 | d2 d B3 | c2 c G3 | A2 A c3/2 B/2 A | G3/2 A/2 G E3 |
+A2 A c3/2 B/2 A | G3/2 A/2 G E3 | d2 d f3/2 d/2 B | c3 e3 | c G E G3/2 F/2 D | C6 |
+'''
+
+[[item]]
+title = "O Tannenbaum"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "christmas"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["O Christmas Tree", "Oh Tannenbaum"]
+abc = '''
+L:1/8
+Q:1/4=90
+K:F
+C2 | F3/2 F/2 F3 G | A3/2 A/2 A3 A | G A B2 E2 | G2 F2 |
+'''
+
+[[item]]
+title = "We Wish You a Merry Christmas"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "christmas"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=140
+K:G
+D | G G/A/ G/F/ | E E E | A A/B/ A/G/ | F D D | B B/c/ B/A/ | G E D/D/ | E A F | G2 |
+'''
+
+[[item]]
+title = "Deck the Halls"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "christmas"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["Deck the Hall"]
+abc = '''
+L:1/4
+Q:1/4=120
+K:F
+c3/2 B/2 A G | F G A F | G/A/ B/G/ A3/2 G/2 | F E F2 | c3/2 B/2 A G | F G A F | G/A/ B/G/ A3/2 G/2 | F E F2 |
+'''
+
+[[item]]
+title = "Joy to the World"
+artist = "George Frideric Handel"
+kind = "both"
+fame = 2
+category = "christmas"
+licence = "public-domain melody (Antioch, 1839); transcription CC0-1.0; melody features of a recording"
+abc = '''
+L:1/4
+Q:1/4=100
+K:C
+c2 B3/2 A/2 | G3 F | E2 D2 | C3 G | A3 A | B3 B | c6 |
+'''
+
+[[item]]
+title = "O Come, All Ye Faithful"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "christmas"
+licence = "public-domain melody (Adeste Fideles); transcription CC0-1.0"
+aliases = ["Adeste Fideles", "Herbei, o ihr Gläub'gen", "O Come All Ye Faithful"]
+abc = '''
+L:1/4
+Q:1/4=100
+K:G
+G | G2 D G | A2 D2 | B A B c | B2 A G | G2 F E | F G A B | F2 E3/2 D/2 | D3 |
+'''
+
+[[item]]
+title = "Hark! The Herald Angels Sing"
+artist = "Felix Mendelssohn"
+kind = "both"
+fame = 2
+category = "christmas"
+licence = "public-domain melody (1840); transcription CC0-1.0; melody features of a recording"
+aliases = ["Hark the Herald Angels Sing"]
+abc = '''
+L:1/4
+Q:1/4=110
+K:G
+D | G G F3/2 G/2 | B B A2 | d d d3/2 c/2 | B A B2 |
+'''
+
+[[item]]
+title = "Good King Wenceslas"
+artist = "Traditional"
+kind = "symbolic"
+fame = 3
+category = "christmas"
+licence = "public-domain melody (Tempus adest floridum); transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=110
+K:G
+G G G A | G G D2 | E D E F | G2 G2 | G G G A | G G D2 | E D E F | G2 G2 |
+'''
+
+[[item]]
+title = "The First Noel"
+artist = "Traditional"
+kind = "symbolic"
+fame = 3
+category = "christmas"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["The First Nowell"]
+abc = '''
+L:1/4
+Q:1/4=110
+K:C
+E3/2 D/2 | C3/2 D/2 E F | G3 A/B/ | c B A | G3 A/B/ | c B A | G A B | c G F | E3 |
+'''
+
+[[item]]
+title = "Carol of the Bells"
+artist = "Mykola Leontovych"
+kind = "both"
+fame = 2
+category = "christmas"
+licence = "public-domain melody (Shchedryk, 1916); transcription CC0-1.0; melody features of a recording"
+aliases = ["Shchedryk", "Щедрик"]
+abc = '''
+L:1/8
+Q:1/4=160
+K:Gm
+B2 AB G2 | B2 AB G2 | B2 AB G2 | B2 AB G2 | d2 cd B2 | d2 cd B2 | d2 cd B2 | d2 cd B2 |
+'''
+
+[[item]]
+title = "Auld Lang Syne"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "traditional"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=80
+K:F
+C | F3/2 F/2 F A | G3/2 F/2 G A | F3/2 F/2 A c | d3 d | c3/2 A/2 A F | G3/2 F/2 G A | F3/2 D/2 D C | F3 |
+'''
+
+# ---------------------------------------------------------------------- traditional and folk
+
+[[item]]
+title = "Greensleeves"
+artist = "Traditional"
+deezer = 0
+kind = "symbolic"
+fame = 2
+category = "traditional"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["What Child Is This"]
+abc = '''
+L:1/8
+Q:3/8=50
+K:Am
+A | c2 d e3/2 f/2 e | d2 B G3/2 A/2 B | c2 A A3/2 ^G/2 A | B2 ^G E2 A | c2 d e3/2 f/2 e |
+d2 B G3/2 A/2 B | c3/2 B/2 A ^G3/2 ^F/2 ^G | A3 A2 |
+'''
+
+[[item]]
+title = "Amazing Grace"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "traditional"
+licence = "public-domain melody (New Britain); transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=80
+K:G
+D | G2 B/G/ | B2 A | G2 E | D2 D | G2 B/G/ | B2 A/B/ | d3 |
+'''
+
+[[item]]
+title = "When the Saints Go Marching In"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "traditional"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["Oh When the Saints"]
+abc = '''
+L:1/4
+Q:1/4=140
+K:C
+C E F | G4 | C E F | G4 | C E F | G2 E2 | C2 E2 | D4 |
+'''
+
+[[item]]
+title = "Oh! Susanna"
+artist = "Stephen Foster"
+kind = "symbolic"
+fame = 3
+category = "traditional"
+licence = "public-domain melody (1848); transcription CC0-1.0"
+aliases = ["Oh Susanna"]
+abc = '''
+L:1/8
+Q:1/4=120
+K:C
+C D | E2 G2 G3 A | G2 E2 C3 D | E2 E2 D2 C2 | D6 |
+'''
+
+[[item]]
+title = "Yankee Doodle"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "traditional"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/8
+Q:1/4=120
+K:C
+C2 C2 D2 E2 | C2 E2 D2 G,2 | C2 C2 D2 E2 | C4 B,4 | C2 C2 D2 E2 | F2 E2 D2 C2 | B,2 G,2 A,2 B,2 | C4 C4 |
+'''
+
+[[item]]
+title = "Scarborough Fair"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "traditional"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/4
+Q:1/4=110
+K:C
+D2 D | A2 A | E3/2 F/2 E | D3 | A2 c | d2 c | A B G | A3 |
+'''
+
+[[item]]
+title = "La Cucaracha"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "traditional"
+licence = "public-domain melody; transcription CC0-1.0"
+abc = '''
+L:1/8
+Q:1/4=140
+K:C
+C C C F2 A2 | C C C F2 A2 | F F E E D D C4 |
+'''
+
+[[item]]
+title = "Korobeiniki (Tetris Theme)"
+artist = "Traditional"
+kind = "symbolic"
+fame = 1
+category = "game"
+licence = "public-domain melody (Korobeiniki, 1861); transcription CC0-1.0"
+aliases = ["Tetris Theme", "Korobeiniki", "Коробейники", "Tetris Theme A", "Type A"]
+abc = '''
+L:1/8
+Q:1/4=150
+K:Am
+e2 Bc d2 cB | A2 Ac e2 dc | B3 c d2 e2 | c2 A2 A4 | z d2 f a2 gf | e3 c e2 dc | B2 Bc d2 e2 | c2 A2 A4 |
+'''
+
+[[item]]
+title = "Nokia Tune"
+artist = "Francisco Tárrega"
+kind = "symbolic"
+fame = 1
+category = "meme"
+licence = "public-domain melody (Gran Vals, 1902); transcription CC0-1.0"
+aliases = ["Gran Vals", "Nokia Ringtone"]
+abc = '''
+L:1/8
+Q:1/4=180
+K:A
+e d F2 G2 | c B D2 E2 | B A C2 E2 | A4 |
+'''
+
+# ---------------------------------------------------------------------- anthems
+
+[[item]]
+title = "La Marseillaise"
+artist = "Claude Joseph Rouget de Lisle"
+kind = "symbolic"
+fame = 2
+category = "anthem"
+licence = "public-domain melody (1792); transcription CC0-1.0"
+aliases = ["Marseillaise", "French National Anthem"]
+abc = '''
+L:1/8
+Q:1/4=100
+K:G
+D3/2D/2 | G2 G2 A2 A2 | d3 B G3/2 G/2 B3/2 G/2 | E2 c4 A3/2 F/2 | G6 |
+'''
+
+[[item]]
+title = "The Star-Spangled Banner"
+artist = "John Stafford Smith"
+kind = "symbolic"
+fame = 2
+category = "anthem"
+licence = "public-domain melody (1773); transcription CC0-1.0"
+aliases = ["Star Spangled Banner", "US National Anthem"]
+abc = '''
+L:1/8
+Q:1/4=90
+K:C
+G3/2E/2 | C2 E2 G2 | c4 e3/2d/2 | c2 E2 ^F2 | G4 G G | e3 d c2 | B4 A3/2B/2 | c2 c2 G2 | E2 C2 |
+'''
+
+[[item]]
+title = "God Save the King"
+artist = "Traditional"
+kind = "symbolic"
+fame = 2
+category = "anthem"
+licence = "public-domain melody; transcription CC0-1.0"
+aliases = ["God Save the Queen", "British National Anthem", "My Country, 'Tis of Thee", "Heil dir im Siegerkranz"]
+abc = '''
+L:1/4
+Q:1/4=80
+K:G
+G G A | F3/2 G/2 A | B B c | B3/2 A/2 G | A G F | G3 |
+'''
+
+[[item]]
+title = "Das Lied der Deutschen"
+artist = "Joseph Haydn"
+kind = "symbolic"
+fame = 2
+category = "anthem"
+licence = "public-domain melody (Gott erhalte Franz den Kaiser, 1797); transcription CC0-1.0"
+aliases = ["Deutschlandlied", "Einigkeit und Recht und Freiheit", "German National Anthem", "Deutsche Nationalhymne", "Kaiserhymne"]
+abc = '''
+L:1/4
+Q:1/4=76
+K:C
+C3/2 D/2 E D | F E D3/4 B,/4 C | A G F E | D E3/4 C/4 G2 |
+'''
+
+# ---------------------------------------------------------------------- classical
+
+[[item]]
+title = "Ode to Joy"
+artist = "Ludwig van Beethoven"
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody (Symphony No. 9, 1824); transcription CC0-1.0; melody features of a recording"
+aliases = ["Ode an die Freude", "Freude, schöner Götterfunken", "Anthem of Europe", "Europahymne", "Symphony No. 9 in D Minor, Op. 125: IV. Presto"]
+abc = '''
+L:1/4
+Q:1/4=120
+K:C
+E E F G | G F E D | C C D E | E3/2 D/2 D2 | E E F G | G F E D | C C D E | D3/2 C/2 C2 |
+'''
+
+[[item]]
+title = "Für Elise"
+artist = "Ludwig van Beethoven"
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody (WoO 59, 1810); transcription CC0-1.0; melody features of a recording"
+aliases = ["Für Elise, WoO 59", "Bagatelle No. 25 in A Minor, WoO 59 \"Für Elise\"", "Fur Elise"]
+abc = '''
+L:1/16
+Q:1/8=130
+K:Am
+e^de^d eB=dc | A4 zCEA | B4 zE^GB | c4 zEe^d | e^de^d eB=dc | A4 zCEA | B4 zEcB | A8 |
+'''
+
+[[item]]
+title = "Symphony No. 5 in C Minor, Op. 67: I. Allegro con brio"
+artist = "Ludwig van Beethoven"
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody (1808); transcription CC0-1.0; melody features of a recording"
+aliases = ["Symphony No. 5", "Beethoven's 5th", "Fifth Symphony"]
+abc = '''
+L:1/8
+Q:1/4=108
+K:C
+z G G G | _E8 | z F F F | D8 |
+'''
+
+[[item]]
+title = "Eine kleine Nachtmusik"
+artist = "Wolfgang Amadeus Mozart"
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody (K. 525, 1787); transcription CC0-1.0; melody features of a recording"
+aliases = ["Serenade No. 13 in G Major, K. 525 \"Eine kleine Nachtmusik\": I. Allegro", "A Little Night Music"]
+abc = '''
+L:1/8
+Q:1/4=130
+K:G
+G2 z D G2 z D | G D G B d4 | c2 z A c2 z A | c A F A D4 |
+'''
+
+[[item]]
+title = "Rondo alla turca"
+artist = "Wolfgang Amadeus Mozart"
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody (K. 331, 1783); transcription CC0-1.0; melody features of a recording"
+aliases = ["Turkish March", "Alla Turca", "Piano Sonata No. 11 in A Major, K. 331: III. Alla turca"]
+abc = '''
+L:1/16
+Q:1/4=120
+K:Am
+BA^GA c4 | dcBc e4 | fe^de ba^ga | ba^ga c'4 |
+'''
+
+[[item]]
+title = "Symphony No. 40 in G Minor, K. 550: I. Molto allegro"
+artist = "Wolfgang Amadeus Mozart"
+kind = "both"
+fame = 2
+category = "classical"
+licence = "public-domain melody (1788); transcription CC0-1.0; melody features of a recording"
+aliases = ["Symphony No. 40", "Symphony No. 40 in G Minor"]
+abc = '''
+L:1/8
+Q:1/4=110
+K:Gm
+e d d2 e d d2 | e d d2 b4 | b a g2 g f e2 | e d c2 c4 |
+'''
+
+[[item]]
+title = "In the Hall of the Mountain King"
+artist = "Edvard Grieg"
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody (Peer Gynt, 1875); transcription CC0-1.0; melody features of a recording"
+aliases = ["In der Halle des Bergkönigs", "Peer Gynt Suite No. 1, Op. 46: IV. In the Hall of the Mountain King", "Hall of the Mountain King"]
+abc = '''
+L:1/8
+Q:1/4=120
+K:Bm
+B,CDE FDF2 | ^EC^E2 =E=C=E2 | B,CDE FDFB | AFDF A4 |
+'''
+
+[[item]]
+title = "Morning Mood"
+artist = "Edvard Grieg"
+deezer = 67343979
+kind = "both"
+fame = 2
+category = "classical"
+licence = "public-domain melody (Peer Gynt, 1875); transcription CC0-1.0; melody features of a recording"
+aliases = ["Morgenstimmung", "Peer Gynt Suite No. 1, Op. 46: I. Morning Mood", "Morning"]
+abc = '''
+L:1/8
+Q:1/4=60
+K:C
+GEDC DE | GEDC DE | GEGA EA | GEDC4 |
+'''
+
+[[item]]
+title = "Canon in D"
+artist = "Johann Pachelbel"
+deezer = 3853949
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody; transcription CC0-1.0; melody features of a recording"
+aliases = ["Canon in D Major", "Pachelbel's Canon", "Kanon in D-Dur", "Canon and Gigue in D Major"]
+abc = '''
+L:1/4
+Q:1/4=60
+K:D
+f e d c | B A B c | d c B A | G F G E |
+'''
+
+[[item]]
+title = "Toccata and Fugue in D Minor, BWV 565"
+artist = "Johann Sebastian Bach"
+kind = "both"
+fame = 2
+category = "classical"
+licence = "public-domain melody; transcription CC0-1.0; melody features of a recording"
+aliases = ["Toccata and Fugue in D Minor", "Toccata und Fuge d-Moll"]
+abc = '''
+L:1/16
+Q:1/4=50
+K:Dm
+a g a8 g f e d ^c4 d8 |
+'''
+
+[[item]]
+title = "Minuet in G Major, BWV Anh. 114"
+artist = "Johann Sebastian Bach"
+kind = "both"
+fame = 3
+category = "classical"
+licence = "public-domain melody (Christian Petzold); transcription CC0-1.0; melody features of a recording"
+aliases = ["Minuet in G", "Menuett G-Dur"]
+abc = '''
+L:1/8
+Q:1/4=110
+K:G
+d2 GA Bc | d2 G2 G2 | e2 cd ef | g2 G2 G2 | c2 dc BA | B2 cB AG | F2 GA BG | A6 |
+'''
+
+[[item]]
+title = "Bridal Chorus"
+artist = "Richard Wagner"
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody (Lohengrin, 1850); transcription CC0-1.0; melody features of a recording"
+aliases = ["Here Comes the Bride", "Treulich geführt", "Lohengrin: Bridal Chorus", "Brautchor"]
+abc = '''
+L:1/4
+Q:1/4=70
+K:F
+C F3/4 F/4 F2 | C G3/4 E/4 F2 |
+'''
+
+[[item]]
+title = "The Blue Danube"
+artist = "Johann Strauss II"
+deezer = 1044385
+kind = "both"
+fame = 2
+category = "classical"
+licence = "public-domain melody (Op. 314, 1866); transcription CC0-1.0; melody features of a recording"
+aliases = ["An der schönen blauen Donau", "The Blue Danube, Op. 314", "Blue Danube Waltz", "Donauwalzer"]
+abc = '''
+L:1/4
+Q:1/4=150
+K:D
+D | D F A | A3 | a a2 | f f2 | D D F | A3 | b b2 | g g2 |
+'''
+
+[[item]]
+title = "Piano Sonata No. 2 in B-Flat Minor, Op. 35: III. Marche funèbre"
+artist = "Frédéric Chopin"
+kind = "both"
+fame = 2
+category = "classical"
+licence = "public-domain melody (1839); transcription CC0-1.0; melody features of a recording"
+aliases = ["Funeral March", "Marche funèbre", "Trauermarsch"]
+abc = '''
+L:1/16
+Q:1/4=50
+K:C
+_B,4 _B,3 _B, _B,4 | _D3 =C C3 _B, _B,3 =A, _B,4 |
+'''
+
+[[item]]
+title = "Symphony No. 9 in E Minor \"From the New World\": II. Largo"
+artist = "Antonín Dvořák"
+kind = "both"
+fame = 3
+category = "classical"
+licence = "public-domain melody (1893); transcription CC0-1.0; melody features of a recording"
+aliases = ["New World Symphony Largo", "Goin' Home", "Largo"]
+abc = '''
+L:1/4
+Q:1/4=50
+K:C
+E3/2 G/2 G2 | E3/2 D/2 C2 | D E G E | D4 |
+'''
+
+[[item]]
+title = "William Tell Overture"
+artist = "Gioachino Rossini"
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody (1829); transcription CC0-1.0; melody features of a recording"
+aliases = ["Guillaume Tell: Overture", "William Tell Overture: Finale", "Wilhelm Tell Ouvertüre"]
+abc = '''
+L:1/8
+Q:1/4=150
+K:A
+E/E/E E/E/E | E/E/A B c4 |
+'''
+
+[[item]]
+title = "Galop infernal (Can-Can)"
+artist = "Jacques Offenbach"
+deezer = 64187078
+kind = "both"
+fame = 1
+category = "classical"
+licence = "public-domain melody (Orpheus in the Underworld, 1858); transcription CC0-1.0; melody features of a recording"
+aliases = ["Can-Can", "Cancan", "Infernal Galop", "Orpheus in the Underworld: Can-Can"]
+abc = '''
+L:1/8
+Q:1/4=150
+K:C
+C4 D F E D | G2 G2 G A E F | D2 D2 D F E D | C c B A G F E D |
+'''
+
+[[item]]
+title = "Spring"
+artist = "Antonio Vivaldi"
+kind = "both"
+fame = 2
+category = "classical"
+licence = "public-domain melody (The Four Seasons, 1725); transcription CC0-1.0; melody features of a recording"
+aliases = ["La primavera", "The Four Seasons: Spring", "Violin Concerto in E Major, RV 269 \"Spring\": I. Allegro", "Der Frühling"]
+abc = '''
+L:1/8
+Q:1/4=100
+K:E
+E | G G G F/E/ | B3 B/A/ | G G G F/E/ | B3 |
+'''
+
+[[item]]
+title = "The Entertainer"
+artist = "Scott Joplin"
+kind = "both"
+fame = 2
+category = "classical"
+licence = "public-domain melody (1902); transcription CC0-1.0; melody features of a recording"
+abc = '''
+L:1/16
+Q:1/8=160
+K:C
+d^d | e c'2 e c'2 e c'4 c'2 | c'd'^d'e' c'=d'e'2 b=d'2 c'4 |
+'''
+
+[[item]]
+title = "Also sprach Zarathustra"
+artist = "Richard Strauss"
+deezer = 66644254
+kind = "both"
+fame = 2
+category = "classical"
+licence = "public-domain melody (Op. 30, 1896); transcription CC0-1.0; melody features of a recording"
+aliases = ["Also sprach Zarathustra, Op. 30: Introduction (Sunrise)", "2001: A Space Odyssey Theme", "Sunrise"]
+abc = '''
+L:1/4
+Q:1/4=80
+K:C
+C2 G2 c2 e _e2 |
+'''
+
+# ---------------------------------------------------------------------- recordings
+# Copyrighted themes and pieces whose famous form is a recording. Only melody features are
+# derived (like every chart song); nothing is transcribed by hand.
+
+[[group]]
+category = "film"
+kind = "audio"
+licence = "copyrighted recording; only melody features (f0, notes) are derived, never audio"
+items = [
+  ["Star Wars (Main Theme)", "John Williams", 1, ["Main Title", "Star Wars Main Title", "Star Wars: Main Theme"]],
+  ["The Imperial March (Darth Vader's Theme)", "John Williams", 1, ["The Imperial March", "Darth Vader's Theme"]],
+  ["Duel of the Fates", "John Williams", 2],
+  ["Raiders March", "John Williams", 1, ["Indiana Jones Theme", "The Raiders March"]],
+  ["Theme from Jurassic Park", "John Williams", 1, ["Jurassic Park Theme", "Jurassic Park"]],
+  ["Hedwig's Theme", "John Williams", 1, ["Harry Potter Theme"]],
+  ["Flying Theme", "John Williams", 2, ["E.T. Theme", "Flying (Theme from E.T. the Extra-Terrestrial)"]],
+  ["Superman Theme", "John Williams", 2, ["Superman March", "Theme from Superman"]],
+  ["Main Title (Jaws)", "John Williams", 2, ["Jaws Theme", "Jaws"]],
+  ["Theme from Schindler's List", "John Williams", 2, ["Schindler's List Theme"]],
+  ["Somewhere in My Memory", "John Williams", 3, ["Home Alone Theme"]],
+  ["Olympic Fanfare and Theme", "John Williams", 3],
+  ["He's a Pirate", "Klaus Badelt", 1, ["Pirates of the Caribbean Theme"]],
+  ["Davy Jones", "Hans Zimmer", 3],
+  ["Time", "Hans Zimmer", 1, ["Inception: Time"]],
+  ["Cornfield Chase", "Hans Zimmer", 1, ["Interstellar Main Theme", "Interstellar"]],
+  ["No Time for Caution", "Hans Zimmer", 3],
+  ["Now We Are Free", "Hans Zimmer & Lisa Gerrard", 2, ["Gladiator Theme"]],
+  ["Why So Serious?", "Hans Zimmer & James Newton Howard", 3],
+  ["Circle of Life", "Elton John", 1],
+  ["This Land", "Hans Zimmer", 3],
+  ["Hakuna Matata", "Nathan Lane", 2],
+  ["Under the Sea", "Samuel E. Wright", 2],
+  ["You've Got a Friend in Me", "Randy Newman", 2],
+  ["Married Life", "Michael Giacchino", 2],
+  ["Concerning Hobbits", "Howard Shore", 2, ["The Shire Theme"]],
+  ["The Breaking of the Fellowship", "Howard Shore", 3],
+  ["May It Be", "Enya", 2],
+  ["My Heart Will Go On", "Céline Dion", 1, ["My Heart Will Go On (Love Theme from Titanic)"]],
+  ["Hymn to the Sea", "James Horner", 3],
+  ["The Godfather Waltz", "Nino Rota", 1, ["The Godfather Theme", "Main Title (The Godfather Waltz)"]],
+  ["Speak Softly Love", "Andy Williams", 2, ["Love Theme from The Godfather"]],
+  ["The Good, the Bad and the Ugly", "Ennio Morricone", 1, ["Il buono, il brutto, il cattivo", "The Good, the Bad and the Ugly (Main Title)"]],
+  ["L'estasi dell'oro", "Ennio Morricone", 2, ["The Ecstasy of Gold"]],
+  ["Gabriel's Oboe", "Ennio Morricone", 2],
+  ["Chi Mai", "Ennio Morricone", 3],
+  ["Man with a Harmonica", "Ennio Morricone", 2, ["L'uomo dell'armonica", "Once Upon a Time in the West"]],
+  ["Chariots of Fire", "Vangelis", 1],
+  ["Conquest of Paradise", "Vangelis", 2],
+  ["James Bond Theme", "Monty Norman", 1, ["The James Bond Theme", "Dr. No: James Bond Theme"]],
+  ["Goldfinger", "Shirley Bassey", 2],
+  ["Mission: Impossible Theme", "Lalo Schifrin", 1, ["Mission Impossible Theme", "Theme from Mission: Impossible"]],
+  ["The Pink Panther Theme", "Henry Mancini", 1, ["Pink Panther Theme"]],
+  ["Moon River", "Audrey Hepburn", 2],
+  ["Peter Gunn", "Henry Mancini", 2, ["Peter Gunn Theme"]],
+  {title = "Back to the Future", artist = "Alan Silvestri", fame = 1, aliases = ["Back to the Future Theme", "Back to the Future (Main Theme)"], deezer = 119871328},
+  ["The Avengers", "Alan Silvestri", 1, ["The Avengers Theme", "Avengers Theme"]],
+  ["Forrest Gump Suite", "Alan Silvestri", 2, ["Feather Theme"]],
+  ["Gonna Fly Now", "Bill Conti", 1, ["Rocky Theme", "Gonna Fly Now (Theme from Rocky)"]],
+  ["Top Gun Anthem", "Harold Faltermeyer & Steve Stevens", 2],
+  ["Axel F", "Harold Faltermeyer", 1, ["Beverly Hills Cop Theme"]],
+  ["The Terminator Theme", "Brad Fiedel", 2, ["Terminator 2: Main Title", "Main Title (Terminator 2 Theme)"]],
+  ["Halloween Theme", "John Carpenter", 2, ["Halloween Theme - Main Title"]],
+  ["Tubular Bells", "Mike Oldfield", 2, ["The Exorcist Theme"]],
+  ["Batman Theme", "Danny Elfman", 2, ["The Batman Theme"]],
+  ["This Is Halloween", "Danny Elfman", 2],
+  {title = "Spider-Man 2 Main Title", artist = "Danny Elfman", fame = 3, deezer = 586314},
+  ["Spider-Man Theme", "Michael Bublé", 3],
+  ["Victory", "Two Steps from Hell", 2],
+  ["Heart of Courage", "Two Steps from Hell", 2],
+  ["Lux Aeterna", "Clint Mansell", 2, ["Requiem for a Dream Theme"]],
+  ["Comptine d'un autre été, l'après-midi", "Yann Tiersen", 1, ["Amélie Theme", "Comptine d'un autre été"]],
+  ["La valse d'Amélie", "Yann Tiersen", 3],
+  {title = "Nuvole Bianche", artist = "Ludovico Einaudi", fame = 1, deezer = 949325632},
+  ["Experience", "Ludovico Einaudi", 2],
+  {title = "Una Mattina", artist = "Ludovico Einaudi", fame = 2, deezer = 23712561},
+  ["River Flows in You", "Yiruma", 1],
+  ["Merry-Go-Round of Life", "Joe Hisaishi", 1, ["Howl's Moving Castle Theme", "Jinsei no Merry-Go-Round"]],
+  ["One Summer's Day", "Joe Hisaishi", 2, ["Spirited Away Theme"]],
+  ["My Neighbor Totoro", "Joe Hisaishi", 2, ["Tonari no Totoro"]],
+  ["Mia & Sebastian's Theme", "Justin Hurwitz", 2, ["La La Land Theme"]],
+  ["The Mandalorian", "Ludwig Göransson", 2, ["The Mandalorian Theme"]],
+  ["Wakanda", "Ludwig Göransson", 3],
+  ["Kiss the Rain", "Yiruma", 2],
+  ["Ghostbusters", "Ray Parker Jr.", 1],
+  ["The Final Countdown", "Europe", 1],
+  ["Eye of the Tiger", "Survivor", 1],
+  ["Sweet Dreams (Are Made of This)", "Eurythmics", 1],
+]
+
+[[group]]
+category = "tv"
+kind = "audio"
+licence = "copyrighted recording; only melody features (f0, notes) are derived, never audio"
+items = [
+  ["Main Title", "Ramin Djawadi", 1, ["Game of Thrones Theme", "Game of Thrones Main Title", "Game of Thrones"]],
+  ["Light of the Seven", "Ramin Djawadi", 2],
+  {title = "The Simpsons Theme", artist = "Danny Elfman", fame = 1, aliases = ["The Simpsons Main Title Theme", "Simpsons Theme"], deezer = 84724989},
+  {title = "Doctor Who Theme", artist = "Murray Gold", fame = 2, artists = ["Ron Grainer"], deezer = 3507374091},
+  {title = "The X-Files", artist = "Mark Snow", fame = 2, aliases = ["The X-Files Theme", "X-Files Theme"], deezer = 3910006},
+  {title = "Twin Peaks Theme", artist = "Angelo Badalamenti", fame = 2, aliases = ["Twin Peaks Theme (Instrumental)", "Falling"], deezer = 7337260},
+  ["Stranger Things", "Kyle Dixon & Michael Stein", 1, ["Stranger Things Theme", "Stranger Things Main Theme"]],
+  ["The Addams Family Theme", "Vic Mizzy", 2, ["Addams Family Theme"]],
+  ["I'll Be There for You", "The Rembrandts", 1, ["Friends Theme"]],
+  ["Succession (Main Title Theme)", "Nicholas Britell", 2, ["Succession Theme"]],
+  ["Theme from Star Trek", "Alexander Courage", 2, ["Star Trek Theme", "Star Trek Main Theme"]],
+  ["Tuyo", "Rodrigo Amarante", 2, ["Narcos Theme"]],
+  ["Red Right Hand", "Nick Cave & The Bad Seeds", 2, ["Peaky Blinders Theme"]],
+  ["Bella ciao", "Manu Pilas", 2, ["Bella Ciao"]],
+  {title = "Pink Soldiers", artist = "Kim SungSoo", fame = 2, aliases = ["Squid Game Theme"], artists = ["23"], deezer = 1744505967},
+  ["Way Back Then", "Jung Jae Il", 2],
+  ["Bloody Mary", "Lady Gaga", 2],
+  ["Goo Goo Muck", "The Cramps", 3],
+  ["Tatort", "Klaus Doldinger", 2, ["Tatort Titelmusik", "Tatort Theme"]],
+  ["Das Boot", "Klaus Doldinger", 2, ["Das Boot Theme"]],
+  ["Breaking Bad Main Title Theme", "Dave Porter", 3],
+  ["Seinfeld Theme", "Jonathan Wolff", 3],
+  ["Sesame Street Theme", "Sesame Street", 3, ["Sing a Song", "Can You Tell Me How to Get to Sesame Street"]],
+  ["SpongeBob SquarePants Theme Song", "SpongeBob SquarePants", 1, ["SpongeBob SquarePants Theme"]],
+  {title = "Pokémon Theme", artist = "Pokémon", fame = 1, artists = ["Jason Paige"], deezer = 3504033041},
+  {title = "Can We Fix It?", artist = "Bob the Builder", fame = 2, deezer = 952358072},
+  ["Teletubbies Say Eh-Oh!", "Teletubbies", 3],
+  ["Biene Maja", "Karel Gott", 1, ["Die Biene Maja"]],
+  ["Hey, Pippi Langstrumpf", "Pippi Langstrumpf", 1, ["Pippi Langstrumpf"]],
+  ["Heidi", "Gitti & Erika", 2, ["Heidi (Titellied)"]],
+  ["Wickie und die starken Männer", "Christian Bruhn", 3, ["Wickie"]],
+  ["Hurra, hurra, der Pumuckl ist da", "Pumuckl", 3],
+  ["Benjamin Blümchen Titellied", "Benjamin Blümchen", 3],
+  ["Bibi Blocksberg Titellied", "Bibi Blocksberg", 3, ["Hex-hex"]],
+  {title = "Peppa Pig Theme", artist = "Peppa Pig", fame = 3, deezer = 2352097945},
+  ["Baby Shark", "Pinkfong", 1],
+  {title = "The Gummy Bear Song", artist = "Gummibär", fame = 2, aliases = ["I'm a Gummy Bear"], deezer = 1558374012},
+  ["Cha-La Head-Cha-La", "Hironobu Kageyama", 2, ["Dragon Ball Z Theme"]],
+  ["Blue Bird", "Ikimonogakari", 2],
+  ["Guren no Yumiya", "Linked Horizon", 2, ["Attack on Titan Opening"]],
+  ["Unravel", "TK from Ling tosite sigure", 2],
+  ["We Are!", "Hiroshi Kitadani", 2, ["One Piece Opening"]],
+  ["Gurenge", "LiSA", 2],
+  ["The Rumbling", "SiM", 3],
+  ["A Cruel Angel's Thesis", "Yoko Takahashi", 2, ["Zankoku na Tenshi no Thesis"]],
+  ["Tank!", "The Seatbelts", 2, ["Cowboy Bebop Theme"]],
+]
+
+[[group]]
+category = "game"
+kind = "audio"
+licence = "copyrighted recording; only melody features (f0, notes) are derived, never audio"
+items = [
+  ["Megalovania", "Toby Fox", 1],
+  ["His Theme", "Toby Fox", 3],
+  ["Fallen Down", "Toby Fox", 3],
+  ["Super Mario Bros. Theme", "Koji Kondo", 1, ["Ground Theme", "Super Mario Bros. - Ground Theme", "Overworld Theme"]],
+  ["The Legend of Zelda Main Theme", "Koji Kondo", 2, ["Zelda Theme", "Overworld"]],
+  ["Sweden", "C418", 1, ["Minecraft Theme"]],
+  ["Wet Hands", "C418", 2],
+  ["Subwoofer Lullaby", "C418", 3],
+  ["Halo Theme", "Martin O'Donnell & Michael Salvatori", 2, ["Halo Theme Mjolnir Mix"]],
+  ["Dragonborn", "Jeremy Soule", 2, ["Skyrim Theme"]],
+  ["Prelude", "Nobuo Uematsu", 3, ["Final Fantasy Prelude"]],
+  ["Victory Fanfare", "Nobuo Uematsu", 3],
+  ["One-Winged Angel", "Nobuo Uematsu", 3],
+  ["Baba Yetu", "Christopher Tin", 3],
+  ["Still Alive", "Jonathan Coulton", 3],
+  ["Snake Eater", "Cynthia Harrell", 3],
+]
+
+[[group]]
+category = "meme"
+kind = "audio"
+licence = "copyrighted recording; only melody features (f0, notes) are derived, never audio"
+items = [
+  ["Astronomia", "Vicetone & Tony Igy", 1, ["Coffin Dance", "Astronomia (Coffin Dance)"]],
+  ["Sandstorm", "Darude", 1],
+  ["Axel F", "Crazy Frog", 1, ["Crazy Frog"]],
+  ["Crab Rave", "Noisestorm", 2],
+  ["Running in the 90s", "Max Coveri", 2],
+  ["Deja Vu", "Dave Rodgers", 2],
+  ["Peanut Butter Jelly Time", "Buckwheat Boyz", 3],
+  ["Caramelldansen", "Caramell", 2],
+  ["Ievan Polkka", "Loituma", 2],
+  ["Bad Apple!!", "Alstroemeria Records", 3],
+  ["Shooting Stars", "Bag Raiders", 2],
+  ["Popcorn", "Hot Butter", 2],
+  ["Gangnam Style", "PSY", 1],
+  ["The Fox (What Does the Fox Say?)", "Ylvis", 2],
+  ["Harlem Shake", "Baauer", 2],
+  ["Dragostea Din Tei", "O-Zone", 1],
+  ["Blue (Da Ba Dee)", "Eiffel 65", 1],
+  ["Tequila", "The Champs", 2],
+  ["Macarena", "Los Del Rio", 1],
+  ["Cotton Eye Joe", "Rednex", 1],
+  ["The Ketchup Song (Aserejé)", "Las Ketchup", 2],
+  ["Mr. Saxobeat", "Alexandra Stan", 2],
+  ["Epic Sax Guy", "SunStroke Project & Olia Tira", 2, ["Run Away"]],
+  ["Careless Whisper", "George Michael", 1],
+  ["Rasputin", "Boney M.", 1],
+  ["Hampster Dance", "Hampton the Hampster", 3, ["The Hampsterdance Song"]],
+  ["Chicken Song", "J.J. Lionel", 3, ["La danse des canards"]],
+  ["Fliegerlied", "Donikkl", 2, ["So a schöner Tag"]],
+  ["Tunak Tunak Tun", "Daler Mehndi", 2],
+  ["Wellerman", "Nathan Evans", 1],
+  ["Funkytown", "Lipps Inc.", 1],
+  ["We Are Number One", "LazyTown", 3],
+  ["All Star", "Smash Mouth", 1],
+]
+
+[[group]]
+category = "christmas"
+kind = "audio"
+licence = "copyrighted recording; only melody features (f0, notes) are derived, never audio"
+items = [
+  ["Rudolph the Red-Nosed Reindeer", "Gene Autry", 1],
+  ["Frosty the Snowman", "Gene Autry", 2],
+  ["Santa Claus Is Comin' to Town", "The Jackson 5", 1],
+  ["Sleigh Ride", "The Ronettes", 2],
+  ["Let It Snow! Let It Snow! Let It Snow!", "Dean Martin", 1],
+  ["Winter Wonderland", "Michael Bublé", 2],
+  ["The Little Drummer Boy", "Harry Simeone Chorale", 2],
+  ["Driving Home for Christmas", "Chris Rea", 1],
+  ["In der Weihnachtsbäckerei", "Rolf Zuckowski", 1],
+  {title = "Dicke rote Kerzen", artist = "Detlev Jöcker", fame = 3, deezer = 132627368},
+  ["Feliz Navidad", "José Feliciano", 1],
+  ["Do They Know It's Christmas?", "Band Aid", 1],
+  ["Happy Xmas (War Is Over)", "John Lennon & Yoko Ono", 1],
+  ["Wonderful Christmastime", "Paul McCartney", 2],
+  ["White Christmas", "Bing Crosby", 1],
+  ["It's Beginning to Look a Lot Like Christmas", "Michael Bublé", 1],
+  ["Jingle Bell Rock", "Bobby Helms", 1],
+  ["Rockin' Around the Christmas Tree", "Brenda Lee", 1],
+  ["Last Christmas", "Wham!", 1],
+  ["All I Want for Christmas Is You", "Mariah Carey", 1],
+  ["Merry Christmas Everyone", "Shakin' Stevens", 2],
+  ["Step into Christmas", "Elton John", 2],
+  ["Fairytale of New York", "The Pogues", 1],
+  ["Thank God It's Christmas", "Queen", 3],
+  ["Leise rieselt der Schnee", "Rolf Zuckowski", 3],
+  {title = "Kling, Glöckchen, klingelingeling", artist = "Simone Sommerland", fame = 3, deezer = 21330801},
+  ["O du fröhliche", "Wiener Sängerknaben", 2],
+  ["Ihr Kinderlein, kommet", "Wiener Sängerknaben", 3],
+  ["Süßer die Glocken nie klingen", "Wiener Sängerknaben", 3],
+  ["Alle Jahre wieder", "Wiener Sängerknaben", 3],
+  {title = "Morgen, Kinder, wird's was geben", artist = "Simone Sommerland", fame = 3, deezer = 2505965041},
+  ["Lasst uns froh und munter sein", "Rolf Zuckowski", 3],
+  ["O Holy Night", "Mariah Carey", 2],
+  ["Hallelujah", "Pentatonix", 2],
+]
+
+[[group]]
+category = "classical"
+kind = "audio"
+licence = "public-domain composition; melody features of a recording (performance copyrighted)"
+items = [
+  ["Moonlight Sonata", "Ludwig van Beethoven", 1, ["Piano Sonata No. 14 in C-Sharp Minor, Op. 27 No. 2 \"Moonlight\": I. Adagio sostenuto", "Mondscheinsonate"]],
+  ["Symphony No. 7 in A Major, Op. 92: II. Allegretto", "Ludwig van Beethoven", 2],
+  ["Clair de lune", "Claude Debussy", 1, ["Suite bergamasque, L. 75: III. Clair de lune"]],
+  ["Gymnopédie No. 1", "Erik Satie", 1],
+  ["Nocturne in E-Flat Major, Op. 9 No. 2", "Frédéric Chopin", 1, ["Nocturne Op. 9 No. 2"]],
+  ["Minute Waltz", "Frédéric Chopin", 3, ["Waltz in D-Flat Major, Op. 64 No. 1 \"Minute\""]],
+  ["Air on the G String", "Johann Sebastian Bach", 1, ["Orchestral Suite No. 3 in D Major, BWV 1068: II. Air", "Air"]],
+  ["Cello Suite No. 1 in G Major, BWV 1007: I. Prélude", "Johann Sebastian Bach", 2, ["Cello Suite No. 1: Prelude"]],
+  ["Jesu, Joy of Man's Desiring", "Johann Sebastian Bach", 2, ["Jesus bleibet meine Freude"]],
+  ["Badinerie", "Johann Sebastian Bach", 3, ["Orchestral Suite No. 2 in B Minor, BWV 1067: VII. Badinerie"]],
+  ["Hallelujah Chorus", "George Frideric Handel", 1, ["Messiah, HWV 56: Hallelujah", "Hallelujah"]],
+  ["Sarabande", "George Frideric Handel", 2, ["Keyboard Suite in D Minor, HWV 437: III. Sarabande"]],
+  {title = "Zadok the Priest", artist = "George Frideric Handel", fame = 3, deezer = 65686093},
+  ["Arrival of the Queen of Sheba", "George Frideric Handel", 3],
+  ["Alla Hornpipe", "George Frideric Handel", 3, ["Water Music Suite No. 2 in D Major, HWV 349: II. Alla Hornpipe"]],
+  ["Winter", "Antonio Vivaldi", 2, ["L'inverno", "The Four Seasons: Winter"]],
+  ["Summer", "Antonio Vivaldi", 2, ["L'estate", "The Four Seasons: Summer"]],
+  ["Lacrimosa", "Wolfgang Amadeus Mozart", 1, ["Requiem in D Minor, K. 626: Lacrimosa"]],
+  ["Der Hölle Rache kocht in meinem Herzen", "Wolfgang Amadeus Mozart", 2, ["Queen of the Night Aria"]],
+  ["Dies irae", "Wolfgang Amadeus Mozart", 2, ["Requiem in D Minor, K. 626: Dies irae"]],
+  {title = "Piano Sonata No. 16 in C Major, K. 545: I. Allegro", artist = "Wolfgang Amadeus Mozart", fame = 3, aliases = ["Sonata facile"], deezer = 66304135},
+  ["Swan Lake", "Pyotr Ilyich Tchaikovsky", 1, ["Swan Lake, Op. 20: Scene", "Swan Lake Theme", "Schwanensee"]],
+  {title = "Dance of the Sugar Plum Fairy", artist = "Pyotr Ilyich Tchaikovsky", fame = 1, deezer = 1411649442},
+  {title = "Waltz of the Flowers", artist = "Pyotr Ilyich Tchaikovsky", fame = 2, deezer = 1411649492},
+  ["Russian Dance (Trepak)", "Pyotr Ilyich Tchaikovsky", 3],
+  ["1812 Overture", "Pyotr Ilyich Tchaikovsky", 2, ["1812 Overture, Op. 49"]],
+  {title = "Piano Concerto No. 1 in B-Flat Minor, Op. 23: I. Allegro non troppo e molto maestoso", artist = "Pyotr Ilyich Tchaikovsky", fame = 3, deezer = 72314767},
+  ["Habanera", "Georges Bizet", 1, ["Carmen: Habanera", "L'amour est un oiseau rebelle"]],
+  ["Toreador Song", "Georges Bizet", 2, ["Carmen: Votre toast, je peux vous le rendre", "Toreador March"]],
+  {title = "La donna è mobile", artist = "Giuseppe Verdi", fame = 1, artists = ["Luciano Pavarotti"], deezer = 1095525},
+  {title = "Libiamo ne' lieti calici", artist = "Giuseppe Verdi", fame = 2, aliases = ["Brindisi"], deezer = 7982590},
+  ["Va, pensiero", "Giuseppe Verdi", 3, ["Chorus of the Hebrew Slaves"]],
+  {title = "Nessun dorma", artist = "Giacomo Puccini", fame = 1, artists = ["Luciano Pavarotti"], deezer = 4124348},
+  {title = "O mio babbino caro", artist = "Giacomo Puccini", fame = 2, artists = ["Maria Callas"], deezer = 86110077},
+  {title = "O Fortuna", artist = "Carl Orff", fame = 1, aliases = ["Carmina Burana: O Fortuna"], deezer = 67332242},
+  {title = "Mars, the Bringer of War", artist = "Gustav Holst", fame = 2, deezer = 67943020},
+  ["Jupiter, the Bringer of Jollity", "Gustav Holst", 2, ["I Vow to Thee, My Country"]],
+  ["Boléro", "Maurice Ravel", 1, ["Bolero"]],
+  {title = "Night on Bald Mountain", artist = "Modest Mussorgsky", fame = 3, deezer = 137200312},
+  {title = "Pictures at an Exhibition: Promenade", artist = "Modest Mussorgsky", fame = 3, deezer = 137200282},
+  ["Flight of the Bumblebee", "Nikolai Rimsky-Korsakov", 1],
+  ["Sabre Dance", "Aram Khachaturian", 2],
+  ["Dance of the Knights", "Sergei Prokofiev", 1, ["Romeo and Juliet: Dance of the Knights", "Montagues and Capulets"]],
+  ["Radetzky March", "Johann Strauss I", 1, ["Radetzky-Marsch", "Radetzky March, Op. 228"]],
+  ["Barcarolle", "Jacques Offenbach", 2, ["Les contes d'Hoffmann: Barcarolle", "Belle nuit, ô nuit d'amour"]],
+  ["The Swan", "Camille Saint-Saëns", 2, ["Le cygne"]],
+  {title = "Danse macabre", artist = "Camille Saint-Saëns", fame = 2, deezer = 134026176},
+  ["Flower Duet", "Léo Delibes", 2, ["Lakmé: Flower Duet", "Sous le dôme épais"]],
+  ["Wedding March", "Felix Mendelssohn", 1, ["A Midsummer Night's Dream: Wedding March", "Hochzeitsmarsch"]],
+  ["Ride of the Valkyries", "Richard Wagner", 1, ["Walkürenritt", "Die Walküre: Ride of the Valkyries"]],
+  ["Pomp and Circumstance March No. 1", "Edward Elgar", 1, ["Land of Hope and Glory", "Pomp and Circumstance"]],
+  ["Nimrod", "Edward Elgar", 3, ["Enigma Variations: Nimrod"]],
+  {title = "Adagio for Strings", artist = "Samuel Barber", fame = 2, deezer = 5150588},
+  ["Adagio in G Minor", "Tomaso Albinoni", 2],
+  ["Minuet", "Luigi Boccherini", 3, ["String Quintet in E Major, Op. 13 No. 5: III. Minuetto"]],
+  ["Ave Maria", "Franz Schubert", 1],
+  ["Ständchen", "Franz Schubert", 3, ["Serenade"]],
+  ["Hungarian Dance No. 5", "Johannes Brahms", 1],
+  ["Liebestraum No. 3", "Franz Liszt", 2, ["Liebestraum"]],
+  ["Hungarian Rhapsody No. 2", "Franz Liszt", 2],
+  ["Piano Concerto No. 2 in C Minor, Op. 18: I. Moderato", "Sergei Rachmaninoff", 2],
+  ["Rhapsody in Blue", "George Gershwin", 1],
+  ["Summertime", "George Gershwin", 2],
+  ["Maple Leaf Rag", "Scott Joplin", 2],
+  {title = "Pavane", artist = "Gabriel Fauré", fame = 3, aliases = ["Pavane, Op. 50"], deezer = 65527031},
+  {title = "Méditation", artist = "Jules Massenet", fame = 3, aliases = ["Thaïs: Méditation"], deezer = 6973703},
+  {title = "Ave Maria", artist = "Charles Gounod", fame = 3, deezer = 2883373192},
+  ["Stars and Stripes Forever", "John Philip Sousa", 2, ["The Stars and Stripes Forever"]],
+  ["The Liberty Bell", "John Philip Sousa", 3, ["Monty Python Theme"]],
+  ["Entry of the Gladiators", "Julius Fučík", 1, ["Einzug der Gladiatoren", "Circus Theme", "Thunder and Blazes"]],
+  ["The Typewriter", "Leroy Anderson", 3],
+  ["Sleigh Ride", "Leroy Anderson", 2],
+  ["Hallelujah", "Leonard Cohen", 1],
+]
+
+[[group]]
+category = "anthem"
+kind = "audio"
+licence = "copyrighted recording; only melody features (f0, notes) are derived, never audio"
+items = [
+  {title = "UEFA Champions League Anthem", artist = "Tony Britten", fame = 1, aliases = ["Champions League Hymne", "Champions League Theme"], artists = ["UEFA"], deezer = 1701559027},
+  ["We Are the Champions", "Queen", 1],
+  ["Seven Nation Army", "The White Stripes", 1],
+  ["You'll Never Walk Alone", "Gerry & The Pacemakers", 1],
+  ["Olé, Olé, Olé", "Les Supporters", 3],
+  ["Freed from Desire", "Gala", 1],
+  ["Waka Waka (This Time for Africa)", "Shakira", 1],
+  ["Kernkraft 400", "Zombie Nation", 1],
+  ["Song 2", "Blur", 1],
+  ["Thunderstruck", "AC/DC", 1],
+  ["Pump It Up!", "Danzel", 3],
+  ["Heroes", "David Bowie", 2],
+  ["Il Canto degli Italiani", "Goffredo Mameli", 3, ["Fratelli d'Italia", "Inno di Mameli"]],
+]
+
+[[group]]
+category = "german"
+kind = "audio"
+licence = "copyrighted recording; only melody features (f0, notes) are derived, never audio"
+items = [
+  ["Atemlos durch die Nacht", "Helene Fischer", 1],
+  ["Griechischer Wein", "Udo Jürgens", 1],
+  ["Aber bitte mit Sahne", "Udo Jürgens", 2],
+  ["Ein bisschen Frieden", "Nicole", 2],
+  ["Major Tom (Völlig losgelöst)", "Peter Schilling", 1],
+  ["Da Da Da", "Trio", 2, ["Da Da Da Ich Lieb Dich Nicht Du Liebst Mich Nicht Aha Aha Aha"]],
+  ["Verdammt, ich lieb' dich", "Matthias Reim", 1],
+  ["Moskau", "Dschinghis Khan", 1],
+  ["Dschinghis Khan", "Dschinghis Khan", 2],
+  ["Marmor, Stein und Eisen bricht", "Drafi Deutscher", 2],
+  ["Lili Marleen", "Lale Andersen", 2],
+  ["Rote Lippen soll man küssen", "Cliff Richard", 3],
+  ["Viva Colonia", "Höhner", 2],
+  ["Sierra Madre del Sur", "Zillertaler Schürzenjäger", 2, ["Sierra Madre"]],
+  ["Joana", "Roland Kaiser", 2],
+  ["Wahnsinn", "Wolfgang Petry", 1, ["Hölle Hölle Hölle"]],
+  ["Skandal im Sperrbezirk", "Spider Murphy Gang", 2],
+  ["Tage wie diese", "Die Toten Hosen", 1],
+  ["Ein Stern (... der deinen Namen trägt)", "DJ Ötzi & Nik P.", 1, ["Ein Stern"]],
+  ["Layla", "DJ Robin & Schürze", 1],
+  ["Schatzi schenk mir ein Foto", "Mickie Krause", 2],
+  ["Cordula Grün", "Josh.", 2],
+  ["Der Junge mit der Mundharmonika", "Bernd Clüver", 3],
+  ["Ich war noch niemals in New York", "Udo Jürgens", 2],
+  ["Aloha Heja He", "Achim Reichel", 2],
+  ["Junimond", "Rio Reiser", 3],
+  ["Männer", "Herbert Grönemeyer", 2],
+  ["Bochum", "Herbert Grönemeyer", 3],
+  ["Ich will keine Schokolade", "Trude Herr", 3],
+  ["Ein Kompliment", "Sportfreunde Stiller", 2],
+  ["Alles nur geklaut", "Die Prinzen", 2],
+  ["Weus'd a Herz hast wia a Bergwerk", "Rainhard Fendrich", 3],
+  ["Rock Me Amadeus", "Falco", 1],
+  ["Der Kommissar", "Falco", 2],
+  ["Bruttosozialprodukt", "Geier Sturzflug", 2],
+  ["Sternenhimmel", "Hubert Kah", 3],
+  ["Westerland", "Die Ärzte", 2],
+  ["Schrei nach Liebe", "Die Ärzte", 2],
+  ["Ohne dich (schlaf ich heut Nacht nicht ein)", "Münchener Freiheit", 2],
+  ["Kling Klang", "Keimzeit", 3],
+  ["Jein", "Fettes Brot", 2],
+  ["Die da!?!", "Die Fantastischen Vier", 2],
+  ["Haus am See", "Peter Fox", 1],
+  ["Augen auf", "Oomph!", 3],
+  ["Du hast", "Rammstein", 1],
+  ["Sonne", "Rammstein", 1],
+  ["Engel", "Rammstein", 2],
+  ["Auf uns", "Andreas Bourani", 1],
+  ["Applaus, Applaus", "Sportfreunde Stiller", 2],
+  ["An Tagen wie diesen", "Fettes Brot", 3],
+  ["Das rote Pferd", "Markus Becker & Mallorca Cowboys", 2],
+  ["Mama Laudaaa", "Almklausi & Specktakel", 3],
+  ["Hulapalu", "Andreas Gabalier", 2],
+  ["I sing a Liad für di", "Andreas Gabalier", 3],
+  ["Eviva España", "Imca Marina", 3],
+  ["Sexy", "Marius Müller-Westernhagen", 3],
+  ["Freiheit", "Marius Müller-Westernhagen", 3],
+  ["Mit 66 Jahren", "Udo Jürgens", 2],
+  ["Theo, wir fahr'n nach Lodz", "Vicky Leandros", 3],
+  ["Über sieben Brücken musst du gehn", "Karat", 3],
+  ["Am Fenster", "City", 3],
+  ["Das Lied der Schlümpfe", "Vader Abraham", 3],
+  ["Fürstenfeld", "S.T.S.", 3],
+]

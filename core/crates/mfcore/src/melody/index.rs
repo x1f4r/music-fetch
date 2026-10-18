@@ -120,6 +120,7 @@ pub struct Track {
 }
 
 enum Bytes {
+    #[cfg(feature = "mmap")]
     Mapped(memmap2::Mmap),
     Owned(Vec<u8>),
 }
@@ -128,6 +129,7 @@ impl std::ops::Deref for Bytes {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
+            #[cfg(feature = "mmap")]
             Bytes::Mapped(m) => m,
             Bytes::Owned(v) => v,
         }
@@ -164,9 +166,16 @@ impl MelodyIndex {
         let file = File::open(path).map_err(|_| MfError::IndexUnavailable)?;
         // Safety: the index is written once to a temp file and renamed into place;
         // nothing modifies it while mapped.
+        #[cfg(feature = "mmap")]
         let bytes = match unsafe { memmap2::Mmap::map(&file) } {
             Ok(map) => Bytes::Mapped(map),
             Err(_) => Bytes::Owned(std::fs::read(path).map_err(|_| MfError::IndexUnavailable)?),
+        };
+        #[cfg(not(feature = "mmap"))]
+        let bytes = {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut &file, &mut bytes).map_err(|_| MfError::IndexUnavailable)?;
+            Bytes::Owned(bytes)
         };
         Self::parse(bytes)
     }
@@ -305,6 +314,12 @@ impl MelodyIndex {
             }
         }
         None
+    }
+
+    /// FNV-1a 64 over the track table: identifies the tracks, in order, that
+    /// companion files such as the encoder's refer to.
+    pub fn tracks_digest(&self) -> u64 {
+        fnv1a_bytes(self.section(S_TRCK))
     }
 
     /// File size in bytes.
@@ -614,7 +629,12 @@ fn shares_word(a: &str, b: &str) -> bool {
 
 /// FNV-1a, 64-bit.
 pub(crate) fn fnv1a(s: &str) -> u64 {
-    s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
+    fnv1a_bytes(s.as_bytes())
+}
+
+/// FNV-1a, 64-bit, over bytes.
+pub(crate) fn fnv1a_bytes(b: &[u8]) -> u64 {
+    b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
 pub(crate) fn read_varint(b: &[u8], pos: &mut usize) -> Option<u32> {

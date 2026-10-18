@@ -336,7 +336,7 @@ impl<S: Services> Run<'_, S> {
     async fn impression(&mut self, pcm: &PcmFile, source: &SourceInfo) -> Result<Report> {
         let samples = pcm.read_ms(0, IMPRESSION_MS)?;
         let audio = crate::audio::resample::i16_to_f32(&samples);
-        let outcome = hum::run_impression(self.ctx, &audio, None).await?;
+        let outcome = hum::run_impression(self.ctx, &audio).await?;
         let update =
             SessionUpdate { kind: Some(SessionKind::Hum), title: source.title.clone(), ..SessionUpdate::default() };
         Ok(Report {

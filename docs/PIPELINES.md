@@ -77,14 +77,43 @@ Recording queries (modes `Auto` and `Recording`, and all `SystemAudio` sessions)
 Impression rules (mode `Hum`, or `Auto` after the detector says impression):
 
 - `Notice::ImpressionDetected` once (Auto only). Stop issuing recording queries.
-- Auto-stop when voiced ≥ 6 s and the last 1.5 s are unvoiced/silent, or 20 s after the
-  impression started, or on `finish()`.
-- `Notice::KeepGoing` if the user stops with < 3 s voiced.
+- Progressive melody search (below) runs while the user hums.
+- Auto-stop (`ListenOptions.auto_stop`, default on): when the progressive search is
+  confident; when voiced ≥ 8 s and the last 1.5 s are unvoiced/silent; after a 5 s
+  pause once ≥ 1 s was voiced; 30 s after the impression started; or on `finish()`.
+  With `auto_stop` off only `finish()` and the 30 s limit end the capture.
+- `Notice::KeepGoing` once, during a ≥ 1.5 s pause with 1–4 s voiced, and when capture
+  ends with < 4 s voiced.
+
+Progressive melody search (impressions only):
+
+- Every 2 s of captured audio (4 s in low-power mode), once ≥ 4 s are voiced, search the
+  melody index with the streaming pitch frames so far (`hum::search_frames`: the
+  detailed frames → `notes::query_from_details` → `matcher::search`, top 10) on a
+  blocking worker. One search at a time; a search that is due while another runs waits
+  for the next slot. `LiveInput::is_settled` is false while one runs.
+- With `ListenOptions.live_candidates` (default off), each finished search's melody
+  candidates go out as `Candidates { is_final: false }` while the phase is still
+  `Listening` (melody only, not enriched, scores and tiers as in the final fusion).
+- Confident: the top answer scores ≥ 0.8, no other answer scores above 0.1, and the
+  previous search had the same top song. (On real hums against 58k songs such early
+  answers are right 94 % of the time, 90 % without the agreement.) With `auto_stop` on this ends the capture
+  (`Stop::Confident`) and no further searches start.
+- The final melody answer: the streaming frames equal a batch analysis of the capture
+  unless the stream took the whistle path, which it must choose from the frames heard so
+  far and cannot revise (an early whistle-like stretch, sibilants or whistles near
+  1.2 kHz can switch it where the batch analysis, voting on the whole clip, would not).
+  So: the last search when nothing was voiced after it and the stream stayed on the
+  direct path (or after a confident stop); else a search on the streaming frames; after
+  a whistle switch, or when the tracker failed, pitch is tracked on the whole capture
+  again.
 
 Finishing:
 
-- Impression (or Hum) with ≥ 2.5 s voiced → impression analysis (below), session kind
-  becomes `Hum`.
+- Impression (or Hum) with < 4 s voiced → `Notice::KeepGoing` (unless already sent) and
+  `NoMatch(TooShort)`: too little to answer with, so no guess.
+- Impression (or Hum) with ≥ 4 s voiced → impression analysis (below) with the melody
+  answer chosen as above, session kind becomes `Hum`.
 - Otherwise: if the last recording query is older than 4 s and there is ≥ 3 s of
   audible audio, run one final query; then `NoMatch` with a reason:
   `CaptureSilent` (silent notice and no audible audio), `TooQuiet` (median RMS < −45
@@ -93,13 +122,16 @@ Finishing:
 
 ## Impression analysis (`pipeline/hum.rs`)
 
-Input: the captured 16 kHz audio (≤ 30 s), its pitch frames, the language. Used by live
-sessions and by `analyze(.., AnalyzeMode::Impression)` on files.
+Input: the captured 16 kHz audio (≤ 30 s), the language, and the melody input
+(`hum::MelodyInput`): track pitch on the audio, pitch frames already tracked, or a
+progressive search that already covered the whole capture. Used by live sessions and by
+`analyze(.., AnalyzeMode::Impression)` on files.
 
 Run concurrently:
 
-1. Melody — `notes::query_from_frames`; if the index is installed,
-   `matcher::search(index, query, 10)`. If not installed, `Notice::MelodyIndexMissing`.
+1. Melody — `notes::query_from_details` on the detailed pitch frames (loudness splits
+   repeated notes); if the index is installed, `matcher::search(index, query, 10)`. If
+   not installed, `Notice::MelodyIndexMissing`.
 2. Lyrics — if a `SpeechToText` is available: write a temp WAV, `transcribe` (timeout
    15 s), drop hypotheses with < 3 real words (filler like "la", "na", "oh", "hmm" does
    not count), then `lyrics::search` (timeout 12 s). Store the best transcript.
@@ -424,6 +456,89 @@ A manifest of real cases with ground truth, run with `mf eval mixes`:
 atomic rename to `melody-index.mfi` + `manifest.json` → open → swap into the engine →
 `Finished(Completed { 1, 1 })`. Cancel deletes the partial file. `check_melody_index`
 fetches the manifest and fills `available_version` / `download_bytes`.
+
+## Melody encoder (`melody/encoder.rs`)
+
+An optional recall stage for humming search: a small network (tools/melody-encoder, about
+820k parameters) maps 8 s of the 20 fps query contour to a 64-d unit vector, and the songs
+whose reference windows lie closest join the matcher's rerank. It finds songs the
+matcher's own retrieval misses; the rerank and the score model still decide the answer.
+
+**Companion file.** `melody-encoder-<tier>.mfe` (format 1) belongs to one melody index:
+its header names the index by FNV-1a 64 over the index's TRCK section and its track count,
+and `EncoderIndex::open` refuses any other index ("belongs to another melody index"). A
+missing, damaged or foreign file disables the stage; the matcher runs as without it.
+Sections (offset, length) in a 192-byte header, each 64-byte aligned:
+
+| section | content |
+|---|---|
+| MODL | the encoder as ONNX: `features` (batch, 3, 160) → (batch, 64) unit vectors |
+| PQCB | sub-quantizers × 16 × (64 / sub-quantizers) f32 centroids |
+| TWIN | (tracks + 1) × u32: first window of each track (windows ordered by track, start) |
+| WSTA | windows × u16: start in reference hops |
+| CODE | ⌈windows / 32⌉ blocks of sub-quantizers × 16 B: byte j of sub-quantizer s holds window j's code (low nibble) and window j + 16's (high) |
+| META | version string |
+
+The header also carries the window length (160), the reference and query hops (40 frames),
+the least voiced share (300 ‰) and the most query windows (8). Only the tier's most
+popular songs get windows; the others keep an empty TWIN range and are left to the
+matcher, which still searches every song.
+
+**Query path** (`EncoderIndex::search`):
+
+1. Windows: the contour trimmed to its voiced span, 160 frames every 40 with the last one
+   aligned to the end, kept when ≥ 30 % voiced; a shorter query is one window padded with
+   rests. More than the budget's windows are thinned evenly.
+2. Features per frame (spec: `melenc.latency.featurize_np`, reproduced bit for bit): pitch
+   minus the window's voiced median (lower middle value), rests holding the previous pitch
+   and leading rests the median, ÷ 6 clipped to ±2; the voicing flag; the held pitch
+   change ÷ 3 clipped to ±2.
+3. Embedding with tract; plans for batches of 1, 2, 4 and 8 with concrete shapes, built
+   on first use (the model is parsed on the first search).
+4. Fast scan per query window: the 64-d query against each sub-quantizer's 16 centroids
+   gives a table, quantized to bytes with one scale (as faiss does); every block of 32
+   coded windows is summed with `tbl` (NEON: Apple Silicon, Android arm64) or `pshufb`
+   (SSSE3: Intel Macs, Android x86_64), or a scalar loop elsewhere. The nearest
+   `window_neighbours` windows are rescored exactly from the float table.
+5. Songs: each query window's best similarity per song, summed over query windows (or
+   the best one, `Pooling::Max`); the top `songs` become `EncoderHit`s with their best
+   window pair.
+6. `EncoderHit::hint` → `matcher::search_with_hints` / `candidates_with_hints` with the
+   budget's `HintOptions`: one placement per (tempo, shift) of `offsets`, where the two
+   windows' centres meet, unless retrieval already placed the track there. Hinted
+   placements skip the pool cut, carry no votes and compete in the quick stage like any
+   other placement. `votes` adds a retrieval pass restricted to the hinted tracks so
+   their placements carry index votes (about +110 ms per search on an M4 core; off in
+   every budget until retrieval can do it in its first pass); `reserve` sends the first
+   N hits to the full rerank even when the quick stage cuts them (off).
+
+Measured on the held-out CHAD half with the c2k model (popularity prior off): top-1
+15.3 → 17.1 %, top-10 19.1 → 22.2 % with the Android budget; the encoder stage itself
+takes about 4 ms per search on an M4 core and the extra rerank about 11 ms.
+
+Budgets (`EncoderBudget`):
+
+| | Android | Mac | low power |
+|---|---|---|---|
+| query windows | 6 | 8 | 4 |
+| windows kept per query window | 1000 | 1000 | 500 |
+| songs | 200 | 500 | 100 |
+| placements per hit (tempo, shift frames) | (1, −20), (1, 0), (1, +20) | the same plus (0.8, 0), (1.25, 0) | (1, 0) |
+
+**Build.** `mf index encoder build --index <tier>.mfi --model encoder.onnx --top 30000
+--sub-quantizers 32 --out melody-encoder-android.mfe` embeds every window with the
+app's featurizer and tract plan (threads `--threads`), trains the 4-bit quantizer by
+k-means on 300k sampled windows and writes the file atomically. `--sub-quantizers 64`
+gives 32 B per window (the Mac file). `mf index encoder info <file> --index <tier>.mfi`
+checks a file against its index. The file must be rebuilt whenever its index is rebuilt
+(the digest changes); a new model only needs a new encoder file.
+
+**Release.** The encoder file is published in the same release as its index (tag
+`melody-index-2`) and named in that index's manifest under `encoder` (`url`, `sha256`,
+`bytes`, `format`, `min_core`); `scripts/package-melody-index.sh <mfi> <version> <base>
+<file.mfe>` checks it against the index and writes the entry. Cores that do not know the
+field ignore it (`Manifest` has no `deny_unknown_fields`); `Manifest::usable_encoder`
+skips entries of another format or for a newer core.
 
 ## Library operations
 

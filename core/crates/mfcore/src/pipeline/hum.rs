@@ -22,10 +22,11 @@ use crate::audio::wav::{encode_wav, write_wav};
 use crate::error::{MfError, Result};
 use crate::identity::{self, normalize_artists, normalize_title};
 use crate::lyrics::{self, LyricMatch};
+use crate::melody::pitch::FrameDetail;
 use crate::melody::{MelodyIndex, MelodyMatch, MelodyQuery, SongMeta, matcher, notes};
 use crate::model::{
     Candidate, CandidateSource, CandidateSourceKind, CandidateTier, MelodyAlignment, NoMatchReason, Notice, Outcome,
-    Phase, PitchFrame, Track,
+    Phase, Track,
 };
 use crate::pipeline::ctx::SessionCtx;
 use crate::platform::SpeechToText;
@@ -58,34 +59,66 @@ const W_ACR: f32 = 0.9;
 const AGREEMENT_BONUS: f32 = 0.1;
 const MAX_COMBINED: f32 = 0.99;
 
+/// Where the melody evidence of an impression comes from.
+pub enum MelodyInput {
+    /// Track pitch on the captured audio.
+    Track,
+    /// Pitch frames already tracked over the whole capture (live sessions).
+    Frames(Vec<FrameDetail>),
+    /// A search that already covered every voiced frame of the capture (the
+    /// last progressive search of a live session).
+    Searched(MelodySearch),
+}
+
+/// One melody search: the query and its best matches.
+#[derive(Debug, Clone)]
+pub struct MelodySearch {
+    pub query: MelodyQuery,
+    pub matches: Vec<MelodyMatch>,
+}
+
+/// Build a query from pitch frames and search the index (CPU-bound: run it off
+/// the async workers). `None` when the frames hold too little melody.
+pub fn search_frames(index: &MelodyIndex, frames: &[FrameDetail]) -> Option<MelodySearch> {
+    let query = notes::query_from_details(frames)?;
+    let matches = matcher::search(index, &query, MELODY_TOP_K);
+    Some(MelodySearch { query, matches })
+}
+
+/// Candidates from melody matches alone (progressive results while humming).
+pub fn melody_candidates(matches: &[MelodyMatch]) -> Vec<Candidate> {
+    fuse(matches.iter().map(melody_evidence).collect())
+}
+
 /// Analyze captured 16 kHz mono audio as an impression: melody matching, sung
 /// lyrics and ACRCloud humming, fused into candidates. Emits `Candidates` events
-/// and returns the outcome; the caller emits the terminal event. `frames` are the
-/// live pitch frames when already computed.
-pub async fn run_impression(ctx: &SessionCtx, audio: &[f32], frames: Option<Vec<PitchFrame>>) -> Result<Outcome> {
-    Ok(run_impression_detailed(ctx, audio, frames, true).await?.0)
+/// and returns the outcome; the caller emits the terminal event.
+pub async fn run_impression(ctx: &SessionCtx, audio: &[f32]) -> Result<Outcome> {
+    Ok(run_impression_detailed(ctx, audio, MelodyInput::Track, false, false).await?.0)
 }
 
 /// [`run_impression`] that also returns the final candidates (best first).
-/// `notify_missing_index`: emit `Notice::MelodyIndexMissing` when there is no
-/// index (live sessions already did when the impression started).
+/// `live`: a live session, which already sent `Notice::MelodyIndexMissing` when
+/// the impression started; `shown`: interim candidates were already emitted, so
+/// an empty final list must be emitted to clear them.
 pub async fn run_impression_detailed(
     ctx: &SessionCtx,
     audio: &[f32],
-    frames: Option<Vec<PitchFrame>>,
-    notify_missing_index: bool,
+    melody: MelodyInput,
+    live: bool,
+    shown: bool,
 ) -> Result<(Outcome, Vec<Candidate>)> {
     ctx.cancel.check()?;
     keep_recording(ctx, audio).await;
     ctx.emitter.phase(Phase::MatchingMelody, None);
     let index = ctx.engine.melody_index();
-    if index.is_none() && notify_missing_index {
+    if index.is_none() && !live {
         ctx.emitter.notice(Notice::MelodyIndexMissing);
     }
 
     type SourceFuture<'a> = Pin<Box<dyn Future<Output = Answer> + Send + 'a>>;
     let mut sources: FuturesUnordered<SourceFuture<'_>> = FuturesUnordered::new();
-    sources.push(Box::pin(melody_source(ctx, audio, frames, index.clone())));
+    sources.push(Box::pin(melody_source(ctx, audio, melody, index.clone())));
     if let Some(speech) = ctx.engine.speech.clone() {
         sources.push(Box::pin(lyrics_source(ctx, speech, audio)));
     }
@@ -94,7 +127,7 @@ pub async fn run_impression_detailed(
     }
 
     let mut fusion = Fusion::default();
-    let mut interim = false;
+    let mut interim = shown;
     loop {
         let answer = tokio::select! {
             biased;
@@ -207,38 +240,37 @@ async fn blocking<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 
 async fn melody_source(
     ctx: &SessionCtx,
     audio: &[f32],
-    frames: Option<Vec<PitchFrame>>,
+    melody: MelodyInput,
     index: Option<Arc<MelodyIndex>>,
 ) -> Answer {
     let empty = || Answer::Melody { query: None, matches: Vec::new() };
     // Without an index the query is only needed to score lyric candidates, which
     // also need the index: nothing to do.
     let Some(index) = index else { return empty() };
-    let frames = match frames {
-        Some(frames) => frames,
-        None => {
+    let frames = match melody {
+        MelodyInput::Searched(search) => return Answer::Melody { query: Some(search.query), matches: search.matches },
+        MelodyInput::Frames(frames) => frames,
+        MelodyInput::Track => {
             let engine = ctx.engine.clone();
             let audio = audio.to_vec();
-            let analyzed =
-                blocking("pitch tracking", move || engine.pitch_tracker().map(|tracker| tracker.analyze(&audio))).await;
+            let analyzed = blocking("pitch tracking", move || {
+                engine.pitch_tracker().and_then(|tracker| tracker.analyze_detailed(&audio))
+            })
+            .await;
             match analyzed {
-                Some(Ok(frames)) => frames,
+                Some(Ok(analysis)) => analysis.frames,
                 Some(Err(e)) => {
-                    tracing::warn!("pitch tracker unavailable: {e}");
+                    tracing::warn!("pitch tracking unavailable: {e}");
                     return empty();
                 }
                 None => return empty(),
             }
         }
     };
-    let Some(Some(query)) = blocking("melody query", move || notes::query_from_frames(&frames)).await else {
-        return empty();
-    };
-    let search_query = query.clone();
-    let matches = blocking("melody search", move || matcher::search(&index, &search_query, MELODY_TOP_K))
-        .await
-        .unwrap_or_default();
-    Answer::Melody { query: Some(query), matches }
+    match blocking("melody search", move || search_frames(&index, &frames)).await {
+        Some(Some(search)) => Answer::Melody { query: Some(search.query), matches: search.matches },
+        _ => empty(),
+    }
 }
 
 async fn lyrics_source(ctx: &SessionCtx, speech: Arc<dyn SpeechToText>, audio: &[f32]) -> Answer {

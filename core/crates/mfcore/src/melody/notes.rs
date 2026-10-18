@@ -176,13 +176,18 @@ fn median_filter(midi: &[f32]) -> Vec<f32> {
         .collect()
 }
 
+/// Median (mean of the two middle values for even lengths); reorders `v`.
 pub(crate) fn median(v: &mut [f32]) -> Option<f32> {
     if v.is_empty() {
         return None;
     }
-    v.sort_by(f32::total_cmp);
     let n = v.len();
-    Some(if n % 2 == 1 { v[n / 2] } else { 0.5 * (v[n / 2 - 1] + v[n / 2]) })
+    let (below, &mut upper, _) = v.select_nth_unstable_by(n / 2, f32::total_cmp);
+    if n % 2 == 1 {
+        return Some(upper);
+    }
+    let lower = below.iter().copied().max_by(f32::total_cmp).unwrap_or(upper);
+    Some(0.5 * (lower + upper))
 }
 
 /// Fold short stable stretches that sit an octave from their surroundings.

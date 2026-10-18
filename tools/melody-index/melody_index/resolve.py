@@ -39,6 +39,7 @@ class Target:
     artist: str
     aliases: list[tuple[str, str]]
     deezer_hint: int | None
+    pinned: bool = False  # an evergreen item names its Deezer track: take it as is
 
 
 def queries(t: Target) -> list[str]:
@@ -109,9 +110,9 @@ def resolve_one(client: DeezerClient, t: Target) -> dict[str, Any]:
     if t.deezer_hint:
         try:
             hinted = client.track(t.deezer_hint)
-            s = score(t, hinted)
+            s = 1.0 if t.pinned else score(t, hinted)
             if s >= ACCEPT - 0.1:
-                chosen, match, used_query = hinted, s, f"hint:{t.deezer_hint}"
+                chosen, match, used_query = hinted, s, f"{'pinned' if t.pinned else 'hint'}:{t.deezer_hint}"
         except DeezerNotFound:
             pass
     if chosen is None:
@@ -185,7 +186,8 @@ def _store(conn, rows: list[dict[str, Any]]) -> None:
 
 def pending(conn, limit: int, max_attempts: int = 3) -> list[Target]:
     rows = conn.execute(
-        "SELECT s.id, s.title, s.artist, s.aliases, s.deezer_hint FROM songs s LEFT JOIN deezer d ON d.song_id=s.id"
+        "SELECT s.id, s.title, s.artist, s.aliases, s.deezer_hint, s.origin FROM songs s"
+        " LEFT JOIN deezer d ON d.song_id=s.id"
         " WHERE s.in_universe=1 AND (d.song_id IS NULL OR (d.status='error' AND d.attempts<?))"
         " ORDER BY s.score DESC LIMIT ?",
         (max_attempts, limit),
@@ -198,7 +200,10 @@ def pending(conn, limit: int, max_attempts: int = 3) -> list[Target]:
             if isinstance(a, list) and len(a) == 2
         ]
         sides = [(r["artist"], v) for v in title_variants(r["title"])[1:]]
-        out.append(Target(r["id"], r["title"], r["artist"], sides + aliases, r["deezer_hint"]))
+        out.append(
+            Target(r["id"], r["title"], r["artist"], sides + aliases, r["deezer_hint"],
+                   pinned=r["origin"] == "evergreen" and bool(r["deezer_hint"]))
+        )
     return out
 
 

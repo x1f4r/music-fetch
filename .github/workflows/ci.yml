@@ -35,6 +35,58 @@ jobs:
         working-directory: core
         run: cargo test --workspace
 
+  wasm:
+    name: Engine (wasm32 and feature subsets)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        working-directory: core
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: wasm
+      - name: Check (wasm32, net)
+        working-directory: core
+        run: cargo check -p mfcore --target wasm32-unknown-unknown --no-default-features --features net
+      - name: Clippy (wasm32, net; std clocks banned)
+        working-directory: core
+        run: cargo clippy -p mfcore --target wasm32-unknown-unknown --no-default-features --features net -- -D warnings
+      - name: Tests (pure core, no default features)
+        working-directory: core
+        run: cargo test -p mfcore --no-default-features
+      - name: Check (engine without UniFFI)
+        working-directory: core
+        run: cargo check -p mfcore --all-targets --no-default-features --features engine
+      # SQLite (store) is C: it needs a clang that targets wasm32 and llvm-ar.
+      - name: LLVM for wasm32
+        run: echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
+      - name: Clippy (wasm32, net, store, decode and the browser tests)
+        working-directory: core
+        run: >-
+          cargo clippy -p mfcore --target wasm32-unknown-unknown --no-default-features
+          --features net,store,decode --lib --test wasm_store --test wasm_decode -- -D warnings
+      - name: wasm-bindgen test runner
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Tests (wasm32 in Node)
+        working-directory: core
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+        run: cargo test -p mfcore --target wasm32-unknown-unknown --no-default-features --features store,decode --test wasm_decode
+      - name: Tests (wasm32 in Chrome and Firefox Workers)
+        working-directory: core
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          WASM_BINDGEN_USE_DEDICATED_WORKER: "1"
+          WASM_BINDGEN_TEST_TIMEOUT: "300"
+        run: |
+          for driver in "CHROMEDRIVER=$CHROMEWEBDRIVER/chromedriver" "GECKODRIVER=$GECKOWEBDRIVER/geckodriver"; do
+            echo "== $driver"
+            env "$driver" cargo test -p mfcore --target wasm32-unknown-unknown --no-default-features \
+              --features store,decode --test wasm_store --test wasm_decode
+          done
+
   android:
     name: Android app
     runs-on: ubuntu-24.04

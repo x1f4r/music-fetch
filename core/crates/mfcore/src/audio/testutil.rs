@@ -37,6 +37,7 @@ pub fn noise(n: usize, amp: f32, seed: u64) -> Vec<f32> {
 }
 
 /// True when an executable named `name` is on PATH.
+#[cfg(feature = "engine")]
 pub fn have_tool(name: &str) -> bool {
     std::process::Command::new(name)
         .arg("-version")

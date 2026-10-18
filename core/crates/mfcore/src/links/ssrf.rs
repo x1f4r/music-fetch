@@ -4,8 +4,14 @@
 //! `ensure_public_url` checks a URL before each request and each redirect hop;
 //! `PublicOnlyResolver` re-checks the addresses the HTTP client actually connects
 //! to, which closes the DNS-rebinding gap between the check and the connection.
+//!
+//! Browsers expose no DNS lookup, so on wasm32 host names get the offline checks
+//! only (IP literals, `localhost`, `.local` and similar names), and the fetch
+//! helpers check the final URL after fetch() followed redirects.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+#[cfg(not(target_family = "wasm"))]
+use std::net::ToSocketAddrs;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use url::{Host, Url};
 
@@ -18,6 +24,7 @@ pub(crate) fn private_address_error() -> MfError {
     MfError::invalid(PRIVATE_MESSAGE)
 }
 
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
 fn unresolvable_error() -> MfError {
     MfError::network("couldn't find that website")
 }
@@ -81,6 +88,7 @@ fn check_host_name(host: &str) -> Result<()> {
 }
 
 /// What still needs checking after the offline rules.
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
 enum Target {
     Ip(IpAddr),
     Name(String, u16),
@@ -102,6 +110,7 @@ fn target(url: &Url) -> Result<Target> {
     }
 }
 
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
 fn check_resolved(addrs: impl IntoIterator<Item = SocketAddr>) -> Result<()> {
     let mut any = false;
     for addr in addrs {
@@ -120,10 +129,13 @@ pub fn assert_public_url(url: &str) -> Result<()> {
     let url = Url::parse(url.trim()).map_err(|_| MfError::invalid("That link isn't valid."))?;
     match target(&url)? {
         Target::Ip(ip) => is_public_ip(ip).then_some(()).ok_or_else(private_address_error),
+        #[cfg(not(target_family = "wasm"))]
         Target::Name(name, port) => {
             let addrs = (name.as_str(), port).to_socket_addrs().map_err(|_| unresolvable_error())?;
             check_resolved(addrs)
         }
+        #[cfg(target_family = "wasm")]
+        Target::Name(..) => Ok(()),
     }
 }
 
@@ -150,16 +162,20 @@ pub(crate) async fn ensure_public(url: &Url) -> Result<()> {
     }
     match target(url)? {
         Target::Ip(ip) => is_public_ip(ip).then_some(()).ok_or_else(private_address_error),
+        #[cfg(not(target_family = "wasm"))]
         Target::Name(name, port) => {
             let addrs = tokio::net::lookup_host((name.as_str(), port)).await.map_err(|_| unresolvable_error())?;
             check_resolved(addrs)
         }
+        #[cfg(target_family = "wasm")]
+        Target::Name(..) => Ok(()),
     }
 }
 
 /// Marker error raised by `PublicOnlyResolver`, recognised when mapping
 /// connection errors.
 #[derive(Debug)]
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
 pub(crate) struct NonPublicAddress;
 
 impl std::fmt::Display for NonPublicAddress {
@@ -172,8 +188,10 @@ impl std::error::Error for NonPublicAddress {}
 
 /// DNS resolver for the guarded client: refuses names that resolve to any
 /// non-public address.
+#[cfg(not(target_family = "wasm"))]
 pub(crate) struct PublicOnlyResolver;
 
+#[cfg(not(target_family = "wasm"))]
 impl reqwest::dns::Resolve for PublicOnlyResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_string();

@@ -12,14 +12,22 @@
 //! platform decoder, Opus (the OS decoders are ~10x faster than the pure-Rust
 //! one) and implicitly signalled HE-AAC (symphonia decodes only the AAC core,
 //! without SBR) go to it first; the built-in decoders are the safety net.
+//!
+//! [`decode_bytes`] decodes media held in memory (previews, recordings from the
+//! browser's MediaRecorder, downloaded files) with the same built-in decoders;
+//! it is what the browser build has (there is no platform decoder there).
 
 use std::fs::File;
-use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::path::Path;
+#[cfg(feature = "engine")]
+use std::path::PathBuf;
+#[cfg(feature = "engine")]
+use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use symphonia::core::audio::{Audio, GenericAudioBufferRef};
@@ -38,12 +46,21 @@ use symphonia::core::meta::MetadataOptions;
 
 use crate::audio::mp4;
 use crate::audio::opus::OpusAudioDecoder;
-use crate::audio::resample::{StreamResampler, downmix_into};
+use crate::audio::resample::StreamResampler;
+#[cfg(feature = "engine")]
+use crate::audio::resample::downmix_into;
+#[cfg(feature = "engine")]
 use crate::audio::wav::WavReader;
 use crate::audio::{PcmFile, PcmWriter, SAMPLE_RATE};
-use crate::error::{MfError, PlatformError, Result};
+#[cfg(feature = "engine")]
+use crate::error::PlatformError;
+use crate::error::{MfError, Result};
+#[cfg(feature = "engine")]
 use crate::platform::PlatformDecoder;
-use crate::util::cancel::{CancelToken, TaskHandle};
+use crate::util::cancel::CancelToken;
+#[cfg(feature = "engine")]
+use crate::util::cancel::TaskHandle;
+use crate::util::rt::Instant;
 
 /// Consecutive undecodable packets before the stream counts as broken.
 const MAX_ERRORS_IN_ROW: u32 = 64;
@@ -54,6 +71,7 @@ const MAX_RESETS: u32 = 64;
 const PROGRESS_STEP: f32 = 0.005;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 /// Share of the progress bar for the platform decoder; the WAV conversion gets the rest.
+#[cfg(feature = "engine")]
 const PLATFORM_SHARE: f32 = 0.9;
 /// Output delay of an SBR (HE-AAC) decoder, in output samples (ISO/IEC 14496-3).
 const SBR_DECODER_DELAY: u64 = 962;
@@ -61,6 +79,7 @@ const SBR_DECODER_DELAY: u64 = 962;
 /// Decode the first audio track of `input` to a 16 kHz mono PCM file at `output`.
 ///
 /// `progress` receives 0..=1. On failure or cancellation `output` is removed.
+#[cfg(feature = "engine")]
 pub fn decode_file(
     input: &Path,
     output: &Path,
@@ -129,8 +148,119 @@ pub fn decode_file(
     }
 }
 
+/// Decodes the first audio track of a file held in memory (any format the
+/// built-in decoders read: MP3, AAC/MP4, FLAC, Vorbis, Opus in Ogg or WebM/
+/// Matroska, WAV, ALAC, AIFF, CAF) to 16 kHz mono samples.
+///
+/// `hint` is a file extension (`"m4a"`) or a MIME type (`"audio/webm;codecs=opus"`)
+/// that helps pick the container; the content decides in the end.
+pub fn decode_bytes(bytes: &[u8], hint: Option<&str>, cancel: &CancelToken) -> Result<Vec<i16>> {
+    let pcm = decode_bytes_into(Arc::from(bytes), hint, PcmWriter::in_memory(), cancel, &|_| {})?;
+    Ok(pcm.into_samples().unwrap_or_default())
+}
+
+/// Like [`decode_bytes`], writing into `writer` (a work file for long media).
+/// On failure the caller removes what `writer` wrote.
+pub fn decode_bytes_into(
+    bytes: Arc<[u8]>,
+    hint: Option<&str>,
+    writer: PcmWriter,
+    cancel: &CancelToken,
+    progress: &(dyn Fn(f32) + Send + Sync),
+) -> Result<PcmFile> {
+    if bytes.is_empty() {
+        return Err(MfError::Decode { message: "the file is empty".into() });
+    }
+    cancel.check()?;
+    let reporter = Progress::new(progress);
+    let input = Input::Bytes { data: bytes, hint };
+    let make = move || Ok(writer);
+    match guarded(|| decode_with_symphonia(&input, make, cancel, &reporter, Prefer::Builtin)) {
+        Ok(pcm) => {
+            reporter.finish();
+            Ok(pcm)
+        }
+        Err(Failure::Canceled) => Err(MfError::Canceled),
+        Err(Failure::Fatal(e)) => Err(e),
+        Err(Failure::Unsupported(reason)) => Err(MfError::Decode { message: reason }),
+        Err(Failure::Deferred(what)) => Err(MfError::Decode { message: format!("{what} audio could not be decoded") }),
+    }
+}
+
+/// What to decode.
+enum Input<'a> {
+    #[cfg_attr(not(feature = "engine"), allow(dead_code))]
+    Path(&'a Path),
+    Bytes {
+        data: Arc<[u8]>,
+        hint: Option<&'a str>,
+    },
+}
+
+impl Input<'_> {
+    fn source(&self) -> std::result::Result<CountingSource, Failure> {
+        match self {
+            Input::Path(path) => {
+                let file = File::open(path)
+                    .map_err(|e| Failure::Fatal(MfError::invalid(format!("The file cannot be read: {e}"))))?;
+                let len = file.metadata().ok().map(|m| m.len());
+                Ok(CountingSource::new(Box::new(file), len))
+            }
+            Input::Bytes { data, .. } => {
+                let len = data.len() as u64;
+                Ok(CountingSource::new(Box::new(Cursor::new(data.clone())), Some(len)))
+            }
+        }
+    }
+
+    fn hint(&self) -> Hint {
+        let mut hint = Hint::new();
+        match self {
+            Input::Path(path) => {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    hint.with_extension(ext);
+                }
+            }
+            Input::Bytes { hint: Some(h), .. } => {
+                let h = h.trim();
+                if h.contains('/') {
+                    hint.mime_type(h.split(';').next().unwrap_or(h).trim());
+                } else {
+                    hint.with_extension(h.trim_start_matches('.'));
+                }
+            }
+            Input::Bytes { hint: None, .. } => {}
+        }
+        hint
+    }
+
+    fn mp4_edit(&self, track_id: Option<u32>) -> Option<mp4::Mp4Edit> {
+        match self {
+            Input::Path(path) => mp4::sound_track_edit(path, track_id),
+            Input::Bytes { data, .. } => {
+                mp4::sound_track_edit_in(&mut Cursor::new(&data[..]), data.len() as u64, track_id)
+            }
+        }
+    }
+
+    fn name(&self) -> String {
+        match self {
+            Input::Path(path) => path.display().to_string(),
+            Input::Bytes { .. } => "the media".into(),
+        }
+    }
+}
+
+/// Runs a decode, turning a decoder panic into `Unsupported`. (Browser builds
+/// abort on panics instead; their Worker is restarted.)
+fn guarded(decode: impl FnOnce() -> std::result::Result<PcmFile, Failure>) -> std::result::Result<PcmFile, Failure> {
+    catch_unwind(AssertUnwindSafe(decode))
+        .unwrap_or_else(|_| Err(Failure::Unsupported("the built-in decoder failed on this file".into())))
+}
+
 /// Which decoder gets codecs that both can handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(feature = "engine"), allow(dead_code))]
 enum Prefer {
     Builtin,
     /// Leave Opus (much faster natively) and HE-AAC (symphonia skips SBR) to the
@@ -158,6 +288,7 @@ impl From<MfError> for Failure {
 }
 
 /// symphonia decode guarded against panics; removes `output` on any failure.
+#[cfg(feature = "engine")]
 fn run_symphonia(
     input: &Path,
     output: &Path,
@@ -165,8 +296,8 @@ fn run_symphonia(
     progress: &Progress<'_>,
     prefer: Prefer,
 ) -> std::result::Result<PcmFile, Failure> {
-    let result = catch_unwind(AssertUnwindSafe(|| decode_with_symphonia(input, output, cancel, progress, prefer)))
-        .unwrap_or_else(|_| Err(Failure::Unsupported("the built-in decoder failed on this file".into())));
+    let result =
+        guarded(|| decode_with_symphonia(&Input::Path(input), || PcmWriter::create(output), cancel, progress, prefer));
     if result.is_err() {
         remove_quietly(output);
     }
@@ -384,28 +515,25 @@ impl Pipeline {
     }
 }
 
+/// Decodes `input` into the writer `make_writer` creates (once the input turned
+/// out to be readable media).
 fn decode_with_symphonia(
-    input: &Path,
-    output: &Path,
+    input: &Input<'_>,
+    make_writer: impl FnOnce() -> Result<PcmWriter>,
     cancel: &CancelToken,
     progress: &Progress<'_>,
     prefer: Prefer,
 ) -> std::result::Result<PcmFile, Failure> {
-    let file =
-        File::open(input).map_err(|e| Failure::Fatal(MfError::invalid(format!("The file cannot be read: {e}"))))?;
-    let source = CountingSource::new(file);
+    let source = input.source()?;
     let bytes_read = source.position.clone();
     let byte_len = source.len;
     let mss = MediaSourceStream::new(Box::new(source), Default::default());
-    let mut hint = Hint::new();
-    if let Some(ext) = input.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
-    }
+    let hint = input.hint();
     let mut format = symphonia::default::get_probe()
         .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
         .map_err(|e| match e {
             SymError::IoError(e) if e.kind() != ErrorKind::UnexpectedEof => {
-                Failure::Fatal(MfError::internal(format!("cannot read {}: {e}", input.display())))
+                Failure::Fatal(MfError::internal(format!("cannot read {}: {e}", input.name())))
             }
             _ => Failure::Unsupported("unrecognized file format".into()),
         })?;
@@ -413,10 +541,9 @@ fn decode_with_symphonia(
     let OpenTrack { id, params, track, mut decoder } = open_track(format.as_ref(), prefer)?;
     let mut track_id = id;
     let mut timeline = Timeline::new(&track);
-    let edit =
-        (format.format_info().format == FORMAT_ID_ISOMP4).then(|| mp4::sound_track_edit(input, Some(id))).flatten();
+    let edit = (format.format_info().format == FORMAT_ID_ISOMP4).then(|| input.mp4_edit(Some(id))).flatten();
 
-    let mut pipeline = Pipeline::new(PcmWriter::create(output)?, edit, &params);
+    let mut pipeline = Pipeline::new(make_writer()?, edit, &params);
     let mut planes: Vec<Vec<f32>> = Vec::new();
     let mut mono: Vec<f32> = Vec::new();
     let mut errors_in_row = 0u32;
@@ -562,6 +689,7 @@ fn average_planes<'a>(planes: impl Iterator<Item = &'a [f32]>, frames: usize, mo
     }
 }
 
+#[cfg(feature = "engine")]
 enum PlatformFailure {
     Canceled,
     Fatal(MfError),
@@ -570,6 +698,7 @@ enum PlatformFailure {
     Failed(String),
 }
 
+#[cfg(feature = "engine")]
 impl From<MfError> for PlatformFailure {
     fn from(e: MfError) -> Self {
         match e {
@@ -581,14 +710,17 @@ impl From<MfError> for PlatformFailure {
 }
 
 /// Removes a file when dropped.
+#[cfg(feature = "engine")]
 struct TempPath(PathBuf);
 
+#[cfg(feature = "engine")]
 impl Drop for TempPath {
     fn drop(&mut self) {
         remove_quietly(&self.0);
     }
 }
 
+#[cfg(feature = "engine")]
 fn decode_with_platform(
     decoder: &Arc<dyn PlatformDecoder>,
     input: &Path,
@@ -651,6 +783,7 @@ fn decode_with_platform(
 }
 
 /// `output` with `suffix` appended to its file name.
+#[cfg(feature = "engine")]
 fn sibling_path(output: &Path, suffix: &str) -> PathBuf {
     let mut name = output.file_name().map(|n| n.to_os_string()).unwrap_or_else(|| "decode".into());
     name.push(".");
@@ -661,6 +794,7 @@ fn sibling_path(output: &Path, suffix: &str) -> PathBuf {
 /// Convert a WAV written by a platform decoder into a 16 kHz mono PCM file.
 /// 16-bit PCM is streamed directly (resampled if the decoder ignored the
 /// requested format); anything else goes through symphonia.
+#[cfg(feature = "engine")]
 fn wav_to_pcm(wav: &Path, output: &Path, cancel: &CancelToken) -> Result<PcmFile> {
     let mut reader = match WavReader::open_any(wav) {
         Ok(r) if r.spec().is_pcm16() => r,
@@ -718,6 +852,7 @@ fn wav_to_pcm(wav: &Path, output: &Path, cancel: &CancelToken) -> Result<PcmFile
     writer.finish()
 }
 
+#[cfg(feature = "engine")]
 fn remove_quietly(path: &Path) {
     if let Err(e) = std::fs::remove_file(path)
         && e.kind() != ErrorKind::NotFound
@@ -762,17 +897,20 @@ impl<'a> Progress<'a> {
     }
 }
 
-/// A file source that publishes its read position (progress when the
+trait ReadSeek: Read + Seek + Send + Sync {}
+
+impl<T: Read + Seek + Send + Sync> ReadSeek for T {}
+
+/// A media source that publishes its read position (progress when the
 /// container has no duration).
 struct CountingSource {
-    file: File,
+    file: Box<dyn ReadSeek>,
     len: Option<u64>,
     position: Arc<AtomicU64>,
 }
 
 impl CountingSource {
-    fn new(file: File) -> Self {
-        let len = file.metadata().ok().map(|m| m.len());
+    fn new(file: Box<dyn ReadSeek>, len: Option<u64>) -> Self {
         Self { file, len, position: Arc::new(AtomicU64::new(0)) }
     }
 }
@@ -803,5 +941,82 @@ impl MediaSource for CountingSource {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "engine"))]
 mod tests;
+
+/// The codec fixtures decode the same everywhere (see tests/wasm_decode.rs).
+#[cfg(test)]
+mod codec_fixtures {
+    use super::decode_bytes;
+    use crate::util::cancel::CancelToken;
+
+    include!("../../tests/fixtures/codecs/check.rs");
+
+    #[test]
+    fn decoded_pcm_matches_expected() {
+        let bad = codec_mismatches();
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    #[test]
+    fn every_fixture_has_audio() {
+        for (name, hint, bytes, _) in CODEC_FIXTURES {
+            let samples = decode_bytes(bytes, Some(hint), &CancelToken::new()).unwrap();
+            let summary = codec_summary(&samples);
+            assert!(samples.len() > 7000, "{name}: {summary}");
+            assert!(summary["peak"].as_u64().unwrap_or(0) > 3000, "{name}: {summary}");
+        }
+    }
+
+    /// Rewrites expected.json and expected/*.pcm after the fixtures change.
+    #[test]
+    #[ignore = "regenerates tests/fixtures/codecs/expected*"]
+    fn write_expected() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codecs");
+        std::fs::create_dir_all(dir.join("expected")).unwrap();
+        let mut all = serde_json::Map::new();
+        for (name, hint, bytes, _) in CODEC_FIXTURES {
+            let samples = decode_bytes(bytes, Some(hint), &CancelToken::new()).unwrap();
+            let start = codec_window_start(samples.len());
+            let window: Vec<u8> = samples[start..(start + CODEC_WINDOW).min(samples.len())]
+                .iter()
+                .flat_map(|s| s.to_le_bytes())
+                .collect();
+            std::fs::write(dir.join(format!("expected/{name}.pcm")), window).unwrap();
+            all.insert(name.to_string(), codec_summary(&samples));
+        }
+        std::fs::write(dir.join("expected.json"), serde_json::to_string_pretty(&all).unwrap() + "\n").unwrap();
+    }
+
+    /// The file path (the apps) and the in-memory path (the browser) decode alike.
+    #[cfg(feature = "engine")]
+    #[test]
+    fn files_and_bytes_decode_alike() {
+        let dir = crate::audio::testutil::TempDir::new("decbytes");
+        for (name, hint, bytes, _) in CODEC_FIXTURES {
+            let input = dir.path().join(name);
+            std::fs::write(&input, bytes).unwrap();
+            let output = dir.path().join(format!("{name}.pcm"));
+            let pcm = super::decode_file(&input, &output, None, &CancelToken::new(), &|_| {})
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let from_file = pcm.read_samples(0, usize::MAX).unwrap();
+            assert_eq!(from_file, decode_bytes(bytes, Some(hint), &CancelToken::new()).unwrap(), "{name}");
+        }
+    }
+
+    #[test]
+    fn hints_and_errors() {
+        let (_, _, mp3, _) = CODEC_FIXTURES[1];
+        let samples = decode_bytes(mp3, None, &CancelToken::new()).unwrap();
+        assert_eq!(decode_bytes(mp3, Some("audio/mpeg"), &CancelToken::new()).unwrap(), samples, "MIME hint");
+        assert_eq!(decode_bytes(mp3, Some(".mp3"), &CancelToken::new()).unwrap(), samples, "extension hint");
+        assert!(matches!(decode_bytes(b"", None, &CancelToken::new()), Err(crate::error::MfError::Decode { .. })));
+        assert!(matches!(
+            decode_bytes(&b"not media ".repeat(300), Some("mp3"), &CancelToken::new()),
+            Err(crate::error::MfError::Decode { .. })
+        ));
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        assert_eq!(decode_bytes(mp3, None, &cancel), Err(crate::error::MfError::Canceled));
+    }
+}

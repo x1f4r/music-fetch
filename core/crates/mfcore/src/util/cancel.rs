@@ -11,7 +11,7 @@ type ProgressFn = Box<dyn Fn(f32) + Send + Sync>;
 
 /// Handed to platform services for one blocking call: lets them observe
 /// cancellation and report progress.
-#[derive(uniffi::Object)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct TaskHandle {
     token: CancelToken,
     progress: Mutex<Option<ProgressFn>>,
@@ -27,10 +27,10 @@ impl TaskHandle {
     }
 }
 
-#[uniffi::export]
+#[cfg_attr(feature = "ffi", uniffi::export)]
 impl TaskHandle {
     /// A handle that is never canceled and ignores progress; for platform tests.
-    #[uniffi::constructor]
+    #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn detached() -> Arc<Self> {
         Self::new(CancelToken::new())
     }
@@ -93,7 +93,7 @@ impl CancelToken {
     /// Sleep that ends early (with `Err(Canceled)`) on cancellation.
     pub async fn sleep(&self, duration: std::time::Duration) -> Result<()> {
         tokio::select! {
-            _ = tokio::time::sleep(duration) => self.check(),
+            _ = crate::util::rt::sleep(duration) => self.check(),
             _ = self.canceled() => Err(MfError::Canceled),
         }
     }

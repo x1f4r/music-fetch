@@ -1,0 +1,8 @@
+node_modules/
+.output/
+.wxt/
+web-ext-artifacts/
+stats.html
+*.log
+.e2e-artifacts/
+.screens/

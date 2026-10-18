@@ -11,7 +11,7 @@
 //! SHA-256 of the signature.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use reqwest::header::{ACCEPT, CONTENT_LANGUAGE, HeaderMap, RETRY_AFTER, USER_AGENT};
@@ -25,6 +25,7 @@ use crate::shazam::response::parse_match;
 use crate::shazam::signature::MIN_SAMPLES;
 use crate::util::cancel::CancelToken;
 use crate::util::ratelimit::RateLimiter;
+use crate::util::rt::Instant;
 
 /// Origin of the recognizer (also used to tell "offline" from "no match").
 pub const ENDPOINT: &str = "https://amp.shazam.com";
@@ -320,7 +321,7 @@ impl ShazamClient {
             .json(&request_body(signature, crate::util::now_ms()))
             .timeout(self.policy.request_timeout);
         let response = tokio::select! {
-            r = request.send() => r,
+            r = crate::util::http::prepare(request).send() => r,
             _ = cancel.canceled() => return Attempt::Fatal(MfError::Canceled),
         };
         let response = match response {
@@ -367,7 +368,7 @@ fn request_body(signature: &Signature, now_ms: i64) -> Value {
 fn transport_error(e: &reqwest::Error) -> MfError {
     let message = if e.is_timeout() {
         "Shazam did not answer in time."
-    } else if e.is_connect() {
+    } else if crate::util::http::is_connect(e) {
         "Could not connect to Shazam."
     } else {
         "The connection to Shazam failed."

@@ -53,6 +53,45 @@ This document describes the behaviour the types cannot express.
   later; the app says it was saved for later instead of "no match". (The live pipeline
   does not produce it yet; the apps already handle it.)
 
+### Humming, whistling, singing
+
+- `start_listening_with(source, mode, ListenOptions { auto_stop, live_candidates })`;
+  `start_listening` uses the defaults (`auto_stop` on, `live_candidates` off).
+- While the user hums (`ListenMode::Hum`, or `Auto` after `Notice::ImpressionDetected`)
+  the core searches the melody index every 2 s (4 s in low-power mode) once 4 s are
+  voiced. With `auto_stop` the session stops by itself as soon as an answer is clear (a
+  top answer scoring ≥ 0.8 that the previous search also had on top), after a phrase
+  (≥ 8 s voiced, then a 1.5 s pause), after a 5 s pause, or at 30 s. Without it, only
+  `finish()` and the 30 s limit stop it.
+- `live_candidates: true` makes each search's melody candidates arrive as
+  `Candidates { is_final: false }` while the phase is still `Listening`. They are
+  provisional: melody only, not enriched (no artwork yet), and each list replaces the
+  previous one. The final list (`is_final = true`, after `Phase::MatchingMelody`,
+  with lyrics/ACRCloud and enrichment) follows when capture ends.
+- `Notice::KeepGoing` means the hum is too short to answer from: the core sends it once
+  during a pause before 4 s are voiced, and when capture ends with less than 4 s voiced
+  (then the outcome is `NoMatch(TooShort)` rather than a guess).
+- Candidate tiers: melody scores read as the chance the answer is right. On real hums
+  (CHAD, 58k songs) `Strong` (≥ 0.75) answers are right about 19 times in 20, `Possible`
+  (0.35–0.75) about 6 in 10, `LongShot` rarely; interim lists while humming are
+  calibrated the same way.
+
+What the apps need to adopt progressive results (until then they keep today's flow; the
+early confident stop already shortens their sessions):
+
+1. Start hum and auto sessions with `start_listening_with(.., ListenOptions { auto_stop:
+   <setting>, live_candidates: true }, ..)`.
+2. While `Phase::Listening`, treat `Candidates { is_final: false }` as a live preview:
+   show the top one or two under the listening UI ("Sounds like …" with its tier), and
+   do not switch to the result screen or announce it as a result. Replace the preview
+   on every new list; clear it when a list is empty.
+3. Switch to the candidates/result screen only on the final list (`is_final = true`) or
+   on `Finished`. Accessibility announcements: once, for the final list.
+4. On `Notice::KeepGoing` show a short "Keep humming" hint during capture; after a
+   `NoMatch(TooShort)` offer "Hum again".
+5. Stop capture (and the microphone indicator) on the terminal event as today; with
+   `auto_stop` the core may finish well before the user stops humming.
+
 ## Analysis sessions
 
 - `analyze(input, mode, observer)`: `input` is a URL or an absolute file path.
@@ -94,6 +133,11 @@ English sentences without stack traces or URLs containing secrets.
   format is deleted at startup, so the app offers the download again.
 - Without an index, impression sessions still run lyrics and ACRCloud humming and emit
   `Notice::MelodyIndexMissing`.
+- Optional `encoder` object: the index's learned-encoder file (`melody/encoder.rs`,
+  docs/PIPELINES.md "Melody encoder"), e.g.
+  `"encoder": {"url": "https://…/melody-encoder-android.mfe", "sha256": "…", "bytes": 13000000, "format": 1, "min_core": "1.2.0"}`.
+  It belongs to exactly that index file. Cores ignore entries they cannot use
+  (`Manifest::usable_encoder`), and the index works without it.
 
 ## Melody builder input (JSONL)
 

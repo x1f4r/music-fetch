@@ -2,12 +2,13 @@
 //! (exact, altered, misheard, German and speech-recognizer output) and two real
 //! transcripts of sung clips, scored against each backend on its own.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::fetch::{Fetcher, Stats};
 use super::{Backend, SearchOptions, query_backend, search_with, text};
 use crate::error::Result;
 use crate::util::cancel::CancelToken;
+use crate::util::rt::Instant;
 
 /// What kind of input a case represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,6 +257,7 @@ pub async fn run(
 /// HTTP client for the CLI and the live evaluation: installs the ring TLS
 /// provider when the process has none, then builds the engine's client.
 pub fn http_client() -> Result<reqwest::Client> {
+    #[cfg(not(target_family = "wasm"))]
     let _ = rustls::crypto::ring::default_provider().install_default();
     crate::util::http::build_client(env!("CARGO_PKG_VERSION"))
 }
