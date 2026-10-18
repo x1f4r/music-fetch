@@ -63,7 +63,7 @@ def enc_x(c, use, hit_rank):
     for n in use:
         rank = c.get("enc_rank") or 0
         if n == "enc_best":
-            out.append(max(c.get("enc_best", 0.0), 0.0))
+            out.append(max(c.get("enc_best", 0.0), 0.0) if 0 < rank <= hit_rank else 0.0)
         elif n == "enc_hit":
             out.append(1.0 if 0 < rank <= hit_rank else 0.0)
         elif n == "enc_score":

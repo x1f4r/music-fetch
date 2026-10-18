@@ -122,7 +122,7 @@ pub struct Features {
     /// ln((popularity + 0.05) / 0.55): the song's popularity prior.
     pub prior: f32,
     /// The learned encoder's best window cosine for the song (0 when the encoder
-    /// did not run or did not return the song).
+    /// did not run or did not rank the song among its first [`ENC_HIT_RANK`] hits).
     pub enc_best: f32,
     /// 1 when the encoder ranked the song among its first [`ENC_HIT_RANK`] hits.
     pub enc_hit: f32,
@@ -577,11 +577,13 @@ impl Query {
         utility(f) + w[0] * f.enc_best + w[1] * f.enc_hit
     }
 
-    /// [`Features::enc_best`] and [`Features::enc_hit`] of `song`.
+    /// [`Features::enc_best`] and [`Features::enc_hit`] of `song`. Only the first
+    /// [`ENC_HIT_RANK`] hits count as evidence, whatever the budget: a larger budget's
+    /// further hits are placements without encoder evidence.
     fn encoder_features(&self, song: u32) -> (f32, f32) {
         match self.encoder.as_ref().and_then(|e| e.get(&song)) {
-            Some(&(best, rank)) => (best.max(0.0), if rank <= ENC_HIT_RANK { 1.0 } else { 0.0 }),
-            None => (0.0, 0.0),
+            Some(&(best, rank)) if rank <= ENC_HIT_RANK => (best.max(0.0), 1.0),
+            _ => (0.0, 0.0),
         }
     }
 
