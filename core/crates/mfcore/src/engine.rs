@@ -23,7 +23,7 @@ use crate::media::YtDlpSubprocess;
 use crate::model::{
     AnalyzeMode, Candidate, CandidateTier, CaptureSource, Evidence, EvidenceSource, ExportFormat, LibraryEntry,
     LibraryQuery, ListenMode, ListenOptions, Lyrics, MelodyIndexStatus, Outcome, Segment, SegmentKind, SessionDetail,
-    SessionKind, StorageUsage, Tier, Track,
+    SessionKind, SpeechTranscript, StorageUsage, Tier, Track,
 };
 use crate::pipeline::analyze::{self, AnalyzeInput};
 use crate::pipeline::ctx::{EngineCtx, SessionCtx, preview_expired};
@@ -607,6 +607,7 @@ impl Engine {
             budget: options.call_budget.unwrap_or_default(),
             credentials: RwLock::new(Credentials::default()),
             melody: RwLock::new(None),
+            encoder: RwLock::new(None),
             pitch: OnceLock::new(),
             media,
             decoder,
@@ -617,7 +618,9 @@ impl Engine {
             pitch_low_power: OnceLock::new(),
             recognizer_url: options.shazam_base_url.clone().unwrap_or_else(|| crate::shazam::client::ENDPOINT.into()),
         });
-        *ctx.melody.write() = melody_index::open_installed(&ctx);
+        let index = melody_index::open_installed(&ctx);
+        *ctx.encoder.write() = index.as_ref().and_then(|i| melody_index::open_encoder(&ctx, i));
+        *ctx.melody.write() = index;
 
         // Leftover session folders from earlier runs (pinned sessions keep theirs).
         let cleanup = ctx.clone();
@@ -772,6 +775,14 @@ impl LiveSession {
     /// The user stopped capture: analyze what was captured and finish.
     pub fn finish(&self) {
         self.input.finish();
+    }
+
+    /// What the app's on-device speech recognizer heard so far, for sung words
+    /// (see `ListenOptions::transcripts`). Each call replaces the previous
+    /// transcript: send partial results as they come and the last one with
+    /// `is_final = true`, also after capture stopped. Cheap; any thread.
+    pub fn push_transcript(&self, transcript: SpeechTranscript) {
+        self.input.push_transcript(transcript);
     }
 
     /// Stop at once; the session emits `Canceled` and is stored as canceled.

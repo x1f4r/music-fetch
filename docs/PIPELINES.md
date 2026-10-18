@@ -132,9 +132,14 @@ Run concurrently:
 1. Melody — `notes::query_from_details` on the detailed pitch frames (loudness splits
    repeated notes); if the index is installed, `matcher::search(index, query, 10)`. If
    not installed, `Notice::MelodyIndexMissing`.
-2. Lyrics — if a `SpeechToText` is available: write a temp WAV, `transcribe` (timeout
-   15 s), drop hypotheses with < 3 real words (filler like "la", "na", "oh", "hmm" does
-   not count), then `lyrics::search` (timeout 12 s). Store the best transcript.
+2. Lyrics — the words come from the app (`hum::SpeechInput`): transcripts it pushed
+   while the user sang (`LiveSession::push_transcript`; with
+   `ListenOptions::transcripts` the final one is awaited for up to 2 s after capture),
+   or else, if a `SpeechToText` is available, a temp WAV of the capture is transcribed
+   (timeout 15 s). Hypotheses with < 3 real words are dropped (filler like "la", "na",
+   "oh", "hmm" does not count), then `lyrics::search` (timeout 12 s); a pushed
+   transcript's reported confidence c scales its matches' scores by 0.4 + 0.6·c. Store
+   the best transcript.
 3. ACRCloud humming — if configured: newest ≤ 12 s as 8 kHz WAV (timeout 10 s).
 
 Emit `Candidates { is_final: false }` as each source returns (after fusion), then the
@@ -454,8 +459,18 @@ A manifest of real cases with ground truth, run with `mf eval mixes`:
 `install_melody_index`: fetch the manifest → stream the file into
 `data_dir/melody/.download` with `Phase(Downloading, fraction)` → verify SHA-256 →
 atomic rename to `melody-index.mfi` + `manifest.json` → open → swap into the engine →
+then, when the manifest names an encoder file this core can use
+(`Manifest::usable_encoder`), the same for it: `.download-encoder` → SHA-256 →
+`EncoderIndex::open` against the new index → rename to `melody-encoder.mfe` → swap in
+(`EngineCtx::encoder` holds it with the index it was opened for, so a search never pairs
+an encoder with another index). The old encoder file is deleted when the index changes; an
+encoder failure keeps the new index (the session still finishes `Completed`), and an index
+that is already current gets only its missing or newer encoder. The installed
+`manifest.json` names the encoder only once its file is in place. →
 `Finished(Completed { 1, 1 })`. Cancel deletes the partial file. `check_melody_index`
-fetches the manifest and fills `available_version` / `download_bytes`.
+fetches the manifest and fills `available_version` / `download_bytes` (index and encoder
+still to fetch; the installed version when only the encoder is missing). At startup an
+encoder file that does not open against the installed index is deleted.
 
 ## Melody encoder (`melody/encoder.rs`)
 
@@ -536,9 +551,11 @@ checks a file against its index. The file must be rebuilt whenever its index is 
 **Release.** The encoder file is published in the same release as its index (tag
 `melody-index-2`) and named in that index's manifest under `encoder` (`url`, `sha256`,
 `bytes`, `format`, `min_core`); `scripts/package-melody-index.sh <mfi> <version> <base>
-<file.mfe>` checks it against the index and writes the entry. Cores that do not know the
-field ignore it (`Manifest` has no `deny_unknown_fields`); `Manifest::usable_encoder`
-skips entries of another format or for a newer core.
+<file.mfe>` checks it against the index and writes the entry (`min_core` 1.1.0, the first
+core that downloads the file); with `TIER=android|mac` it writes the per-tier names
+`melody-index-<tier>.mfi` and `manifest-<tier>.json`. Cores that do not know the field
+ignore it (`Manifest` has no `deny_unknown_fields`); `Manifest::usable_encoder` skips
+entries of another format or for a newer core.
 
 ## Library operations
 

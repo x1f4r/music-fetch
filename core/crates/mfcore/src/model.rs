@@ -443,12 +443,45 @@ pub struct ListenOptions {
     #[cfg_attr(feature = "ffi", uniffi(default = false))]
     #[serde(default)]
     pub live_candidates: bool,
+    /// The app sends what its on-device speech recognizer hears
+    /// (`LiveSession::push_transcript`), so sung words are matched by their
+    /// lyrics (default false). The engine then does not call `SpeechToText` for
+    /// the session and, when capture ends, waits up to 2 s for the final
+    /// transcript. See docs/CORE_API.md ("Sung words").
+    #[cfg_attr(feature = "ffi", uniffi(default = false))]
+    #[serde(default)]
+    pub transcripts: bool,
 }
 
 impl Default for ListenOptions {
     fn default() -> Self {
-        Self { auto_stop: true, live_candidates: false }
+        Self { auto_stop: true, live_candidates: false, transcripts: false }
     }
+}
+
+/// What the app's on-device speech recognizer heard during a live hum or sing
+/// session (`LiveSession::push_transcript`).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SpeechTranscript {
+    /// The best hypothesis, as the recognizer wrote it.
+    pub text: String,
+    /// Further hypotheses, best first (may be empty).
+    #[cfg_attr(feature = "ffi", uniffi(default = []))]
+    #[serde(default)]
+    pub alternatives: Vec<String>,
+    /// BCP-47 tag of the recognizer's language ("en-US", "de-DE"); None means the
+    /// engine's `EngineConfig.language`.
+    #[cfg_attr(feature = "ffi", uniffi(default = None))]
+    #[serde(default)]
+    pub language: Option<String>,
+    /// The recognizer's confidence in `text`, 0..=1, when it reports one (None,
+    /// 0 or negative: unknown).
+    #[cfg_attr(feature = "ffi", uniffi(default = None))]
+    #[serde(default)]
+    pub confidence: Option<f32>,
+    /// The recognizer's last result for this capture; nothing follows it.
+    pub is_final: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -522,9 +555,17 @@ pub struct MelodyIndexStatus {
     pub version: Option<String>,
     pub song_count: u32,
     pub size_bytes: u64,
-    /// Newer version on the server (set after `check_melody_index`).
+    /// Newer version on the server (set after `check_melody_index`). Also set to
+    /// the installed version when only the index's encoder file is still to be
+    /// downloaded (`install_melody_index` then fetches just that).
     pub available_version: Option<String>,
+    /// Bytes `install_melody_index` would download: the index and its encoder file.
     pub download_bytes: Option<u64>,
+    /// The learned melody encoder that belongs to the installed index is installed
+    /// and used by searches (`size_bytes` includes it).
+    #[cfg_attr(feature = "ffi", uniffi(default = false))]
+    #[serde(default)]
+    pub encoder_installed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
