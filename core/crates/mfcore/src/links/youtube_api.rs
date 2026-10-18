@@ -208,8 +208,8 @@ async fn video(
 }
 
 /// Top-level comments of up to [`MAX_COMMENT_PAGES`] pages, pinned first, then
-/// the uploader's, then by likes. A page that fails ends the list (comments are
-/// a bonus); a bot check is an error.
+/// the uploader's, then by likes. A page that fails ends the list: comments are
+/// a bonus, and a bot check keeps the breaker open for later requests anyway.
 async fn comments(
     http: &reqwest::Client,
     client: &Client,
@@ -223,7 +223,7 @@ async fn comments(
         let Some(t) = token.take() else { break };
         let page = match innertube(http, "next", client, json!({"continuation": t}), cancel, hooks).await {
             Ok(page) => page,
-            Err(e @ (MfError::Canceled | MfError::RateLimited { .. })) => return Err(e),
+            Err(MfError::Canceled) => return Err(MfError::Canceled),
             Err(e) => {
                 tracing::debug!("youtube comments stopped: {e}");
                 break;
