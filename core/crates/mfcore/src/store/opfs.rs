@@ -71,7 +71,7 @@ impl OpfsPool {
         &self.vfs
     }
 
-    /// Database files in the pool.
+    /// Database files in the pool (none while it is paused).
     pub fn files(&self) -> Vec<String> {
         let mut files = self.util.list();
         files.sort();
@@ -87,8 +87,10 @@ impl OpfsPool {
         self.util.export_db(name).map_err(|e| pool_error("export", e))
     }
 
-    /// Replaces the database `name` with `bytes` (it must not be open).
+    /// Replaces the database `name` with `bytes`, a SQLite database (it must not
+    /// be open).
     pub fn import(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.delete(name)?;
         self.util.import_db(name, bytes).map_err(|e| pool_error("import", e))
     }
 
@@ -121,6 +123,8 @@ impl OpfsPool {
                 tracing::warn!(error = %e, "browser storage: could not keep a copy of the damaged database");
             }
         }
+        // A hot journal of the damaged file would be played back into the new one.
+        self.delete(&format!("{name}-journal"))?;
         self.delete(name).map(drop)
     }
 }

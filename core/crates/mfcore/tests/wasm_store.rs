@@ -42,9 +42,12 @@ async fn library_survives_reopening() {
     store.kv_put("shazam.breaker", "{\"open_until_ms\":5}").unwrap();
     store.cache_put("shazam", "sig", "{}", 60_000).unwrap();
     assert!(storage.bytes() > 0);
+    // Each database keeps a journal file next to it.
+    let files = storage.pool.files();
+    assert!(files.contains(&LIBRARY_DB.to_string()) && files.contains(&FILES_DB.to_string()), "{files:?}");
     let pool = storage.close().map_err(|(_, e)| e).expect("close");
     assert!(pool.is_paused());
-    assert_eq!(pool.files(), vec![FILES_DB.to_string(), LIBRARY_DB.to_string()]);
+    assert!(pool.files().is_empty(), "a paused pool holds no files");
 
     let storage = BrowserStorage::open_in(pool).await.expect("reopen");
     let library = storage.store.library(&all()).unwrap();
