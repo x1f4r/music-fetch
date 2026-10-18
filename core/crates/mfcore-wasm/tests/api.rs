@@ -219,14 +219,25 @@ async fn the_library_survives_a_new_engine_on_opfs() {
         return;
     }
     let directory = format!(".mf-api-{}", mfcore::util::new_id());
+    let started = mfcore::util::rt::Instant::now();
     let (first, events) = engine("opfs", &directory).await;
+    let opened = started.elapsed().as_millis();
     let live = first.start_listening(mode("Microphone"), mode("Recording"), JsValue::UNDEFINED).unwrap();
     let id = live.id();
     live.cancel();
     terminal(&events, &id).await;
     first.set_pinned(id.clone(), true).unwrap();
     JsFuture::from(first.close()).await.expect("close releases the pool");
+    let started = mfcore::util::rt::Instant::now();
     let (second, _) = engine("opfs", &directory).await;
+    web_sys::console::log_1(
+        &format!(
+            "API-TIMING\topfs create {opened} ms, reopen {} ms, memory {} MB",
+            started.elapsed().as_millis(),
+            WasmEngine::memory_bytes() / 1_048_576.0
+        )
+        .into(),
+    );
     let detail = second.session(id.clone()).unwrap();
     let entry = js_sys::Reflect::get(&detail, &"entry".into()).unwrap();
     assert_eq!(js_sys::Reflect::get(&entry, &"pinned".into()).unwrap(), JsValue::TRUE);
