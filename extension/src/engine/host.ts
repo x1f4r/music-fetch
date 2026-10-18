@@ -20,12 +20,12 @@ export interface EngineHost {
 }
 
 /**
- * Serve `engine` to UI pages: every Port named `ENGINE_PORT` can call the engine's
- * methods, and every session and library event is broadcast to all of them.
+ * Serve `engine` in this context to UI pages: every Port named `ENGINE_PORT` can call
+ * the engine's methods, and every session and library event is broadcast to all of them.
+ * Only extension pages may connect.
  *
- * Runs in the offscreen document on Chromium and in the event page on Firefox
- * (extension plan §3.1). Only extension pages may connect: content scripts run inside
- * web pages and talk to the capture coordinator instead.
+ * The extension itself runs `EngineHost` (`host-core.ts`), which adds the engine Worker
+ * and capture; this in-process variant serves an engine object directly (tests, tools).
  */
 export function serveEngineHost(engine: EngineClient, runtime: HostRuntime): EngineHost {
   const served = new Set<ServedPort<EngineTopics>>();

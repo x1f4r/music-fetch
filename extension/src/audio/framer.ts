@@ -22,10 +22,9 @@ export class PcmFramer {
     } = {},
   ) {}
 
-  /** A block of mono samples that arrived at `arrivalWallMs` (its last sample was just captured). */
-  push(samples: Float32Array, sampleRate: number, arrivalWallMs: number): void {
+  /** A block of mono samples whose first sample was captured at `firstWallMs`. */
+  push(samples: Float32Array, sampleRate: number, firstWallMs: number): void {
     if (samples.length === 0) return;
-    const firstWallMs = arrivalWallMs - (samples.length / sampleRate) * 1000;
     const clock = this.options.clock;
     let mediaMs: number | null = null;
     let speed = this.options.speed?.() ?? 1;
@@ -68,10 +67,14 @@ export function downmix(channels: readonly Float32Array[], frames = channels[0]?
 export class Rechunker {
   private buffer: Float32Array;
   private filled = 0;
+  /** Index (frames since start) of the buffer's first sample. */
+  private first = 0;
+  private next = 0;
 
   constructor(
     private readonly size: number,
-    private readonly out: (block: Float32Array) => void,
+    /** `firstFrame`: index of the block's first sample since the first `push`. */
+    private readonly out: (block: Float32Array, firstFrame: number) => void,
   ) {
     this.buffer = new Float32Array(size);
   }
@@ -79,12 +82,14 @@ export class Rechunker {
   push(samples: Float32Array): void {
     let offset = 0;
     while (offset < samples.length) {
+      if (this.filled === 0) this.first = this.next;
       const take = Math.min(this.size - this.filled, samples.length - offset);
       this.buffer.set(samples.subarray(offset, offset + take), this.filled);
       this.filled += take;
       offset += take;
+      this.next += take;
       if (this.filled === this.size) {
-        this.out(this.buffer);
+        this.out(this.buffer, this.first);
         this.buffer = new Float32Array(this.size);
         this.filled = 0;
       }

@@ -31,7 +31,20 @@ export interface TapOptions {
   listenAlong?: boolean;
 }
 
-export type BlockCallback = (samples: Float32Array, sampleRate: number, arrivalWallMs: number) => void;
+/** A mono block and the wall clock of its first sample. */
+export type BlockCallback = (samples: Float32Array, sampleRate: number, firstWallMs: number) => void;
+
+/**
+ * Wall clock of context time `seconds`, from the context's own output timestamp: blocks
+ * are stamped by when the audio thread processed them, not by when the main thread got
+ * around to receiving them (a busy page delays that by hundreds of ms, which at 4× is
+ * over a second of media).
+ */
+function contextWall(ctx: AudioContext, seconds: number, fallbackFirstWall: number): number {
+  const ts = ctx.getOutputTimestamp?.();
+  if (ts && ts.performanceTime && ts.contextTime) return performance.timeOrigin + ts.performanceTime + (seconds - ts.contextTime) * 1000;
+  return fallbackFirstWall;
+}
 
 let blobUrl: string | null = null;
 
@@ -89,9 +102,16 @@ export class Tap {
         try {
           if (mode === 'script') {
             const processor = ctx.createScriptProcessor(4096, 2, 1);
-            const rechunk = new Rechunker(block, (b) => onBlock(b, ctx.sampleRate, wallNow()));
+            // Context time of the rechunker's first sample, from the first buffer's playback time.
+            let origin: number | null = null;
+            const rechunk = new Rechunker(block, (b, firstFrame) => {
+              const seconds = (origin ?? 0) + firstFrame / ctx.sampleRate;
+              onBlock(b, ctx.sampleRate, contextWall(ctx, seconds, wallNow() - (b.length / ctx.sampleRate) * 1000));
+            });
             processor.onaudioprocess = (event) => {
               const input = event.inputBuffer;
+              // The input buffer ends where the output buffer starts playing.
+              origin ??= event.playbackTime - input.length / ctx.sampleRate;
               const channels: Float32Array[] = [];
               for (let c = 0; c < input.numberOfChannels; c++) channels.push(input.getChannelData(c));
               rechunk.push(downmix(channels, input.length));
@@ -110,7 +130,10 @@ export class Tap {
             outputChannelCount: [1],
             processorOptions: { block },
           });
-          node.port.onmessage = (event: MessageEvent<{ samples: Float32Array }>) => onBlock(event.data.samples, ctx.sampleRate, wallNow());
+          node.port.onmessage = (event: MessageEvent<{ samples: Float32Array; frame: number }>) => {
+            const { samples, frame } = event.data;
+            onBlock(samples, ctx.sampleRate, contextWall(ctx, frame / ctx.sampleRate, wallNow() - (samples.length / ctx.sampleRate) * 1000));
+          };
           source.connect(node);
           node.connect(sink);
           if (ctx.state !== 'running') await ctx.resume().catch(() => undefined);

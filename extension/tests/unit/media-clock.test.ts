@@ -73,16 +73,19 @@ describe('framing', () => {
       [0, false],
       [1, true],
     ]);
-    expect(chunks[0]!.wallMs).toBeCloseTo(1000, 6);
+    expect(chunks[0]!.wallMs).toBeCloseTo(1000 + blockMs, 6);
   });
 
   it('mixes channels down and re-chunks to a fixed size', () => {
     expect([...downmix([new Float32Array([1, 0.5]), new Float32Array([0, 0.5])])]).toEqual([0.5, 0.5]);
-    const blocks: number[] = [];
-    const r = new Rechunker(4, (b) => blocks.push(b.length));
+    const blocks: [number, number][] = [];
+    const r = new Rechunker(4, (b, first) => blocks.push([b.length, first]));
     r.push(new Float32Array(3));
     r.push(new Float32Array(6));
-    expect(blocks).toEqual([4, 4]);
+    expect(blocks).toEqual([
+      [4, 0],
+      [4, 4],
+    ]);
   });
 
   it('notices digital silence after 1.5 s and sound again', () => {

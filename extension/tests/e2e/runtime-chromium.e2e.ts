@@ -33,8 +33,8 @@ describe.skipIf(!existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.chromium))('Chro
         '--no-default-browser-check',
         '--disable-gpu',
         '--window-size=1280,860',
-        // Nothing reaches a speaker; tab capture taps audio before the output.
-        '--disable-audio-output',
+        // Output goes to the runner's private null sink (PULSE_SINK). Not --disable-audio-output:
+        // without an output device the captured tab audio comes out garbled.
         '--autoplay-policy=no-user-gesture-required',
         '--use-fake-ui-for-media-stream',
         '--use-fake-device-for-media-stream',

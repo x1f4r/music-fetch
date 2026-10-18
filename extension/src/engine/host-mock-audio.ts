@@ -288,7 +288,8 @@ export function segmentTimeline(timeline: ToneTimeline, totalMs: number, windowM
     if (!song) return;
     const center = i * stepMs + windowMs / 2;
     const last = runs.at(-1);
-    if (last && last.song === song && center - last.endMs <= windowMs) {
+    // The same song again after a few unsure windows (a stall, an ad, a rough edge) is one run.
+    if (last && last.song === song && center - last.endMs <= 30_000) {
       last.endMs = center;
       last.score = Math.max(last.score, scores[i]!);
     } else runs.push({ song, startMs: center, endMs: center, score: scores[i]! });
