@@ -81,6 +81,7 @@ export const en = {
   'result.search': '%@ (search)',
   'result.searchMeta': 'search',
   'result.moreProviders': 'Open in another service',
+  'result.fromTab': 'From this tab · %@',
   'result.copy': 'Copy',
   'result.copied': 'Copied',
   'result.pin': 'Pin',

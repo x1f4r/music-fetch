@@ -10,6 +10,8 @@
     preferred: Provider;
     custom: CustomProvider | null;
     pinned?: boolean;
+    /** Where it was heard, e.g. "From this tab · youtube.com". */
+    context?: string | null;
     /** The popup opens the provider menu upward. */
     menuUp?: boolean;
     artSize?: 120 | 160 | 200;
@@ -18,7 +20,7 @@
     onpin?: (pinned: boolean) => void;
   }
 
-  let { track, preferred, custom, pinned = false, menuUp = false, artSize = 160, onopen, oncopy, onpin }: Props = $props();
+  let { track, preferred, custom, pinned = false, context = null, menuUp = false, artSize = 160, onopen, oncopy, onpin }: Props = $props();
   let copied = $state(false);
 
   const meta = $derived([track.album, track.release_year].filter(Boolean).join(' · '));
@@ -36,6 +38,7 @@
   <div class="ttl title-l clamp2">{track.title}</div>
   <div class="artist secondary">{track.artist}</div>
   {#if meta}<div class="meta callout tertiary">{meta}</div>{/if}
+  {#if context}<div class="context callout"><span class="ic ic-tab s14"></span>{context}</div>{/if}
   <div class="actions">
     <OpenInButton {track} {preferred} {custom} up={menuUp} {onopen} />
     {#if onpin}

@@ -6,7 +6,8 @@
   import { showsResult } from '../../models/stage';
   import type { ActiveTab } from '../../platform/surfaces';
   import { isAnalyzablePage } from '../../platform/surfaces';
-  import { suggestProvider } from '../../providers/services';
+  import { primaryLink, providerLinks } from '../../providers/links';
+  import { serviceName, suggestProvider } from '../../providers/services';
   import { loadProviderSettings, watchProviderSettings, type ListenChoice, type ProviderSettings } from '../../settings/settings';
   import CandidatesView from '../components/CandidatesView.svelte';
   import LinkField from '../components/LinkField.svelte';
@@ -43,6 +44,17 @@
   const stage = $derived(listen.stage);
   const pageHost = $derived(tab && isAnalyzablePage(tab.url) ? new URL(tab.url!).hostname.replace(/^www\./, '') : null);
   const recent = $derived(listen.recent[0] ?? null);
+  /** The last session's song in the preferred provider, for its row's trailing button. */
+  const recentLink = $derived.by(() => {
+    if (!recent?.track || !providers) return null;
+    const link = primaryLink(providerLinks(recent.track, providers.custom), providers.provider);
+    if (!link) return null;
+    const name = link.provider.kind === 'custom' ? providers.custom?.name ?? t('provider.customDefault') : serviceName(link.provider.service);
+    return { label: t('result.openIn', name), onclick: () => void platform.openUrl(link.url) };
+  });
+  /** The session pinned from the result's pin button (sessions start unpinned). */
+  let pinnedSession = $state<string | null>(null);
+  const pinned = $derived(pinnedSession !== null && pinnedSession === stage.sessionId);
   const panelLabel = caps.panel === 'sidebar' ? t('nav.sidebar') : t('nav.sidePanel');
 
   onMount(async () => {
@@ -120,6 +132,12 @@
       preferred={providers.provider}
       custom={providers.custom}
       menuUp
+      {pinned}
+      context={stage.source === 'Tab' && pageHost ? t('result.fromTab', pageHost) : null}
+      onpin={(value) => {
+        pinnedSession = value ? stage.sessionId : null;
+        if (stage.sessionId) void engine.setPinned(stage.sessionId, value);
+      }}
       onopen={(url) => void platform.openUrl(url)}
       oncopy={(text) => void platform.copyText(text)}
     />
@@ -156,7 +174,7 @@
       <div class="hint callout">{t('mic.keepOpen')}</div>
     {/if}
     {#if recent}
-      <div class="recent"><SessionRow entry={recent} onclick={() => openApp(`/session/${recent.id}`)} /></div>
+      <div class="recent"><SessionRow entry={recent} openIn={recentLink} onclick={() => openApp(`/session/${recent.id}`)} /></div>
     {/if}
     {@render footer()}
   {:else}
@@ -168,7 +186,7 @@
     </div>
     <Stage {listen} {sources} ontypelyric={focusField} ondownloadmelody={() => void engine.installMelodyIndex()} onopensession={(id) => openApp(`/session/${id}`)} />
     {#if recent}
-      <SessionRow entry={recent} extra="recent" onclick={() => openApp(`/session/${recent.id}`)} />
+      <SessionRow entry={recent} extra="recent" openIn={recentLink} onclick={() => openApp(`/session/${recent.id}`)} />
     {/if}
     {@render footer()}
   {/if}

@@ -65,6 +65,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .popup .top .back + .field { flex: 1; }
 .cand .btn.this { height: 28px; padding: 0 12px; font-size: var(--fs-callout); }
 .recent .text { text-align: left; }
+.row > .row-main { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; height: 100%; text-align: left; }
 
 /* Split-button menu placement: the popup opens it upward (design decision 7). */
 .split-wrap { position: relative; display: inline-flex; }
