@@ -72,7 +72,7 @@ const SEARCH_EVERY_LOW_POWER_MS: u64 = 4_000;
 const SEARCH_MIN_VOICED_MS: u64 = KEEP_GOING_MS;
 /// A top answer this likely, with no runner-up above `CONFIDENT_RUNNER_UP`, that
 /// two searches in a row agree on, ends the capture early.
-const CONFIDENT_SCORE: f32 = 0.9;
+const CONFIDENT_SCORE: f32 = 0.8;
 const CONFIDENT_RUNNER_UP: f32 = 0.1;
 /// Finishing runs one more query when the last one is older than this.
 const FINAL_QUERY_AGE_MS: u64 = 4_000;

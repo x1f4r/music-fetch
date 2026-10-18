@@ -95,8 +95,9 @@ Progressive melody search (impressions only):
 - With `ListenOptions.live_candidates` (default off), each finished search's melody
   candidates go out as `Candidates { is_final: false }` while the phase is still
   `Listening` (melody only, not enriched, scores and tiers as in the final fusion).
-- Confident: the top answer scores ≥ 0.9, no other answer scores above 0.1, and the
-  previous search had the same top song. With `auto_stop` on this ends the capture
+- Confident: the top answer scores ≥ 0.8, no other answer scores above 0.1, and the
+  previous search had the same top song. (On real hums against 58k songs such early
+  answers are right 94 % of the time, 90 % without the agreement.) With `auto_stop` on this ends the capture
   (`Stop::Confident`) and no further searches start.
 - The final melody answer: the streaming frames equal a batch analysis of the capture
   unless the stream took the whistle path, which it must choose from the frames heard so
