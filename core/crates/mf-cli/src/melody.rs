@@ -18,6 +18,7 @@ use mfcore::melody::{MelodyIndex, builder};
 use std::sync::Mutex;
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum MelodyCommand {
     /// Track pitch in a WAV file and print frames as CSV.
     Pitch {
@@ -134,6 +135,10 @@ pub enum EvalCommand {
         /// Track pitch with the streaming tracker (the live session's frames).
         #[arg(long)]
         stream: bool,
+        /// With --stream, keep the frames before a switch to the whistle path in prefix
+        /// rows (the live session drops them since 1.1).
+        #[arg(long)]
+        keep_pre_switch: bool,
         /// The index's learned-encoder file: its hits join the rerank as anchored placements.
         #[arg(long)]
         encoder: Option<PathBuf>,
@@ -162,6 +167,34 @@ pub enum EvalCommand {
         /// Measure the encoder's recall without giving its hits to the rerank.
         #[arg(long)]
         encoder_recall_only: bool,
+        /// Also ask a cloud humming service (acrcloud) and report local, cloud and
+        /// merged answers (see src/cloud.rs); replaces the usual report.
+        #[arg(long)]
+        cloud: Option<String>,
+        /// Credentials JSON (tools/eval/store-acrcloud-credentials.sh writes it).
+        #[arg(long, default_value = "~/.config/music-fetch/acrcloud.json")]
+        cloud_credentials: String,
+        /// Keep every cloud answer here; cached takes are never sent again.
+        #[arg(long)]
+        cloud_cache: Option<PathBuf>,
+        /// Send to this origin instead of the credentials' host (a local stub).
+        #[arg(long)]
+        cloud_base_url: Option<String>,
+        /// Least time between requests (at least 1000 to a real host).
+        #[arg(long, default_value_t = 1000)]
+        cloud_pace_ms: u64,
+        /// Most requests this run sends.
+        #[arg(long, default_value_t = 350)]
+        cloud_max_requests: usize,
+        /// Read cached answers only; send nothing.
+        #[arg(long)]
+        cloud_offline: bool,
+        /// A fixed sample of this many takes, spread over songs.
+        #[arg(long)]
+        cloud_sample: Option<usize>,
+        /// Price of 1,000 requests, for the cost line.
+        #[arg(long)]
+        cloud_price_per_1000: Option<f64>,
     },
     /// Run the impression detector over labelled clips (TSV: wav, impression|music,
     /// start s, duration s) as a live session would, and report its verdicts.
@@ -231,6 +264,7 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             no_trace,
             prefix_ms,
             stream,
+            keep_pre_switch,
             encoder,
             encoder_budget,
             encoder_songs,
@@ -240,6 +274,15 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             encoder_model,
             encoder_reserve,
             encoder_recall_only,
+            cloud,
+            cloud_credentials,
+            cloud_cache,
+            cloud_base_url,
+            cloud_pace_ms,
+            cloud_max_requests,
+            cloud_offline,
+            cloud_sample,
+            cloud_price_per_1000,
         }) => {
             let mut options = MatchOptions { popularity_weight: popularity, ..MatchOptions::default() };
             if let Some(spec) = encoder_model {
@@ -269,7 +312,26 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
                 reserve: encoder_reserve,
                 recall_only: encoder_recall_only,
             });
-            let run = EvalRun { options, trace: !no_trace, prefixes: prefix_ms, stream, encoder };
+            if let Some(provider) = cloud {
+                let home = std::env::var("HOME").unwrap_or_default();
+                let cloud = crate::cloud::CloudArgs {
+                    provider,
+                    credentials: PathBuf::from(cloud_credentials.replacen('~', &home, 1)),
+                    cache: cloud_cache.context("--cloud needs --cloud-cache")?,
+                    base_url: cloud_base_url,
+                    pace_ms: cloud_pace_ms,
+                    max_requests: cloud_max_requests,
+                    offline: cloud_offline,
+                    sample: cloud_sample,
+                    price_per_1000: cloud_price_per_1000,
+                };
+                let mut items = read_queries(&queries)?;
+                if let Some(n) = limit {
+                    items.truncate(n);
+                }
+                return crate::cloud::eval(&index, items, out.as_deref(), encoder.as_ref(), &cloud);
+            }
+            let run = EvalRun { options, trace: !no_trace, prefixes: prefix_ms, stream, keep_pre_switch, encoder };
             eval_qbsh(&index, &queries, out.as_deref(), threads, limit, &run)
         }
         MelodyCommand::Eval(EvalCommand::Detect { list, out, threads }) => eval_detect(&list, out.as_deref(), threads),
@@ -627,6 +689,7 @@ struct EvalRun {
     trace: bool,
     prefixes: Vec<u64>,
     stream: bool,
+    keep_pre_switch: bool,
     /// The learned-encoder stage, if the run uses one.
     encoder: Option<crate::encoder::EncoderArgs>,
 }
@@ -645,15 +708,7 @@ fn eval_qbsh(
         Some(args) => Some(crate::encoder::EncoderEval::open(args, &index)?),
         None => None,
     };
-    let list = std::fs::read_to_string(queries)?;
-    let mut items: Vec<(String, String, String)> = list
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| {
-            let mut f = l.split('\t');
-            Some((f.next()?.to_string(), f.next()?.to_string(), f.next().unwrap_or("").to_string()))
-        })
-        .collect();
+    let mut items = read_queries(queries)?;
     if let Some(n) = limit {
         items.truncate(n);
     }
@@ -760,6 +815,19 @@ fn eval_qbsh(
     Ok(())
 }
 
+/// A query list: TSV of wav path, expected title, expected artist.
+fn read_queries(path: &Path) -> anyhow::Result<Vec<(String, String, String)>> {
+    let list = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(list
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            Some((f.next()?.to_string(), f.next()?.to_string(), f.next().unwrap_or("").to_string()))
+        })
+        .collect())
+}
+
 fn eval_one(
     index: &MelodyIndex,
     tracker: &Arc<PitchTracker>,
@@ -793,11 +861,17 @@ fn eval_one(
         }
     };
     let t = Instant::now();
+    // First frame of the whistle path after a switch mid-stream.
+    let mut switch: Option<usize> = None;
     let (frames, whistle) = if run.stream {
         let mut s = StreamingPitch::new(tracker.clone());
         let mut frames = Vec::new();
         for chunk in samples.chunks(320) {
+            let was = s.is_whistle();
             frames.extend(s.push_detailed(chunk));
+            if !was && s.is_whistle() {
+                switch = Some(frames.len());
+            }
         }
         frames.extend(s.finish_detailed());
         (frames, s.is_whistle())
@@ -814,7 +888,15 @@ fn eval_one(
         row.pitch_ms = pitch_ms;
         row.whistle = whistle;
         let part: &[FrameDetail] = match prefix {
-            Some(p) => &frames[..frames.partition_point(|f| f.t_ms < p)],
+            Some(p) => {
+                let end = frames.partition_point(|f| f.t_ms < p);
+                // As the live session searches while humming.
+                let start = match switch {
+                    Some(i) if !run.keep_pre_switch => i.min(end),
+                    _ => 0,
+                };
+                &frames[start..end]
+            }
             None => &frames,
         };
         let Some(query) = query_from_details(part) else {

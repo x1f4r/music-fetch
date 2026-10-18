@@ -490,8 +490,7 @@ async fn transcribe(ctx: &SessionCtx, speech: Arc<dyn SpeechToText>, audio: &[f3
 
 async fn acr_source(ctx: &SessionCtx, audio: &[f32]) -> Answer {
     let Some(creds) = ctx.credentials.acr_humming.clone() else { return Answer::Acr(Vec::new()) };
-    let newest = &audio[audio.len().saturating_sub(ACR_CLIP_MS * SAMPLE_RATE as usize / 1000)..];
-    let wav = encode_wav(&f32_to_i16(&downsample_half(newest)), ACR_RATE);
+    let wav = acr_humming_clip(audio);
     let client = AcrCloud::new(ctx.engine.http.clone(), creds);
     match tokio::time::timeout(ACR_TIMEOUT, client.recognize_humming(wav, &ctx.cancel)).await {
         Ok(Ok(matches)) => Answer::Acr(matches),
@@ -619,23 +618,62 @@ impl Fusion {
 
     /// Fuse everything collected so far.
     async fn candidates(&mut self, index: Option<&Arc<MelodyIndex>>) -> Vec<Candidate> {
-        let others: Vec<(CandidateSourceKind, Track, f32, Option<String>)> = self
-            .lyrics
+        let others = self.others();
+        if let Some(index) = index {
+            let missing = self.missing_songs(&others);
+            if !missing.is_empty() {
+                let keys: Vec<String> = missing.iter().map(|(k, _, _)| k.clone()).collect();
+                let index = index.clone();
+                match blocking("melody index lookup", move || find_songs(&index, missing)).await {
+                    Some(found) => self.songs.extend(found),
+                    None => self.songs.extend(keys.into_iter().map(|k| (k, None))),
+                }
+            }
+            if let Some(query) = self.query.clone() {
+                let ids = self.support_ids(&others);
+                if !ids.is_empty() {
+                    let (index, wanted) = (index.clone(), ids.clone());
+                    match blocking("melody scoring", move || score_songs(&index, &query, wanted)).await {
+                        Some(scored) => self.support.extend(scored),
+                        None => self.support.extend(ids.into_iter().map(|id| (id, None))),
+                    }
+                }
+            }
+        }
+        self.assemble(others)
+    }
+
+    /// [`candidates`](Self::candidates) on the calling thread.
+    fn candidates_now(&mut self, index: Option<&MelodyIndex>) -> Vec<Candidate> {
+        let others = self.others();
+        if let Some(index) = index {
+            let missing = self.missing_songs(&others);
+            self.songs.extend(find_songs(index, missing));
+            if let Some(query) = self.query.clone() {
+                let ids = self.support_ids(&others);
+                self.support.extend(score_songs(index, &query, ids));
+            }
+        }
+        self.assemble(others)
+    }
+
+    /// Lyric and ACR answers as (kind, track, score, detail).
+    fn others(&self) -> Vec<Other> {
+        self.lyrics
             .iter()
             .map(|m| (CandidateSourceKind::Lyrics, m.track.clone(), m.score, m.matched_line.clone()))
             .chain(self.acr.iter().map(|m| (CandidateSourceKind::AcrHumming, m.track.clone(), m.score, None)))
-            .collect();
-        if let Some(index) = index {
-            self.lookup_songs(index, &others).await;
-            self.score_support(index, &others).await;
-        }
+            .collect()
+    }
 
+    /// Evidence from every answer, plus melody support for lyric/ACR candidates
+    /// the melody search did not return, fused into candidates.
+    fn assemble(&self, others: Vec<Other>) -> Vec<Candidate> {
         let mut evidence: Vec<Evidence> = self.melody.iter().map(melody_evidence).collect();
         for (kind, track, score, detail) in others {
             let song = self.songs.get(&identity::identity_key(&track)).copied().flatten();
             evidence.push(Evidence { kind, track, song, score, detail, alignment: None });
         }
-        // Melody evidence for lyric/ACR candidates the melody search did not return.
         let found: Vec<u32> = self.melody.iter().map(|m| m.song.id).collect();
         let mut supported: Vec<u32> = evidence.iter().filter_map(|e| e.song).filter(|id| !found.contains(id)).collect();
         supported.sort_unstable();
@@ -648,42 +686,17 @@ impl Fusion {
         fuse(evidence)
     }
 
-    /// Find lyric/ACR tracks in the melody index (cached per identity).
-    async fn lookup_songs(
-        &mut self,
-        index: &Arc<MelodyIndex>,
-        others: &[(CandidateSourceKind, Track, f32, Option<String>)],
-    ) {
-        let missing: Vec<(String, String, String)> = others
+    /// Lyric/ACR tracks not yet looked up in the index: (identity key, title, artist).
+    fn missing_songs(&self, others: &[Other]) -> Vec<(String, String, String)> {
+        others
             .iter()
             .map(|(_, t, _, _)| (identity::identity_key(t), t.title.clone(), t.artist.clone()))
             .filter(|(key, _, _)| !self.songs.contains_key(key))
-            .collect();
-        if missing.is_empty() {
-            return;
-        }
-        let index = index.clone();
-        let keys: Vec<String> = missing.iter().map(|(k, _, _)| k.clone()).collect();
-        let found = blocking("melody index lookup", move || {
-            missing
-                .into_iter()
-                .map(|(key, title, artist)| (key, index.find_song(&title, &artist).map(|s| s.id)))
-                .collect::<Vec<_>>()
-        })
-        .await;
-        match found {
-            Some(found) => self.songs.extend(found),
-            None => self.songs.extend(keys.into_iter().map(|k| (k, None))),
-        }
+            .collect()
     }
 
-    /// Score the query against index songs of lyric/ACR candidates (cached per song).
-    async fn score_support(
-        &mut self,
-        index: &Arc<MelodyIndex>,
-        others: &[(CandidateSourceKind, Track, f32, Option<String>)],
-    ) {
-        let Some(query) = self.query.clone() else { return };
+    /// Index songs of lyric/ACR candidates the query was not yet scored against.
+    fn support_ids(&self, others: &[Other]) -> Vec<u32> {
         let found: Vec<u32> = self.melody.iter().map(|m| m.song.id).collect();
         let mut ids: Vec<u32> = others
             .iter()
@@ -692,20 +705,41 @@ impl Fusion {
             .collect();
         ids.sort_unstable();
         ids.dedup();
-        if ids.is_empty() {
-            return;
-        }
-        let index = index.clone();
-        let wanted = ids.clone();
-        let scored = blocking("melody scoring", move || {
-            wanted.into_iter().map(|id| (id, matcher::score_song(&index, &query, id))).collect::<Vec<_>>()
-        })
-        .await;
-        match scored {
-            Some(scored) => self.support.extend(scored),
-            None => self.support.extend(ids.into_iter().map(|id| (id, None))),
-        }
+        ids
     }
+}
+
+/// A lyric or ACR answer: (kind, track, score, detail).
+type Other = (CandidateSourceKind, Track, f32, Option<String>);
+
+/// Index song ids of (identity key, title, artist) lookups.
+fn find_songs(index: &MelodyIndex, missing: Vec<(String, String, String)>) -> Vec<(String, Option<u32>)> {
+    missing.into_iter().map(|(key, title, artist)| (key, index.find_song(&title, &artist).map(|s| s.id))).collect()
+}
+
+/// How the query scores against each song.
+fn score_songs(index: &MelodyIndex, query: &MelodyQuery, ids: Vec<u32>) -> Vec<(u32, Option<MelodyMatch>)> {
+    ids.into_iter().map(|id| (id, matcher::score_song(index, query, id))).collect()
+}
+
+/// Melody, sung-lyric and ACRCloud answers fused as an impression session fuses
+/// them, on the calling thread (CPU-bound; for evaluation tools).
+pub fn fuse_answers(
+    index: Option<&MelodyIndex>,
+    query: Option<MelodyQuery>,
+    melody: Vec<MelodyMatch>,
+    lyrics: Vec<LyricMatch>,
+    acr: Vec<ProviderMatch>,
+) -> Vec<Candidate> {
+    let mut fusion = Fusion { query, melody, lyrics, acr, ..Fusion::default() };
+    fusion.candidates_now(index)
+}
+
+/// The clip an impression sends to ACRCloud humming: the newest ≤ 12 s of the
+/// 16 kHz capture, as an 8 kHz 16-bit WAV.
+pub fn acr_humming_clip(audio: &[f32]) -> Vec<u8> {
+    let newest = &audio[audio.len().saturating_sub(ACR_CLIP_MS * SAMPLE_RATE as usize / 1000)..];
+    encode_wav(&f32_to_i16(&downsample_half(newest)), ACR_RATE)
 }
 
 fn song_track(song: &SongMeta) -> Track {
