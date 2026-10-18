@@ -1,14 +1,21 @@
 //! Melody index installation: manifest, streamed download with progress,
 //! SHA-256 verification and an atomic swap. See docs/PIPELINES.md ("Melody
 //! index installation") and docs/CORE_API.md ("Melody index").
+//!
+//! In the browser the index is a work file (`melody/melody-index.mfi` in
+//! `EngineCtx::files`) instead of a memory-mapped file. It is read into memory
+//! only when humming needs it ([`load_installed`], in 1 MiB pieces with the
+//! event loop running in between) and dropped with the Worker; a download
+//! builds the index in memory as it arrives, so installing needs no second read.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(not(target_family = "wasm"))]
 use tokio::io::AsyncWriteExt;
 
 use crate::error::{MfError, Result};
@@ -16,6 +23,7 @@ use crate::melody::{MelodyIndex, index};
 use crate::model::{MelodyIndexStatus, Phase};
 use crate::pipeline::ctx::{EngineCtx, SessionCtx};
 use crate::util::cancel::CancelToken;
+use crate::util::rt::Instant;
 
 /// The installed index, in `data_dir/melody/`.
 pub const INDEX_FILE: &str = "melody-index.mfi";
@@ -134,9 +142,15 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-/// `data_dir/melody`.
+/// `data_dir/melody` (in the browser the name prefix `melody` in `files`).
 pub fn melody_dir(engine: &EngineCtx) -> PathBuf {
-    PathBuf::from(&engine.config.data_dir).join("melody")
+    #[cfg(not(target_family = "wasm"))]
+    return PathBuf::from(&engine.config.data_dir).join("melody");
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = engine;
+        PathBuf::from("melody")
+    }
 }
 
 /// `data_dir/melody/melody-index.mfi`.
@@ -146,8 +160,17 @@ pub fn index_path(engine: &EngineCtx) -> PathBuf {
 
 /// The manifest of the installed index, if any.
 pub fn installed_manifest(engine: &EngineCtx) -> Option<Manifest> {
+    #[cfg(not(target_family = "wasm"))]
     let text = std::fs::read_to_string(melody_dir(engine).join(MANIFEST_FILE)).ok()?;
+    #[cfg(target_family = "wasm")]
+    let text = String::from_utf8(engine.files.read(&name(&melody_dir(engine).join(MANIFEST_FILE))).ok()?).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+/// A path below `melody_dir` as a work-file name (browser).
+#[cfg(target_family = "wasm")]
+fn name(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 /// Run melody-index code that may panic (the index is untrusted data).
@@ -158,6 +181,7 @@ fn guarded<T>(f: impl FnOnce() -> T) -> Option<T> {
 /// Open the installed index at startup. An index of another format (installed
 /// by an older or newer app version) is deleted, a damaged file moved aside
 /// (`melody-index.mfi.corrupt-<ms>`), so a fresh download can replace it.
+#[cfg(not(target_family = "wasm"))]
 pub fn open_installed(engine: &EngineCtx) -> Option<Arc<MelodyIndex>> {
     let path = index_path(engine);
     if !path.exists() {
@@ -199,27 +223,96 @@ pub fn status(engine: &EngineCtx, available: Option<&Manifest>) -> MelodyIndexSt
         .or_else(|| manifest.as_ref().map(|m| m.version.clone()));
     let song_count =
         index.as_ref().and_then(|i| guarded(|| i.song_count())).or(manifest.as_ref().map(|m| m.songs)).unwrap_or(0);
-    let size_bytes = std::fs::metadata(index_path(engine)).map(|m| m.len()).unwrap_or(0);
-    let newer = available.filter(|m| match (&version, index.is_some()) {
+    #[cfg(not(target_family = "wasm"))]
+    let (size_bytes, installed) =
+        (std::fs::metadata(index_path(engine)).map(|m| m.len()).unwrap_or(0), index.is_some());
+    // In the browser the index is loaded only for humming: a stored file with
+    // its manifest counts as installed.
+    #[cfg(target_family = "wasm")]
+    let (size_bytes, installed) = {
+        let size = engine.files.len(&name(&index_path(engine))).ok().flatten().unwrap_or(0);
+        (size, index.is_some() || (size > 0 && manifest.as_ref().is_some_and(|m| m.bytes == size)))
+    };
+    let newer = available.filter(|m| match (&version, installed) {
         (Some(v), true) => compare_versions(&m.version, v).is_gt(),
         _ => true,
     });
     MelodyIndexStatus {
-        installed: index.is_some(),
-        version: if index.is_some() { version } else { None },
-        song_count: if index.is_some() { song_count } else { 0 },
-        size_bytes: if index.is_some() { size_bytes } else { 0 },
+        installed,
+        version: if installed { version } else { None },
+        song_count: if installed { song_count } else { 0 },
+        size_bytes: if installed { size_bytes } else { 0 },
         available_version: newer.map(|m| m.version.clone()),
         download_bytes: newer.map(|m| m.bytes),
     }
 }
+
+/// Browser: reads the installed index into memory (1 MiB at a time, letting
+/// the event loop run in between) and swaps it in. `None` when none is
+/// installed; an index of another format is deleted and a damaged one moved
+/// aside, as natively at startup.
+#[cfg(target_family = "wasm")]
+pub async fn load_installed(engine: &EngineCtx) -> Option<Arc<MelodyIndex>> {
+    use crate::melody::index::IndexLoader;
+    if let Some(index) = engine.melody_index() {
+        return Some(index);
+    }
+    let file = name(&index_path(engine));
+    let manifest = name(&melody_dir(engine).join(MANIFEST_FILE));
+    let size = engine.files.len(&file).ok().flatten()?;
+    let started = Instant::now();
+    let mut head = [0u8; 12];
+    if engine.files.read_at(&file, 0, &mut head).ok()? == head.len()
+        && let Some(format) = index::header_format(&head)
+        && format != index::FORMAT
+    {
+        tracing::info!("removing the format {format} melody index (this version reads format {})", index::FORMAT);
+        let _ = engine.files.remove(&file);
+        let _ = engine.files.remove(&manifest);
+        return None;
+    }
+    let read = async {
+        let mut loader = IndexLoader::new(size)?;
+        let mut piece = vec![0u8; LOAD_PIECE];
+        while loader.len() < size {
+            let n = engine.files.read_at(&file, loader.len(), &mut piece)?;
+            if n == 0 {
+                return Err(MfError::Internal { message: "the melody index is incomplete".into() });
+            }
+            loader.push(&piece[..n])?;
+            crate::util::rt::yield_now().await;
+        }
+        loader.finish()
+    };
+    match read.await {
+        Ok(index) => {
+            tracing::info!(bytes = size, ms = started.elapsed().as_millis() as u64, "melody index loaded");
+            let index = Arc::new(index);
+            *engine.melody.write() = Some(index.clone());
+            Some(index)
+        }
+        Err(e) => {
+            tracing::error!("melody index unreadable ({e}); moving it aside");
+            let aside = format!("{file}.corrupt-{}", crate::util::now_ms());
+            if let Err(e) = engine.files.rename(&file, &aside) {
+                tracing::warn!("could not move the melody index aside: {e}");
+            }
+            let _ = engine.files.remove(&manifest);
+            None
+        }
+    }
+}
+
+/// Browser: piece size of [`load_installed`].
+#[cfg(target_family = "wasm")]
+const LOAD_PIECE: usize = 1024 * 1024;
 
 /// Fetch and validate the manifest.
 pub async fn fetch_manifest(http: &reqwest::Client, url: &str, cancel: &CancelToken) -> Result<Manifest> {
     if url.trim().is_empty() {
         return Err(MfError::invalid("No melody index source is configured."));
     }
-    let request = http.get(url.trim()).timeout(MANIFEST_TIMEOUT).send();
+    let request = crate::util::http::prepare(http.get(url.trim()).timeout(MANIFEST_TIMEOUT)).send();
     let response = tokio::select! {
         r = request => r.map_err(|e| network(&e))?,
         _ = cancel.canceled() => return Err(MfError::Canceled),
@@ -252,8 +345,10 @@ fn network(e: &reqwest::Error) -> MfError {
 }
 
 /// Deletes the partial download unless disarmed.
+#[cfg(not(target_family = "wasm"))]
 struct Partial(Option<PathBuf>);
 
+#[cfg(not(target_family = "wasm"))]
 impl Drop for Partial {
     fn drop(&mut self) {
         if let Some(path) = self.0.take() {
@@ -265,6 +360,7 @@ impl Drop for Partial {
 /// Download, verify and install the index from `manifest_url`, then swap it
 /// into the engine. Emits `Phase(Downloading, fraction)`; the caller emits the
 /// terminal event.
+#[cfg(not(target_family = "wasm"))]
 pub async fn install(ctx: &SessionCtx, manifest_url: &str) -> Result<Manifest> {
     let engine = &ctx.engine;
     ctx.emitter.phase(Phase::Downloading, Some(0.0));
@@ -289,7 +385,8 @@ pub async fn install(ctx: &SessionCtx, manifest_url: &str) -> Result<Manifest> {
     ctx.cancel.check()?;
 
     let open_path = partial_path.clone();
-    let opened = tokio::task::spawn_blocking(move || guarded(|| MelodyIndex::open(&open_path))).await.ok().flatten();
+    let opened =
+        crate::util::rt::spawn_blocking(move || guarded(|| MelodyIndex::open(&open_path))).await.ok().flatten();
     let index = match opened {
         Some(Ok(index)) => index,
         _ => return Err(MfError::internal("the downloaded melody index could not be opened")),
@@ -306,8 +403,9 @@ pub async fn install(ctx: &SessionCtx, manifest_url: &str) -> Result<Manifest> {
     Ok(manifest)
 }
 
+#[cfg(not(target_family = "wasm"))]
 async fn download(ctx: &SessionCtx, manifest: &Manifest, path: &Path) -> Result<()> {
-    let request = ctx.engine.http.get(&manifest.url).timeout(DOWNLOAD_TIMEOUT).send();
+    let request = crate::util::http::prepare(ctx.engine.http.get(&manifest.url).timeout(DOWNLOAD_TIMEOUT)).send();
     let mut response = tokio::select! {
         r = request => r.map_err(|e| network(&e))?,
         _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
@@ -325,7 +423,7 @@ async fn download(ctx: &SessionCtx, manifest: &Manifest, path: &Path) -> Result<
     let mut reported = (0f32, Instant::now());
     loop {
         let next = tokio::select! {
-            r = tokio::time::timeout(STALL_TIMEOUT, response.chunk()) => r,
+            r = crate::util::rt::timeout(STALL_TIMEOUT, response.chunk()) => r,
             _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
         };
         let chunk = match next {
@@ -357,6 +455,7 @@ async fn download(ctx: &SessionCtx, manifest: &Manifest, path: &Path) -> Result<
     Ok(())
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn write_manifest(dir: &Path, manifest: &Manifest) -> Result<()> {
     let tmp = dir.join(".manifest.json.tmp");
     let json = serde_json::to_vec_pretty(manifest)?;
@@ -371,14 +470,124 @@ fn write_manifest(dir: &Path, manifest: &Manifest) -> Result<()> {
 pub fn remove(engine: &EngineCtx) -> Result<()> {
     *engine.melody.write() = None;
     let dir = melody_dir(engine);
-    for name in [INDEX_FILE, MANIFEST_FILE, DOWNLOAD_FILE] {
-        match std::fs::remove_file(dir.join(name)) {
+    for file in [INDEX_FILE, MANIFEST_FILE, DOWNLOAD_FILE] {
+        #[cfg(not(target_family = "wasm"))]
+        match std::fs::remove_file(dir.join(file)) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(MfError::Storage { message: "The melody index could not be removed.".into() }),
         }
+        #[cfg(target_family = "wasm")]
+        if engine.files.remove(&name(&dir.join(file))).is_err() {
+            return Err(MfError::Storage { message: "The melody index could not be removed.".into() });
+        }
     }
     Ok(())
+}
+
+/// Browser: the index downloads into a work file and into memory at once
+/// (SHA-256 on the way), so it is ready without reading the file back.
+#[cfg(target_family = "wasm")]
+pub async fn install(ctx: &SessionCtx, manifest_url: &str) -> Result<Manifest> {
+    let engine = &ctx.engine;
+    ctx.emitter.phase(Phase::Downloading, Some(0.0));
+    let manifest = fetch_manifest(&engine.http, manifest_url, &ctx.cancel).await?;
+    let dir = melody_dir(engine);
+    let current = installed_manifest(engine);
+    let same = |m: &Manifest| m.version == manifest.version && m.sha256.eq_ignore_ascii_case(&manifest.sha256);
+    if current.as_ref().is_some_and(same) && status(engine, None).installed {
+        ctx.emitter.phase(Phase::Downloading, Some(1.0));
+        return Ok(manifest);
+    }
+    let partial = name(&dir.join(DOWNLOAD_FILE));
+    let downloaded = download_into_memory(ctx, &manifest, &partial).await;
+    let index = match downloaded.and_then(|loader| {
+        ctx.cancel.check()?;
+        guarded(|| loader.finish()).unwrap_or_else(|| Err(MfError::internal("melody index")))
+    }) {
+        Ok(index) => index,
+        Err(e) => {
+            let _ = engine.files.remove(&partial);
+            return Err(match e {
+                MfError::Canceled | MfError::Network { .. } | MfError::Storage { .. } | MfError::IndexUnavailable => e,
+                _ => MfError::internal("the downloaded melody index could not be opened"),
+            });
+        }
+    };
+    let saved = engine.files.rename(&partial, &name(&dir.join(INDEX_FILE))).and_then(|()| {
+        let json = serde_json::to_vec_pretty(&manifest)?;
+        engine.files.write(&name(&dir.join(MANIFEST_FILE)), &json)
+    });
+    if saved.is_err() {
+        let _ = engine.files.remove(&partial);
+        return Err(MfError::Storage { message: "The melody index could not be saved.".into() });
+    }
+    *engine.melody.write() = Some(Arc::new(index));
+    ctx.emitter.phase(Phase::Downloading, Some(1.0));
+    Ok(manifest)
+}
+
+#[cfg(target_family = "wasm")]
+async fn download_into_memory(
+    ctx: &SessionCtx,
+    manifest: &Manifest,
+    partial: &str,
+) -> Result<crate::melody::index::IndexLoader> {
+    use futures_util::StreamExt;
+    let request = crate::util::http::prepare(ctx.engine.http.get(&manifest.url).timeout(DOWNLOAD_TIMEOUT)).send();
+    let response = tokio::select! {
+        r = request => r.map_err(|e| network(&e))?,
+        _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
+    };
+    if !response.status().is_success() {
+        return Err(MfError::network(format!(
+            "The melody index download failed (HTTP {}).",
+            response.status().as_u16()
+        )));
+    }
+    let storage = |_| MfError::Storage { message: "The melody index could not be saved.".into() };
+    let damaged = || MfError::network("The download was damaged. Try again.");
+    let mut loader = crate::melody::index::IndexLoader::new(manifest.bytes).map_err(|e| match e {
+        MfError::IndexUnavailable => damaged(),
+        other => other,
+    })?;
+    let mut file = ctx.engine.files.create(partial).map_err(storage)?;
+    let mut hasher = Sha256::new();
+    let mut reported = (0f32, Instant::now());
+    let mut stream = response.bytes_stream();
+    loop {
+        let next = tokio::select! {
+            r = crate::util::rt::timeout(STALL_TIMEOUT, stream.next()) => r,
+            _ = ctx.cancel.canceled() => return Err(MfError::Canceled),
+        };
+        let chunk = match next {
+            Ok(Some(Ok(chunk))) => chunk,
+            Ok(None) => break,
+            Ok(Some(Err(e))) => return Err(network(&e)),
+            Err(_) => return Err(MfError::network("The download stalled.")),
+        };
+        if loader.len() + chunk.len() as u64 > manifest.bytes {
+            return Err(damaged());
+        }
+        hasher.update(&chunk);
+        loader.push(&chunk).map_err(|e| match e {
+            MfError::IndexUnavailable => MfError::IndexUnavailable,
+            _ => damaged(),
+        })?;
+        file.append(&chunk).map_err(storage)?;
+        let fraction = loader.len() as f32 / manifest.bytes as f32;
+        if fraction - reported.0 >= PROGRESS_STEP && reported.1.elapsed() >= PROGRESS_INTERVAL {
+            reported = (fraction, Instant::now());
+            ctx.emitter.phase(Phase::Downloading, Some(fraction.min(0.99)));
+        }
+    }
+    file.finish().map_err(storage)?;
+    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if loader.len() != manifest.bytes || !digest.eq_ignore_ascii_case(&manifest.sha256) {
+        tracing::warn!(written = loader.len(), expected = manifest.bytes, "melody index download failed verification");
+        return Err(damaged());
+    }
+    Ok(loader)
 }
 
 #[cfg(test)]

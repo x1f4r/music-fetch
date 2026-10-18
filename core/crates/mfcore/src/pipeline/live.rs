@@ -6,6 +6,10 @@
 //! pitch, impression detection) and schedules recognizer calls on the engine
 //! runtime. Time is measured in captured audio, so a session behaves the same
 //! whether audio arrives in real time or faster.
+//!
+//! In the browser there are no threads: the same loop runs as a task on the
+//! engine Worker's event loop and processes each pushed chunk as soon as the
+//! push returns (DSP inline in the Worker, recognizer calls as tasks).
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -29,6 +33,7 @@ use crate::pipeline::hum;
 use crate::pipeline::recognize::{self, RecognitionHit};
 use crate::shazam::Priority;
 use crate::store::SessionUpdate;
+use crate::util::rt;
 
 /// Longest capture; the session ends there.
 const MAX_CAPTURE_MS: u64 = 30_000;
@@ -107,6 +112,9 @@ struct InputState {
 pub struct LiveInput {
     state: Mutex<InputState>,
     ready: Condvar,
+    /// Wakes the DSP task in the browser (no threads to park there).
+    #[cfg(target_family = "wasm")]
+    ready_task: tokio::sync::Notify,
     /// The DSP thread is working on a chunk.
     busy: AtomicBool,
     /// A recognizer call is running.
@@ -152,17 +160,23 @@ impl LiveInput {
             }
         }
         self.ready.notify_one();
+        #[cfg(target_family = "wasm")]
+        self.ready_task.notify_one();
     }
 
     /// The user stopped capture.
     pub fn finish(&self) {
         self.state.lock().finished = true;
         self.ready.notify_all();
+        #[cfg(target_family = "wasm")]
+        self.ready_task.notify_one();
     }
 
     /// Wake the DSP thread (after cancellation).
     pub fn wake(&self) {
         self.ready.notify_all();
+        #[cfg(target_family = "wasm")]
+        self.ready_task.notify_one();
     }
 
     fn close(&self) {
@@ -198,15 +212,34 @@ impl LiveInput {
     }
 
     /// Next chunk, waiting up to `timeout`. `Err(())` once finished and drained.
+    #[cfg(not(target_family = "wasm"))]
     fn pop(&self, timeout: Duration) -> std::result::Result<Option<Chunk>, ()> {
         let mut state = self.state.lock();
         if state.chunks.is_empty() && !state.finished {
             self.ready.wait_for(&mut state, timeout);
         }
+        Self::take(&mut state, &self.busy)
+    }
+
+    /// [`pop`](Self::pop) for the browser's DSP task: waits without blocking.
+    #[cfg(target_family = "wasm")]
+    async fn pop_async(&self, timeout: Duration) -> std::result::Result<Option<Chunk>, ()> {
+        let idle = {
+            let state = self.state.lock();
+            state.chunks.is_empty() && !state.finished
+        };
+        if idle {
+            // A push between the check and the wait leaves a permit: no lost wake-up.
+            let _ = rt::timeout(timeout, self.ready_task.notified()).await;
+        }
+        Self::take(&mut self.state.lock(), &self.busy)
+    }
+
+    fn take(state: &mut InputState, busy: &AtomicBool) -> std::result::Result<Option<Chunk>, ()> {
         match state.chunks.pop_front() {
             Some(chunk) => {
                 state.backlog_ms = (state.backlog_ms - chunk.ms).max(0.0);
-                self.busy.store(true, Ordering::SeqCst);
+                busy.store(true, Ordering::SeqCst);
                 Ok(Some(chunk))
             }
             None if state.finished => Err(()),
@@ -225,7 +258,7 @@ pub fn session_kind(source: CaptureSource, mode: ListenMode) -> SessionKind {
 }
 
 /// Start the DSP thread of a live session. `on_exit` runs on that thread after
-/// the terminal event.
+/// the terminal event. (In the browser: a task on the event loop.)
 pub fn spawn(
     ctx: Arc<SessionCtx>,
     source: CaptureSource,
@@ -234,31 +267,66 @@ pub fn spawn(
     input: Arc<LiveInput>,
     on_exit: impl FnOnce() + Send + 'static,
 ) -> Result<()> {
-    let name = format!("mf-live-{}", ctx.id.chars().take(8).collect::<String>());
-    std::thread::Builder::new()
-        .name(name)
-        .spawn(move || {
-            let kind = session_kind(source, mode);
-            ctx.emitter.started(kind);
-            let outcome =
-                catch_unwind(AssertUnwindSafe(|| Live::new(ctx.clone(), source, mode, options, input.clone()).run()));
-            if let Err(panic) = outcome {
-                tracing::error!(session = %ctx.id, "live session panicked: {}", panic_message(&panic));
-                ctx.emitter.failed(&MfError::internal("the session stopped unexpectedly"));
-            }
-            input.close();
-            if !ctx.emitter.is_terminal() {
-                if ctx.cancel.is_canceled() {
-                    ctx.emitter.canceled();
-                } else {
-                    ctx.emitter.failed(&MfError::internal("the session ended without a result"));
-                }
-            }
-            ctx.cleanup();
+    #[cfg(target_family = "wasm")]
+    {
+        let runtime = ctx.engine.runtime.clone();
+        runtime.spawn(async move {
+            ctx.emitter.started(session_kind(source, mode));
+            // Panics end the whole instance in the browser; nothing to catch.
+            Live::new(ctx.clone(), source, mode, options, input.clone()).run_async().await;
+            ended(&ctx, &input);
             on_exit();
-        })
-        .map(drop)
-        .map_err(|e| MfError::internal(format!("could not start the listening thread: {e}")))
+        });
+        Ok(())
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let name = format!("mf-live-{}", ctx.id.chars().take(8).collect::<String>());
+        std::thread::Builder::new()
+            .name(name)
+            .spawn(move || {
+                let kind = session_kind(source, mode);
+                ctx.emitter.started(kind);
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    Live::new(ctx.clone(), source, mode, options, input.clone()).run()
+                }));
+                if let Err(panic) = outcome {
+                    tracing::error!(session = %ctx.id, "live session panicked: {}", panic_message(&panic));
+                    ctx.emitter.failed(&MfError::internal("the session stopped unexpectedly"));
+                }
+                ended(&ctx, &input);
+                on_exit();
+            })
+            .map(drop)
+            .map_err(|e| MfError::internal(format!("could not start the listening thread: {e}")))
+    }
+}
+
+/// After the session body: no more audio, exactly one terminal event, no work files.
+fn ended(ctx: &SessionCtx, input: &LiveInput) {
+    input.close();
+    if !ctx.emitter.is_terminal() {
+        if ctx.cancel.is_canceled() {
+            ctx.emitter.canceled();
+        } else {
+            ctx.emitter.failed(&MfError::internal("the session ended without a result"));
+        }
+    }
+    ctx.cleanup();
+}
+
+/// The result of a task that already finished, without waiting.
+fn finished<T>(runtime: &rt::Handle, task: rt::JoinHandle<T>) -> std::result::Result<T, rt::JoinError> {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        runtime.block_on(task)
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        use futures_util::FutureExt;
+        let _ = runtime;
+        task.now_or_never().expect("a finished task has its result")
+    }
 }
 
 /// Text of a panic payload.
@@ -296,9 +364,9 @@ enum Stop {
     Canceled,
 }
 
-type QueryTask = tokio::task::JoinHandle<Result<Option<RecognitionHit>>>;
+type QueryTask = rt::JoinHandle<Result<Option<RecognitionHit>>>;
 /// A progressive melody search over the first `frames` pitch frames.
-type SearchTask = (usize, tokio::task::JoinHandle<Option<hum::MelodySearch>>);
+type SearchTask = (usize, rt::JoinHandle<Option<hum::MelodySearch>>);
 
 /// The newest finished progressive search.
 struct Searched {
@@ -402,12 +470,9 @@ impl Live {
         self.capture.len() as u64 * 1000 / u64::from(SAMPLE_RATE)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn run(mut self) {
-        self.ctx.emitter.phase(Phase::Listening, None);
-        if self.impression_at_ms.is_some() {
-            self.notify_missing_index();
-        }
-        self.start_pitch();
+        self.begin();
         let stop = self.listen();
         self.input.close();
         self.input.busy.store(false, Ordering::SeqCst);
@@ -417,6 +482,28 @@ impl Live {
         let runtime = self.ctx.engine.runtime.clone();
         runtime.block_on(self.finish(stop));
         self.input.inflight.store(false, Ordering::SeqCst);
+    }
+
+    /// [`run`](Self::run) as a task (browser).
+    #[cfg(target_family = "wasm")]
+    async fn run_async(mut self) {
+        self.begin();
+        let stop = self.listen_async().await;
+        self.input.close();
+        self.input.busy.store(false, Ordering::SeqCst);
+        if stop == Stop::Canceled {
+            return;
+        }
+        self.finish(stop).await;
+        self.input.inflight.store(false, Ordering::SeqCst);
+    }
+
+    fn begin(&mut self) {
+        self.ctx.emitter.phase(Phase::Listening, None);
+        if self.impression_at_ms.is_some() {
+            self.notify_missing_index();
+        }
+        self.start_pitch();
     }
 
     fn start_pitch(&mut self) {
@@ -432,30 +519,57 @@ impl Live {
     }
 
     /// The capture loop; returns why it stopped.
+    #[cfg(not(target_family = "wasm"))]
     fn listen(&mut self) -> Stop {
         loop {
-            if self.ctx.cancel.is_canceled() {
-                return Stop::Canceled;
-            }
-            self.poll_queries();
-            self.poll_search();
-            if self.matched.is_some() {
-                return Stop::Matched;
-            }
-            if let Some(stop) = self.stop_condition() {
+            if let Some(stop) = self.poll_stop() {
                 return stop;
             }
             match self.input.pop(POP_TIMEOUT) {
+                Ok(Some(chunk)) => self.take_chunk(chunk),
+                Ok(None) => {}
+                Err(()) => return Stop::User,
+            }
+        }
+    }
+
+    /// [`listen`](Self::listen) as a task (browser): each chunk is processed
+    /// when it arrives; between chunks the recognizer and search tasks run.
+    #[cfg(target_family = "wasm")]
+    async fn listen_async(&mut self) -> Stop {
+        loop {
+            if let Some(stop) = self.poll_stop() {
+                return stop;
+            }
+            match self.input.pop_async(POP_TIMEOUT).await {
                 Ok(Some(chunk)) => {
-                    self.process(chunk);
-                    self.poll_queries();
-                    self.poll_search();
-                    self.input.busy.store(false, Ordering::SeqCst);
+                    self.take_chunk(chunk);
+                    rt::yield_to_tasks().await;
                 }
                 Ok(None) => {}
                 Err(()) => return Stop::User,
             }
         }
+    }
+
+    /// Collects finished work; `Some` when capture must stop.
+    fn poll_stop(&mut self) -> Option<Stop> {
+        if self.ctx.cancel.is_canceled() {
+            return Some(Stop::Canceled);
+        }
+        self.poll_queries();
+        self.poll_search();
+        if self.matched.is_some() {
+            return Some(Stop::Matched);
+        }
+        self.stop_condition()
+    }
+
+    fn take_chunk(&mut self, chunk: Chunk) {
+        self.process(chunk);
+        self.poll_queries();
+        self.poll_search();
+        self.input.busy.store(false, Ordering::SeqCst);
     }
 
     fn process(&mut self, chunk: Chunk) {
@@ -605,7 +719,7 @@ impl Live {
         }
         let Some((frames, task)) = self.search.take() else { return };
         let runtime = self.ctx.engine.runtime.clone();
-        match runtime.block_on(task) {
+        match finished(&runtime, task) {
             Ok(Some(result)) => self.take_search(frames, result),
             Ok(None) => {}
             Err(e) => tracing::error!("progressive melody search failed: {e}"),
@@ -758,12 +872,12 @@ impl Live {
         if self.shazam.as_ref().is_some_and(|t| t.is_finished())
             && let Some(task) = self.shazam.take()
         {
-            self.on_result("Shazam", runtime.block_on(task));
+            self.on_result("Shazam", finished(&runtime, task));
         }
         if self.paid.as_ref().is_some_and(|t| t.is_finished())
             && let Some(task) = self.paid.take()
         {
-            self.on_result("paid providers", runtime.block_on(task));
+            self.on_result("paid providers", finished(&runtime, task));
         }
         if self.pending_query && self.shazam.is_none() && self.recording_rules() && self.matched.is_none() {
             self.issue_query();
@@ -771,11 +885,7 @@ impl Live {
         self.update_inflight();
     }
 
-    fn on_result(
-        &mut self,
-        who: &str,
-        result: std::result::Result<Result<Option<RecognitionHit>>, tokio::task::JoinError>,
-    ) {
+    fn on_result(&mut self, who: &str, result: std::result::Result<Result<Option<RecognitionHit>>, rt::JoinError>) {
         match result {
             Ok(Ok(Some(hit))) => {
                 if self.matched.is_none() {

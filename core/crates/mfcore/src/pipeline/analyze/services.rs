@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
+#[cfg(not(target_family = "wasm"))]
 use crate::audio::decode::decode_file;
 use crate::catalog;
 use crate::error::{MfError, Result};
@@ -19,6 +20,7 @@ use crate::pipeline::hints;
 use crate::pipeline::recognize::{self, RecognitionHit};
 use crate::shazam::Priority;
 use crate::util::cancel::CancelToken;
+use crate::util::rt;
 
 /// Largest preview download.
 const MAX_PREVIEW_BYTES: usize = 6 * 1024 * 1024;
@@ -85,7 +87,7 @@ impl<'a> SessionServices<'a> {
     async fn fetch_preview(&self, url: &str) -> Result<Vec<i16>> {
         crate::links::ensure_public_url(url).await?;
         let cancel = &self.ctx.cancel;
-        let request = self.ctx.engine.http.get(url).timeout(PREVIEW_TIMEOUT).send();
+        let request = crate::util::http::prepare(self.ctx.engine.http.get(url).timeout(PREVIEW_TIMEOUT)).send();
         let response = tokio::select! {
             r = request => r?,
             _ = cancel.canceled() => return Err(MfError::Canceled),
@@ -103,24 +105,34 @@ impl<'a> SessionServices<'a> {
         if bytes.len() > MAX_PREVIEW_BYTES {
             return Err(MfError::network("preview too large"));
         }
-        let dir = self.ctx.ensure_work_dir()?.clone();
-        let name = crate::util::new_id();
         let ext = if url.split(['?', '#']).next().is_some_and(|p| p.ends_with(".mp3")) { "mp3" } else { "m4a" };
-        let input = dir.join(format!("preview-{name}.{ext}"));
-        let output = dir.join(format!("preview-{name}.pcm"));
-        std::fs::write(&input, &bytes)?;
-        let decoder = self.ctx.engine.decoder.clone();
         let cancel = cancel.clone();
-        let (input2, output2) = (input.clone(), output.clone());
-        let decoded = tokio::task::spawn_blocking(move || -> Result<Vec<i16>> {
-            let pcm = decode_file(&input2, &output2, decoder.as_ref(), &cancel, &|_| {})?;
-            pcm.read_samples(0, pcm.len_samples() as usize)
-        })
-        .await
-        .map_err(|e| MfError::internal(format!("preview decode: {e}")));
-        let _ = std::fs::remove_file(&input);
-        let _ = std::fs::remove_file(&output);
-        decoded?
+        // The browser decodes from memory (no platform decoder, no files).
+        #[cfg(target_family = "wasm")]
+        {
+            rt::spawn_blocking(move || crate::audio::decode::decode_bytes(&bytes, Some(ext), &cancel))
+                .await
+                .map_err(|e| MfError::internal(format!("preview decode: {e}")))?
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let dir = self.ctx.ensure_work_dir()?.clone();
+            let name = crate::util::new_id();
+            let input = dir.join(format!("preview-{name}.{ext}"));
+            let output = dir.join(format!("preview-{name}.pcm"));
+            std::fs::write(&input, &bytes)?;
+            let decoder = self.ctx.engine.decoder.clone();
+            let (input2, output2) = (input.clone(), output.clone());
+            let decoded = rt::spawn_blocking(move || -> Result<Vec<i16>> {
+                let pcm = decode_file(&input2, &output2, decoder.as_ref(), &cancel, &|_| {})?;
+                pcm.read_samples(0, pcm.len_samples() as usize)
+            })
+            .await
+            .map_err(|e| MfError::internal(format!("preview decode: {e}")));
+            let _ = std::fs::remove_file(&input);
+            let _ = std::fs::remove_file(&output);
+            decoded?
+        }
     }
 
     fn cache_path(&self, track: &Track) -> Option<PathBuf> {
@@ -135,14 +147,20 @@ impl<'a> SessionServices<'a> {
     }
 }
 
+// `rt::sendable`: in the browser these futures hold fetch() futures, which are
+// not `Send`; natively it changes nothing.
 impl Services for SessionServices<'_> {
-    async fn shazam(&self, samples: &[i16], priority: Priority) -> Result<Option<RecognitionHit>> {
+    fn shazam(
+        &self,
+        samples: &[i16],
+        priority: Priority,
+    ) -> impl Future<Output = Result<Option<RecognitionHit>>> + Send {
         self.shazam_calls.fetch_add(1, Ordering::Relaxed);
-        recognize::shazam(self.ctx, samples, priority).await
+        rt::sendable(recognize::shazam(self.ctx, samples, priority))
     }
 
-    async fn paid(&self, samples: &[i16]) -> Result<Option<RecognitionHit>> {
-        recognize::paid(self.ctx, samples).await
+    fn paid(&self, samples: &[i16]) -> impl Future<Output = Result<Option<RecognitionHit>>> + Send {
+        rt::sendable(recognize::paid(self.ctx, samples))
     }
 
     fn has_paid(&self) -> bool {
@@ -150,20 +168,30 @@ impl Services for SessionServices<'_> {
             || self.ctx.credentials.acr_fingerprint.is_some()
     }
 
-    async fn find(&self, title: &str, artist: &str, duration_ms: Option<u64>) -> Option<Track> {
-        find_version(&self.ctx.engine.http, title, artist, duration_ms, self.ctx.engine.country(), &self.ctx.cancel)
-            .await
+    fn find(&self, title: &str, artist: &str, duration_ms: Option<u64>) -> impl Future<Output = Option<Track>> + Send {
+        let engine = &self.ctx.engine;
+        rt::sendable(find_version(&engine.http, title, artist, duration_ms, engine.country(), &self.ctx.cancel))
     }
 
-    async fn enrich(&self, track: Track) -> Track {
-        self.ctx.engine.enrich(track, &self.ctx.cancel).await
+    fn enrich(&self, track: Track) -> impl Future<Output = Track> + Send {
+        rt::sendable(self.ctx.engine.enrich(track, &self.ctx.cancel))
     }
 
-    async fn enrich_quick(&self, track: Track) -> Track {
-        self.ctx.engine.enrich_quick(track, &self.ctx.cancel).await
+    fn enrich_quick(&self, track: Track) -> impl Future<Output = Track> + Send {
+        rt::sendable(self.ctx.engine.enrich_quick(track, &self.ctx.cancel))
     }
 
-    async fn preview(&self, track: &Track) -> Option<Vec<i16>> {
+    fn preview(&self, track: &Track) -> impl Future<Output = Option<Vec<i16>>> + Send {
+        rt::sendable(self.preview_samples(track))
+    }
+
+    fn cancel(&self) -> &CancelToken {
+        &self.ctx.cancel
+    }
+}
+
+impl SessionServices<'_> {
+    async fn preview_samples(&self, track: &Track) -> Option<Vec<i16>> {
         let cached = self.cache_path(track);
         if let Some(path) = &cached
             && let Ok(bytes) = std::fs::read(path)
@@ -190,10 +218,6 @@ impl Services for SessionServices<'_> {
             let _ = std::fs::write(path, bytes);
         }
         Some(samples)
-    }
-
-    fn cancel(&self) -> &CancelToken {
-        &self.ctx.cancel
     }
 }
 

@@ -4,14 +4,20 @@
 //! store, the Shazam queue, the call budget and the melody index. Every session
 //! gets a cancel token and an emitter; its body runs inside a panic guard so a
 //! bug becomes `Failed { Internal }` instead of crossing the FFI.
+//!
+//! In the browser (wasm32) the engine lives in one dedicated Worker: there is no
+//! runtime of its own (tasks run on the Worker's event loop, see `util::rt`),
+//! the host opens the storage and hands it over ([`Engine::in_browser`]), and
+//! calls that would block natively have `async` twins (`*_async`).
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+#[cfg(not(target_family = "wasm"))]
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Duration;
 
 use futures_util::FutureExt;
 use parking_lot::{Mutex, RwLock};
@@ -19,6 +25,7 @@ use parking_lot::{Mutex, RwLock};
 use crate::config::{Credentials, EngineConfig};
 use crate::error::{MfError, Result};
 use crate::identity;
+#[cfg(not(target_family = "wasm"))]
 use crate::media::YtDlpSubprocess;
 use crate::model::{
     AnalyzeMode, Candidate, CandidateTier, CaptureSource, Evidence, EvidenceSource, ExportFormat, LibraryEntry,
@@ -36,10 +43,15 @@ use crate::platform::{MediaBackend, PlatformDecoder, SessionObserver, SpeechToTe
 use crate::shazam::{QueuePolicy, ShazamClient};
 use crate::store::{SessionUpdate, Store};
 use crate::util::cancel::CancelToken;
+use crate::util::files::FileStore;
+use crate::util::rt::{self, Instant};
 use crate::util::{new_id, now_ms};
 
+#[cfg(not(target_family = "wasm"))]
 const DATABASE_FILE: &str = "musicfetch.sqlite3";
+#[cfg(not(target_family = "wasm"))]
 const WORKER_THREADS: usize = 4;
+#[cfg(not(target_family = "wasm"))]
 const MAX_BLOCKING_THREADS: usize = 64;
 /// How long `delete_sessions` waits for canceled sessions to stop.
 const DELETE_WAIT: Duration = Duration::from_secs(2);
@@ -49,6 +61,7 @@ const LYRICS_NAMESPACE: &str = "lyrics";
 const LYRICS_TTL_MS: i64 = 30 * 24 * 3600 * 1000;
 const NO_LYRICS_TTL_MS: i64 = 24 * 3600 * 1000;
 /// yt-dlp temp folders older than this are leftovers from a crash.
+#[cfg(not(target_family = "wasm"))]
 const STALE_TEMP: Duration = Duration::from_secs(3600);
 const MAX_ALTERNATES: usize = 5;
 const MAX_LYRIC_QUERY_CHARS: usize = 500;
@@ -104,12 +117,7 @@ impl Registry {
 
 /// Cancel a session: absolute and prompt. `Canceled` is emitted from an engine
 /// thread even when the session body is stuck in a blocking call.
-fn cancel_running(
-    runtime: &tokio::runtime::Handle,
-    cancel: &CancelToken,
-    emitter: &Emitter,
-    input: Option<&LiveInput>,
-) {
+fn cancel_running(runtime: &rt::Handle, cancel: &CancelToken, emitter: &Emitter, input: Option<&LiveInput>) {
     cancel.cancel();
     if let Some(input) = input {
         input.wake();
@@ -138,6 +146,7 @@ impl Drop for InstallGuard {
 #[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct Engine {
     ctx: Arc<EngineCtx>,
+    #[cfg(not(target_family = "wasm"))]
     runtime: Mutex<Option<tokio::runtime::Runtime>>,
     registry: Arc<Registry>,
     index: Arc<IndexState>,
@@ -147,6 +156,7 @@ pub struct Engine {
 impl Engine {
     /// Create the engine. `media` overrides the built-in yt-dlp subprocess backend
     /// (`config.media_tools`); `decoder` and `speech` are optional.
+    #[cfg(not(target_family = "wasm"))]
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(
         config: EngineConfig,
@@ -246,7 +256,7 @@ impl Engine {
         };
         let ctx = self.open_session(kind, &title, source_url.as_deref(), observer, true)?;
         let body_ctx = ctx.clone();
-        Ok(self.spawn_session(ctx, kind, async move { analyze::run(body_ctx, validated, mode).await }))
+        Ok(self.spawn_session(ctx, kind, rt::sendable(async move { analyze::run(body_ctx, validated, mode).await })))
     }
 
     /// Find songs from typed lyrics.
@@ -258,9 +268,13 @@ impl Engine {
         let title = truncate(&text, TITLE_CHARS);
         let ctx = self.open_session(SessionKind::Lyrics, &title, None, observer, true)?;
         let body_ctx = ctx.clone();
-        Ok(self.spawn_session(ctx, SessionKind::Lyrics, async move {
-            hum::run_lyric_search(&body_ctx, &text).await;
-        }))
+        Ok(self.spawn_session(
+            ctx,
+            SessionKind::Lyrics,
+            rt::sendable(async move {
+                hum::run_lyric_search(&body_ctx, &text).await;
+            }),
+        ))
     }
 
     /// Library entries, newest first.
@@ -274,18 +288,12 @@ impl Engine {
     }
 
     /// Delete sessions: running ones are canceled first; their kept recordings
-    /// and cached media are removed too.
+    /// and cached media are removed too. (In the browser this cannot wait for
+    /// canceled sessions to stop; use `delete_sessions_async` there.)
     pub fn delete_sessions(&self, ids: Vec<String>) -> Result<()> {
-        // Ids name files below the app folders: accept only what the engine issues.
-        let ids: Vec<String> = ids.into_iter().filter(|id| is_session_id(id)).collect();
-        let mut waiting = Vec::new();
-        for id in &ids {
-            if let Some(running) = self.registry.get(id) {
-                cancel_running(&self.ctx.runtime, &running.cancel, &running.emitter, running.input.as_deref());
-                waiting.push(id.clone());
-            }
-        }
+        let (ids, mut waiting) = self.cancel_for_delete(ids);
         let started = Instant::now();
+        #[cfg(not(target_family = "wasm"))]
         while !waiting.is_empty() && started.elapsed() < DELETE_WAIT {
             let running = self.registry.ids();
             waiting.retain(|id| running.contains(id));
@@ -293,15 +301,9 @@ impl Engine {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-        self.ctx.store.delete_sessions(&ids)?;
-        for id in &ids {
-            remove_quietly(&self.ctx.recording_path(id));
-            let dir = self.ctx.sessions_cache_dir().join(id);
-            if dir.exists() {
-                let _ = std::fs::remove_dir_all(dir);
-            }
-        }
-        Ok(())
+        #[cfg(target_family = "wasm")]
+        let _ = (&mut waiting, started);
+        self.finish_delete(&ids)
     }
 
     /// Pin or unpin a session (pinned sessions keep their cached media).
@@ -393,13 +395,28 @@ impl Engine {
     /// Disk use: the database files and kept recordings, the cache folder and the
     /// melody index.
     pub fn storage_usage(&self) -> StorageUsage {
-        let data = PathBuf::from(&self.ctx.config.data_dir);
-        let database: u64 =
-            ["", "-wal", "-shm"].iter().map(|suffix| file_size(&data.join(format!("{DATABASE_FILE}{suffix}")))).sum();
-        StorageUsage {
-            database_bytes: database + dir_size(&self.ctx.recordings_dir()),
-            cache_bytes: dir_size(Path::new(&self.ctx.config.cache_dir)),
-            melody_index_bytes: dir_size(&melody_index::melody_dir(&self.ctx)),
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let data = PathBuf::from(&self.ctx.config.data_dir);
+            let database: u64 = ["", "-wal", "-shm"]
+                .iter()
+                .map(|suffix| file_size(&data.join(format!("{DATABASE_FILE}{suffix}"))))
+                .sum();
+            StorageUsage {
+                database_bytes: database + dir_size(&self.ctx.recordings_dir()),
+                cache_bytes: dir_size(Path::new(&self.ctx.config.cache_dir)),
+                melody_index_bytes: dir_size(&melody_index::melody_dir(&self.ctx)),
+            }
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let files = &self.ctx.files;
+            let size = |prefix: &str| files.total_len(prefix).unwrap_or(0);
+            StorageUsage {
+                database_bytes: self.ctx.store.database_bytes() + size("recordings/"),
+                cache_bytes: size("sessions/"),
+                melody_index_bytes: size("melody/"),
+            }
         }
     }
 
@@ -413,15 +430,20 @@ impl Engine {
             .into_iter()
             .map(|e| e.id)
             .collect();
-        if let Ok(entries) = std::fs::read_dir(self.ctx.sessions_cache_dir()) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if !running.contains(&name) && !pinned.contains(&name) {
-                    remove_path(&entry.path());
+        #[cfg(not(target_family = "wasm"))]
+        {
+            if let Ok(entries) = std::fs::read_dir(self.ctx.sessions_cache_dir()) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if !running.contains(&name) && !pinned.contains(&name) {
+                        remove_path(&entry.path());
+                    }
                 }
             }
+            remove_stale(&PathBuf::from(&self.ctx.config.cache_dir).join("tmp"), STALE_TEMP);
         }
-        remove_stale(&PathBuf::from(&self.ctx.config.cache_dir).join("tmp"), STALE_TEMP);
+        #[cfg(target_family = "wasm")]
+        remove_session_files(&self.ctx, |id| !running.contains(id) && !pinned.contains(id));
         if let Err(e) = self.ctx.store.purge_expired_cache() {
             tracing::warn!("cache purge failed: {e}");
         }
@@ -435,6 +457,7 @@ impl Engine {
     }
 
     /// Fetch the manifest and report whether a newer index exists.
+    #[cfg(not(target_family = "wasm"))]
     pub fn check_melody_index(&self) -> Result<MelodyIndexStatus> {
         let ctx = self.ctx.clone();
         let url = self.ctx.config.melody_index_manifest_url.clone();
@@ -465,22 +488,28 @@ impl Engine {
         };
         let body_ctx = ctx.clone();
         let state = self.index.clone();
-        Ok(self.spawn_session(ctx, SessionKind::Hum, async move {
-            let result = melody_index::install(&body_ctx, &url).await;
-            // Allow the next download before anyone hears about this one ending.
-            drop(guard);
-            match result {
-                Ok(manifest) => {
-                    let mut available = state.available.lock();
-                    if available.as_ref().is_some_and(|m| m.version == manifest.version) {
-                        *available = None;
+        Ok(self.spawn_session(
+            ctx,
+            SessionKind::Hum,
+            rt::sendable(async move {
+                let result = melody_index::install(&body_ctx, &url).await;
+                // Allow the next download before anyone hears about this one ending.
+                drop(guard);
+                match result {
+                    Ok(manifest) => {
+                        let mut available = state.available.lock();
+                        if available.as_ref().is_some_and(|m| m.version == manifest.version) {
+                            *available = None;
+                        }
+                        drop(available);
+                        body_ctx
+                            .emitter
+                            .finished(Outcome::Completed { identified: 1, total: 1 }, SessionUpdate::default());
                     }
-                    drop(available);
-                    body_ctx.emitter.finished(Outcome::Completed { identified: 1, total: 1 }, SessionUpdate::default());
+                    Err(e) => body_ctx.emitter.failed(&e),
                 }
-                Err(e) => body_ctx.emitter.failed(&e),
-            }
-        }))
+            }),
+        ))
     }
 
     /// Remove the installed melody index.
@@ -519,7 +548,7 @@ impl Engine {
             }
             let lookup = crate::lyrics::lookup_lyrics(&ctx.http, &track);
             // Only definite answers are cached; an unreachable LRCLIB is asked again next time.
-            let fetched = tokio::time::timeout(LYRICS_LIMIT, lookup).await.ok()?.ok()?;
+            let fetched = rt::timeout(LYRICS_LIMIT, lookup).await.ok()?.ok()?;
             let ttl = if fetched.is_some() { LYRICS_TTL_MS } else { NO_LYRICS_TTL_MS };
             if let Ok(json) = serde_json::to_string(&fetched)
                 && let Err(e) = ctx.store.cache_put(LYRICS_NAMESPACE, &key, &json, ttl)
@@ -534,6 +563,7 @@ impl Engine {
 
 impl Engine {
     /// [`Engine::new`] with tool/test options (Rust only).
+    #[cfg(not(target_family = "wasm"))]
     pub fn with_options(
         config: EngineConfig,
         media: Option<Arc<dyn MediaBackend>>,
@@ -550,6 +580,7 @@ impl Engine {
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn build(
         config: EngineConfig,
         media: Option<Arc<dyn MediaBackend>>,
@@ -574,13 +605,6 @@ impl Engine {
             Ok(n) => tracing::info!("marked {n} interrupted sessions as failed"),
             Err(e) => tracing::warn!("could not recover interrupted sessions: {e}"),
         }
-        let mut shazam = ShazamClient::new(http.clone(), &config.country, &config.language);
-        if let Some(policy) = options.shazam_policy {
-            shazam = shazam.with_policy(policy);
-        }
-        if let Some(base) = options.shazam_base_url.as_deref() {
-            shazam = shazam.with_base_url(base);
-        }
         let media = media.or_else(|| {
             config.media_tools.clone().map(|mut tools| {
                 // Keep yt-dlp's own cache inside the app's cache folder unless the app chose one.
@@ -599,24 +623,10 @@ impl Engine {
             .enable_all()
             .build()
             .map_err(|e| MfError::internal(format!("could not start the engine runtime: {e}")))?;
-        let ctx = Arc::new(EngineCtx {
-            config,
-            http,
-            store,
-            shazam: Arc::new(shazam),
-            budget: options.call_budget.unwrap_or_default(),
-            credentials: RwLock::new(Credentials::default()),
-            melody: RwLock::new(None),
-            pitch: OnceLock::new(),
-            media,
-            decoder,
-            speech,
-            runtime: runtime.handle().clone(),
-            enrichment: !options.offline_catalog,
-            low_power: AtomicBool::new(crate::util::system::SystemInfo::current().is_low_end()),
-            pitch_low_power: OnceLock::new(),
-            recognizer_url: options.shazam_base_url.clone().unwrap_or_else(|| crate::shazam::client::ENDPOINT.into()),
-        });
+        let files: Arc<dyn FileStore> = Arc::new(crate::util::files::DirFiles::new(data_dir));
+        let low_power = crate::util::system::SystemInfo::current().is_low_end();
+        let parts = Parts { http, store, files, media, decoder, speech, low_power };
+        let ctx = Self::context_from(config, parts, options, runtime.handle().clone());
         *ctx.melody.write() = melody_index::open_installed(&ctx);
 
         // Leftover session folders from earlier runs (pinned sessions keep theirs).
@@ -629,6 +639,127 @@ impl Engine {
             registry: Arc::new(Registry::default()),
             index: Arc::new(IndexState::default()),
         }))
+    }
+
+    /// The engine in the browser's engine Worker, over storage the host opened
+    /// (`store::opfs::BrowserStorage`, or in-memory databases in tests).
+    /// `config.data_dir` and `cache_dir` are not used: every file lives in
+    /// `files`. `low_power` comes from the host's system info. The melody index
+    /// is not read here: [`load_melody_index`](Self::load_melody_index) loads it
+    /// when humming starts.
+    #[cfg(target_family = "wasm")]
+    pub fn in_browser(
+        config: EngineConfig,
+        store: Arc<Store>,
+        files: Arc<dyn FileStore>,
+        speech: Option<Arc<dyn SpeechToText>>,
+        low_power: bool,
+        options: EngineOptions,
+    ) -> Result<Arc<Self>> {
+        let http = crate::util::http::build_client(&config.app_version)?;
+        let parts = Parts { http, store, files, media: None, decoder: None, speech, low_power };
+        let ctx = Self::context_from(config, parts, options, rt::Handle::current());
+        // Work files of sessions an earlier Worker left behind (pinned ones stay).
+        let pinned: HashSet<String> = ctx
+            .store
+            .library(&LibraryQuery { kinds: Vec::new(), search: None, pinned_only: true, limit: 0, offset: 0 })
+            .map(|entries| entries.into_iter().map(|e| e.id).collect())
+            .unwrap_or_default();
+        remove_session_files(&ctx, |id| !pinned.contains(id));
+        Ok(Arc::new(Self { ctx, registry: Arc::new(Registry::default()), index: Arc::new(IndexState::default()) }))
+    }
+
+    fn context_from(config: EngineConfig, parts: Parts, options: EngineOptions, runtime: rt::Handle) -> Arc<EngineCtx> {
+        let Parts { http, store, files, media, decoder, speech, low_power } = parts;
+        let mut shazam = ShazamClient::new(http.clone(), &config.country, &config.language);
+        if let Some(policy) = options.shazam_policy {
+            shazam = shazam.with_policy(policy);
+        }
+        if let Some(base) = options.shazam_base_url.as_deref() {
+            shazam = shazam.with_base_url(base);
+        }
+        Arc::new(EngineCtx {
+            config,
+            http,
+            store,
+            shazam: Arc::new(shazam),
+            budget: options.call_budget.unwrap_or_default(),
+            credentials: RwLock::new(Credentials::default()),
+            melody: RwLock::new(None),
+            pitch: OnceLock::new(),
+            media,
+            decoder,
+            speech,
+            runtime,
+            files,
+            enrichment: !options.offline_catalog,
+            low_power: AtomicBool::new(low_power),
+            pitch_low_power: OnceLock::new(),
+            recognizer_url: options.shazam_base_url.clone().unwrap_or_else(|| crate::shazam::client::ENDPOINT.into()),
+        })
+    }
+
+    /// [`check_melody_index`](Self::check_melody_index) for async callers (the
+    /// browser, where nothing may block).
+    pub async fn check_melody_index_async(&self) -> Result<MelodyIndexStatus> {
+        let url = &self.ctx.config.melody_index_manifest_url;
+        let manifest = melody_index::fetch_manifest(&self.ctx.http, url, &CancelToken::new()).await?;
+        *self.index.available.lock() = Some(manifest);
+        Ok(self.melody_index_status())
+    }
+
+    /// [`delete_sessions`](Self::delete_sessions) that waits (up to 2 s) for
+    /// canceled sessions to stop without blocking the thread.
+    pub async fn delete_sessions_async(&self, ids: Vec<String>) -> Result<()> {
+        let (ids, mut waiting) = self.cancel_for_delete(ids);
+        let started = Instant::now();
+        while !waiting.is_empty() && started.elapsed() < DELETE_WAIT {
+            let running = self.registry.ids();
+            waiting.retain(|id| running.contains(id));
+            if !waiting.is_empty() {
+                rt::sleep(Duration::from_millis(10)).await;
+            }
+        }
+        self.finish_delete(&ids)
+    }
+
+    /// The ids the engine issued, with the running ones canceled (returned second).
+    fn cancel_for_delete(&self, ids: Vec<String>) -> (Vec<String>, Vec<String>) {
+        // Ids name files below the app folders: accept only what the engine issues.
+        let ids: Vec<String> = ids.into_iter().filter(|id| is_session_id(id)).collect();
+        let mut waiting = Vec::new();
+        for id in &ids {
+            if let Some(running) = self.registry.get(id) {
+                cancel_running(&self.ctx.runtime, &running.cancel, &running.emitter, running.input.as_deref());
+                waiting.push(id.clone());
+            }
+        }
+        (ids, waiting)
+    }
+
+    fn finish_delete(&self, ids: &[String]) -> Result<()> {
+        self.ctx.store.delete_sessions(ids)?;
+        for id in ids {
+            #[cfg(not(target_family = "wasm"))]
+            {
+                remove_quietly(&self.ctx.recording_path(id));
+                let dir = self.ctx.sessions_cache_dir().join(id);
+                if dir.exists() {
+                    let _ = std::fs::remove_dir_all(dir);
+                }
+            }
+            #[cfg(target_family = "wasm")]
+            {
+                let files = &self.ctx.files;
+                if let Err(e) = files.remove(&self.ctx.recording_path(id).to_string_lossy()) {
+                    tracing::warn!(session = %id, "could not remove the recording: {e}");
+                }
+                if let Err(e) = files.remove_prefix(&format!("sessions/{id}/")) {
+                    tracing::warn!(session = %id, "could not remove the work files: {e}");
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The shared engine state (for tools and tests).
@@ -720,6 +851,7 @@ impl Engine {
     }
 
     /// Run `future` on the engine runtime and wait for it from any thread.
+    #[cfg(not(target_family = "wasm"))]
     fn block_on<T: Send + 'static>(&self, future: impl Future<Output = T> + Send + 'static) -> Result<T> {
         let (tx, rx) = std::sync::mpsc::channel();
         self.ctx.runtime.spawn(async move {
@@ -741,6 +873,7 @@ impl Drop for Engine {
             }
             running.emitter.canceled();
         }
+        #[cfg(not(target_family = "wasm"))]
         if let Some(runtime) = self.runtime.lock().take() {
             runtime.shutdown_background();
         }
@@ -754,7 +887,7 @@ pub struct LiveSession {
     input: Arc<LiveInput>,
     cancel: CancelToken,
     emitter: Emitter,
-    runtime: tokio::runtime::Handle,
+    runtime: rt::Handle,
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -810,7 +943,7 @@ pub struct AnalysisSession {
     id: String,
     cancel: CancelToken,
     emitter: Emitter,
-    runtime: tokio::runtime::Handle,
+    runtime: rt::Handle,
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -826,13 +959,44 @@ impl AnalysisSession {
     }
 }
 
+/// What the engine context is assembled from.
+struct Parts {
+    http: reqwest::Client,
+    store: Arc<Store>,
+    files: Arc<dyn FileStore>,
+    media: Option<Arc<dyn MediaBackend>>,
+    decoder: Option<Arc<dyn PlatformDecoder>>,
+    speech: Option<Arc<dyn SpeechToText>>,
+    low_power: bool,
+}
+
+/// Browser: deletes the work files (`sessions/<id>/…`) of sessions for which
+/// `remove(id)` is true.
+#[cfg(target_family = "wasm")]
+fn remove_session_files(ctx: &EngineCtx, remove: impl Fn(&str) -> bool) {
+    let listed = match ctx.files.list("sessions/") {
+        Ok(listed) => listed,
+        Err(e) => {
+            tracing::warn!("could not list the work files: {e}");
+            return;
+        }
+    };
+    let ids: HashSet<String> =
+        listed.iter().filter_map(|(name, _)| name.split('/').nth(1)).map(str::to_string).collect();
+    for id in ids.iter().filter(|id| remove(id)) {
+        if let Err(e) = ctx.files.remove_prefix(&format!("sessions/{id}/")) {
+            tracing::warn!(session = %id, "could not remove the work files: {e}");
+        }
+    }
+}
+
 /// Session ids are UUIDs; anything else (path separators, "..") is rejected
 /// before it is used in a file name.
 fn is_session_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-fn file_title(path: &Path) -> String {
+fn file_title(path: &std::path::Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
@@ -845,10 +1009,12 @@ fn truncate(text: &str, max: usize) -> String {
     out
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn file_size(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// Total size of the files below `path` (symlinks not followed).
 fn dir_size(path: &Path) -> u64 {
     let Ok(meta) = std::fs::symlink_metadata(path) else { return 0 };
@@ -858,6 +1024,7 @@ fn dir_size(path: &Path) -> u64 {
     std::fs::read_dir(path).map(|entries| entries.flatten().map(|e| dir_size(&e.path())).sum()).unwrap_or(0)
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn remove_quietly(path: &Path) {
     if let Err(e) = std::fs::remove_file(path)
         && e.kind() != std::io::ErrorKind::NotFound
@@ -866,6 +1033,7 @@ fn remove_quietly(path: &Path) {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn remove_path(path: &Path) {
     let result = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
     if let Err(e) = result {
@@ -873,10 +1041,11 @@ fn remove_path(path: &Path) {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// Remove entries of `dir` not modified for `age`.
 fn remove_stale(dir: &Path, age: Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let now = SystemTime::now();
+    let now = rt::SystemTime::now();
     for entry in entries.flatten() {
         let old = entry
             .metadata()
@@ -890,6 +1059,7 @@ fn remove_stale(dir: &Path, age: Duration) {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// Session folders left by earlier runs, except those of pinned sessions.
 fn remove_leftovers(ctx: &EngineCtx) {
     let pinned: HashSet<String> = ctx
@@ -897,7 +1067,7 @@ fn remove_leftovers(ctx: &EngineCtx) {
         .library(&LibraryQuery { kinds: Vec::new(), search: None, pinned_only: true, limit: 0, offset: 0 })
         .map(|entries| entries.into_iter().map(|e| e.id).collect())
         .unwrap_or_default();
-    let started = SystemTime::now();
+    let started = rt::SystemTime::now();
     if let Ok(entries) = std::fs::read_dir(ctx.sessions_cache_dir()) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();

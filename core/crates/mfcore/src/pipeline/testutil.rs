@@ -237,6 +237,7 @@ pub fn session_with_media(
         decoder: None,
         speech: None,
         runtime: tokio::runtime::Handle::current(),
+        files: Arc::new(crate::util::files::DirFiles::new(dir)),
         enrichment: false,
         low_power: Default::default(),
         pitch_low_power: Default::default(),
