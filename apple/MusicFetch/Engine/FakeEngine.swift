@@ -13,6 +13,8 @@ nonisolated final class FakeEngine: MusicEngine {
         case listening
         /// Humming forever (impression, pitch trace).
         case hum
+        /// Humming forever while the progressive search finds answers (live candidates).
+        case humAnswers
         /// Capture ends at once and matching never finishes.
         case matching
         /// No match after 2 s.
@@ -23,15 +25,29 @@ nonisolated final class FakeEngine: MusicEngine {
         case downloading
         /// A mix that keeps streaming segments.
         case mix
+        /// Live sessions only start; unit tests drive them through `lastLiveSession`.
+        case manual
     }
 
     let scenario: Scenario
     private let pinned = Mutex<Set<String>>([DemoFixtures.mixID, DemoFixtures.nightsID])
     private let deleted = Mutex<Set<String>>([])
+    private let live = Mutex<FakeSession?>(nil)
+    private let melody = Mutex(DemoFixtures.melodyStatus)
+
+    /// What Settings › Melody shows (demo states).
+    func setMelodyStatus(_ status: MelodyIndexStatus) {
+        melody.withLock { $0 = status }
+    }
+
+    /// The newest live session (unit tests emit its events with the `manual` scenario).
+    var lastLiveSession: FakeSession? { live.withLock { $0 } }
 
     init(scenario: Scenario) {
         self.scenario = scenario
     }
+
+    var acceptsTranscripts: Bool { true }
 
     func setCredentials(_ credentials: Credentials) {}
 
@@ -41,11 +57,14 @@ nonisolated final class FakeEngine: MusicEngine {
         -> LiveSessionHandle
     {
         let session = FakeSession(observer: observer)
+        session.listenOptions = options
+        live.withLock { $0 = session }
         let kind: SessionKind = mode == .hum ? .hum : (source == .systemAudio ? .systemAudio : .listen)
         session.run { session in
             session.emit(.started(sessionId: session.sessionID, kind: kind))
             session.emit(.phase(phase: .listening, fraction: nil))
-            let humming = mode == .hum || self.scenario == .hum
+            if self.scenario == .manual { return }
+            let humming = mode == .hum || self.scenario == .hum || self.scenario == .humAnswers
             if humming, mode != .hum { session.emit(.notice(notice: .impressionDetected)) }
             if self.scenario == .matching {
                 for tick in 0..<30 { session.emit(.level(rms: 0.5 + 0.2 * Float(sin(Double(tick))), peak: 0.8)) }
@@ -68,6 +87,12 @@ nonisolated final class FakeEngine: MusicEngine {
                     session.emit(.pitch(frames: frames))
                 }
                 if self.scenario == .captureSilent, tick == 30 { session.emit(.notice(notice: .captureSilent)) }
+                // A search every 2 s once 4 s are voiced (the demo hums from the start).
+                if humming, options.liveCandidates, tick >= 120, tick % 60 == 0 {
+                    let lists = DemoFixtures.liveLists
+                    let list = self.scenario == .humAnswers ? lists[1] : lists[min(tick / 60 - 2, lists.count - 1)]
+                    session.emit(.candidates(candidates: list, isFinal: false))
+                }
                 if self.scenario == .noMatch, tick == 60 {
                     session.emit(.finished(outcome: .noMatch(reason: .notFound)))
                     return
@@ -228,17 +253,21 @@ nonisolated final class FakeEngine: MusicEngine {
     }
 
     func storageUsage() -> StorageUsage {
-        StorageUsage(databaseBytes: 2_400_000, cacheBytes: 1_150_000_000, melodyIndexBytes: 48_000_000)
+        StorageUsage(databaseBytes: 2_400_000, cacheBytes: 1_150_000_000, melodyIndexBytes: 61_000_000)
     }
 
     func clearCache() throws {}
 
     func melodyIndexStatus() -> MelodyIndexStatus {
-        DemoFixtures.melodyStatus
+        melody.withLock { $0 }
+    }
+
+    func melodyEncoderBytes() -> UInt64? {
+        melody.withLock { $0.encoderInstalled } ? DemoFixtures.encoderBytes : nil
     }
 
     func checkMelodyIndex() throws -> MelodyIndexStatus {
-        DemoFixtures.melodyStatus
+        melody.withLock { $0 }
     }
 
     func installMelodyIndex(observer: SessionObserver) throws -> AnalysisSessionHandle {
@@ -250,6 +279,13 @@ nonisolated final class FakeEngine: MusicEngine {
                 session.emit(.phase(phase: .downloading, fraction: fraction))
                 fraction += 0.005
                 session.sleep(0.1)
+            }
+            if !session.wasCanceled {
+                self.melody.withLock { status in
+                    status.encoderInstalled = true
+                    status.availableVersion = nil
+                    status.downloadBytes = nil
+                }
             }
             session.emit(session.wasCanceled ? .canceled : .finished(outcome: .completed(identified: 1, total: 1)))
         }
@@ -272,6 +308,8 @@ nonisolated final class FakeSession: LiveSessionHandle, AnalysisSessionHandle, @
     let sessionID = UUID().uuidString.lowercased()
     private let observer: SessionObserver
     private let state = Mutex<(finished: Bool, canceled: Bool)>((false, false))
+    private let heard = Mutex<[HeardWords]>([])
+    private let options = Mutex<ListenOptions?>(nil)
 
     init(observer: SessionObserver) {
         self.observer = observer
@@ -298,6 +336,19 @@ nonisolated final class FakeSession: LiveSessionHandle, AnalysisSessionHandle, @
     }
 
     func pushPcm(_ data: Data, sampleRate: UInt32, channels: UInt32) {}
+
+    func pushTranscript(_ words: HeardWords) {
+        heard.withLock { $0.append(words) }
+    }
+
+    /// Transcripts the app pushed, oldest first (tests).
+    var transcripts: [HeardWords] { heard.withLock { $0 } }
+
+    /// The options the session was started with (tests).
+    var listenOptions: ListenOptions? {
+        get { options.withLock { $0 } }
+        set { options.withLock { $0 = newValue } }
+    }
 
     func finish() {
         state.withLock { $0.finished = true }

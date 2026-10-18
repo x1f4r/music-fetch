@@ -13,9 +13,12 @@ nonisolated enum PreferenceKey {
     static let showMenuBarExtra = "showMenuBarExtra"
     static let notifyInBackground = "notifyInBackground"
     static let searchSungLyrics = "searchSungLyrics"
-    /// Settings › Melody › "Stop automatically after a pause" (`ListenOptions.autoStop`).
+    /// Settings › Melody › "Stop automatically" (`ListenOptions.autoStop`): after a pause,
+    /// or as soon as the melody search is sure.
     static let autoStopAfterPause = "autoStopAfterPause"
     static let systemAudioExplained = "systemAudioExplained"
+    /// The stage explained speech recognition before the first hum (macOS 15), once.
+    static let speechPermissionAsked = "speechPermissionAsked"
     static let listenSource = "listenSource"
     static let settingsPane = "settingsPane"
     static let showInspector = "showInspector"
@@ -40,8 +43,9 @@ nonisolated enum Preferences {
         UserDefaults.standard.bool(forKey: PreferenceKey.searchSungLyrics)
     }
 
-    /// Options for live sessions.
+    /// Options for live sessions. Live candidates are always on: the stage shows the
+    /// progressive search's answers while someone hums.
     static func listenOptions(_ defaults: UserDefaults = .standard) -> ListenOptions {
-        ListenOptions(autoStop: defaults.bool(forKey: PreferenceKey.autoStopAfterPause))
+        ListenOptions(autoStop: defaults.bool(forKey: PreferenceKey.autoStopAfterPause), liveCandidates: true)
     }
 }

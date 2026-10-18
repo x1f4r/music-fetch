@@ -13,6 +13,9 @@ final class ListenModel {
         case idle
         /// First "This Mac": explain before the system prompt.
         case systemAudioPrePrompt
+        /// First hum on macOS 15 with lyric search on: explain before macOS asks for
+        /// speech recognition.
+        case speechPrePrompt
         case microphoneDenied
         /// Capturing.
         case listening
@@ -37,6 +40,7 @@ final class ListenModel {
     /// Buttons in the recovery row under the source toggles (§5.4).
     enum Action: Hashable {
         case tryAgain, humIt, typeLyric, useMicrophone, continueSystemAudio, openMicrophoneSettings, stop, dismiss
+        case allowSpeech, skipSpeech
     }
 
     private(set) var stage: Stage = .idle
@@ -60,6 +64,9 @@ final class ListenModel {
     private(set) var liveSession: SessionModel?
     /// The result, candidates or mix that replaces the stage.
     var shown: SessionModel?
+    /// Answers of the progressive melody search while someone hums (Strong or Possible
+    /// only). Kept while matching; cleared when the session ends.
+    private(set) var liveAnswers = LiveAnswers()
 
     /// Level and pitch for the drawing code (not observed).
     @ObservationIgnored let signal = LiveSignal()
@@ -67,9 +74,16 @@ final class ListenModel {
     @ObservationIgnored private unowned let app: AppModel
     @ObservationIgnored private var handle: LiveSessionHandle?
     @ObservationIgnored private var capture: AudioCapture?
+    /// On-device recognition of sung words for the running session, when it reads them.
+    @ObservationIgnored private var words: SungWordsTranscriber?
+    /// Makes the recognizer for a session (tests substitute a scripted one).
+    @ObservationIgnored var makeTranscriber: (_ language: String, _ lowPower: Bool, _ handler: @escaping SungWordsTranscriber.Handler)
+        -> SungWordsTranscriber = { SungWordsTranscriber(language: $0, lowPower: $1, handler: $2) }
     @ObservationIgnored private var consumer: Task<Void, Never>?
     @ObservationIgnored private var lastInput: (input: String, mode: AnalyzeMode)?
     @ObservationIgnored private var lastAnnouncedSegments = 0
+    /// A live answer the user clicked: selected when the final list arrives.
+    @ObservationIgnored private var chosenAnswer: String?
 
     init(app: AppModel) {
         self.app = app
@@ -83,6 +97,11 @@ final class ListenModel {
     var isBusy: Bool { stage == .listening || stage == .matching || stage == .link }
     var isIdleStage: Bool { shown == nil && !isBusy }
 
+    /// The live answers sit in the recovery row's place while humming; actions win.
+    var showsLiveAnswers: Bool {
+        !liveAnswers.isEmpty && (stage == .listening || stage == .matching) && recoveryActions.isEmpty
+    }
+
     /// Text under the button (§7).
     var stateLine: String {
         switch stage {
@@ -90,6 +109,8 @@ final class ListenModel {
             return isDropTargeted ? Copy.drop : Copy.idle
         case .systemAudioPrePrompt:
             return Copy.systemAudioPrePrompt
+        case .speechPrePrompt:
+            return Copy.speechPrePrompt
         case .microphoneDenied:
             return Copy.microphoneOff
         case .listening:
@@ -146,6 +167,8 @@ final class ListenModel {
             }
         case .systemAudioPrePrompt:
             return [.continueSystemAudio, .useMicrophone]
+        case .speechPrePrompt:
+            return [.allowSpeech, .skipSpeech]
         case .microphoneDenied:
             return [.openMicrophoneSettings]
         case .link:
@@ -188,7 +211,7 @@ final class ListenModel {
         guard !isBusy else { return }
         self.source = source
         switch stage {
-        case .noMatch, .failed, .offline, .microphoneDenied, .systemAudioPrePrompt: stage = .idle
+        case .noMatch, .failed, .offline, .microphoneDenied, .systemAudioPrePrompt, .speechPrePrompt: stage = .idle
         default: break
         }
     }
@@ -228,17 +251,45 @@ final class ListenModel {
                 }
             }
         }
-        begin(source)
+        proceed(source)
     }
 
     /// After the microphone pre-prompt: ask the system, then start or show the banner.
     func requestMicrophone(then source: ListenSource) async {
         if await MicrophoneCapture.requestAccess() {
-            begin(source)
+            proceed(source)
         } else {
             shown = nil
             stage = .microphoneDenied
         }
+    }
+
+    /// The microphone is allowed: explain speech recognition before the first hum when
+    /// macOS will ask for it (macOS 15), else start.
+    private func proceed(_ source: ListenSource) {
+        if source == .hum, app.speech.asksBeforeHumming {
+            shown = nil
+            stage = .speechPrePrompt
+            return
+        }
+        begin(source)
+    }
+
+    /// "Continue" on the speech explanation: macOS asks, then the hum starts either way.
+    func allowSpeech() {
+        guard stage == .speechPrePrompt else { return }
+        Task {
+            await app.speech.requestPermission()
+            guard stage == .speechPrePrompt else { return }
+            begin(.hum)
+        }
+    }
+
+    /// "Not Now": hum without words; the explanation doesn't come back.
+    func skipSpeech() {
+        guard stage == .speechPrePrompt else { return }
+        app.speech.declinePermission()
+        begin(.hum)
     }
 
     private func begin(_ source: ListenSource) {
@@ -249,10 +300,15 @@ final class ListenModel {
         // than repeating an earlier link.
         runningSource = source
         let bridge = ObserverBridge()
+        // Sung words: the microphone's audio also goes to the on-device recognizer, whose
+        // text the engine searches as lyrics. System audio never reads words.
+        let readsWords = source != .thisMac && engine.acceptsTranscripts && app.speech.transcribesLive
+        if source == .hum, !readsWords { app.speech.installModelIfNeeded() }
+        var options = Preferences.listenOptions()
+        options.transcripts = readsWords
         let handle: LiveSessionHandle
         do {
-            handle = try engine.startListening(
-                source: source.capture, mode: source.mode, options: Preferences.listenOptions(), observer: bridge)
+            handle = try engine.startListening(source: source.capture, mode: source.mode, options: options, observer: bridge)
         } catch {
             bridge.close()
             fail(error)
@@ -269,6 +325,8 @@ final class ListenModel {
         impression = source == .hum
         notice = nil
         voicedSeconds = 0
+        liveAnswers = LiveAnswers()
+        chosenAnswer = nil
         startedAt = .now
         signal.reset()
         announce(source == .hum ? Copy.humStart : Copy.listening)
@@ -282,18 +340,34 @@ final class ListenModel {
             }
         }
 
+        words?.cancel()
+        let words: SungWordsTranscriber? =
+            readsWords
+            ? makeTranscriber(app.speech.language, app.isLowPower) { [weak handle] heard in handle?.pushTranscript(heard) }
+            : nil
+        // A hum reads words from the start; a microphone session once it turns out to be
+        // humming (the transcriber keeps the last seconds until then).
+        if source == .hum { words?.activate() }
+        self.words = words
+
         let capture: AudioCapture =
             if app.isDemo { NullCapture() } else if source == .thisMac { SystemAudioCapture() } else { MicrophoneCapture() }
         self.capture = capture
         Task {
             do {
-                try await offMain { try capture.start { data, rate, channels in handle.pushPcm(data, sampleRate: rate, channels: channels) } }
+                try await offMain {
+                    try capture.start { data, rate, channels in
+                        handle.pushPcm(data, sampleRate: rate, channels: channels)
+                        words?.append(data, sampleRate: rate, channels: channels)
+                    }
+                }
             } catch {
                 Log.capture.error("Capture failed to start: \(error.localizedDescription, privacy: .public)")
                 guard self.handle === handle else { return }
                 capture.stop()
                 handle.cancel()
                 self.handle = nil
+                self.endWords(canceling: true)
                 self.stage = .failed(.platform, nil)
             }
         }
@@ -304,6 +378,7 @@ final class ListenModel {
         guard stage == .listening else { return }
         stopCapture()
         handle?.finish()
+        endWords(canceling: false)
         signal.freeze()
         stage = .matching
     }
@@ -314,7 +389,16 @@ final class ListenModel {
         stopCapture()
         handle?.cancel()
         handle = nil
+        endWords(canceling: true)
+        liveAnswers = LiveAnswers()
         stage = .idle
+    }
+
+    /// A live answer clicked while humming: stop and select it among the final matches.
+    func choose(_ answer: Candidate) {
+        guard stage == .listening else { return }
+        chosenAnswer = answer.track.identityKey
+        stop()
     }
 
     /// Esc: stops capture like a second click; while matching it abandons the session.
@@ -345,6 +429,8 @@ final class ListenModel {
 
     func perform(_ action: Action) {
         switch action {
+        case .allowSpeech: allowSpeech()
+        case .skipSpeech: skipSpeech()
         case .tryAgain:
             // A link or file that failed or found nothing is analyzed again; a live
             // session listens again with the same method.
@@ -372,7 +458,7 @@ final class ListenModel {
         if let shown, shown === linkSession { detachLink() }
         shown = nil
         switch stage {
-        case .noMatch, .failed, .offline, .systemAudioPrePrompt, .microphoneDenied: stage = .idle
+        case .noMatch, .failed, .offline, .systemAudioPrePrompt, .speechPrePrompt, .microphoneDenied: stage = .idle
         default: break
         }
     }
@@ -388,6 +474,17 @@ final class ListenModel {
         capture = nil
     }
 
+    /// Capture ended: the recognizer's final words follow (the engine waits briefly for
+    /// them). Canceling drops them; the session is over or abandoned.
+    private func endWords(canceling: Bool) {
+        if canceling {
+            words?.cancel()
+            words = nil
+        } else {
+            words?.finish()
+        }
+    }
+
     private func handleLive(_ event: SessionEvent, model: SessionModel) {
         switch event {
         case .level(let rms, _):
@@ -398,15 +495,24 @@ final class ListenModel {
             if seconds != voicedSeconds { voicedSeconds = seconds }
         case .notice(let notice):
             handleNotice(notice)
+        case .candidates(let list, let isFinal):
+            // Interim lists are a quiet preview: never a screen change or an announcement.
+            guard !isFinal, stage == .listening || stage == .matching else { break }
+            let answers = LiveAnswers(list: list)
+            if answers.differs(from: liveAnswers) { liveAnswers = answers }
         case .phase(let phase, _):
             if phase != .listening, stage == .listening {
+                // The engine stopped on its own (a clear answer, a pause, the time limit).
                 stopCapture()
+                endWords(canceling: false)
                 signal.freeze()
                 stage = .matching
             }
         case .finished(let outcome):
             stopCapture()
             handle = nil
+            endWords(canceling: true)
+            liveAnswers = LiveAnswers()
             model.humTrace = signal.history.map(\.midi)
             model.humSeconds = Int(signal.voicedSeconds.rounded())
             switch outcome {
@@ -416,9 +522,13 @@ final class ListenModel {
                 announce(Copy.found(track))
                 app.sessionFinished(model)
             case .candidates:
+                if let chosen = chosenAnswer, model.candidates.contains(where: { $0.track.identityKey == chosen }) {
+                    model.selectedCandidateID = chosen
+                }
+                chosenAnswer = nil
                 stage = .idle
                 shown = model
-                announce(Copy.possibleMatches(model.candidates))
+                announce(Copy.candidatesAnnouncement(model.candidates, kind: model.kind))
                 app.sessionFinished(model)
             case .noMatch(let reason):
                 stage = .noMatch(reason)
@@ -435,11 +545,15 @@ final class ListenModel {
         case .failed(let code, let message):
             stopCapture()
             handle = nil
+            endWords(canceling: true)
+            liveAnswers = LiveAnswers()
             stage = .failed(code, message)
             announce(Copy.failure(code, message: message))
         case .canceled:
             stopCapture()
             handle = nil
+            endWords(canceling: true)
+            liveAnswers = LiveAnswers()
             if stage == .listening || stage == .matching { stage = .idle }
         default:
             break
@@ -453,6 +567,7 @@ final class ListenModel {
             guard runningSource != .thisMac else { return }
             setNotice(.moveCloser, announcement: Copy.moveCloser)
         case .impressionDetected:
+            words?.activate()
             withAnimation(app.motion(.hero)) { impression = true }
             self.notice = nil
             announce(Copy.keepGoing)

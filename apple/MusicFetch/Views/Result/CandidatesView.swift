@@ -6,16 +6,32 @@ struct CandidatesView: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: SessionModel
 
+    /// Every answer is a long shot: say so, and make humming again the obvious action
+    /// rather than offering a guess as the answer.
+    private var isUnsure: Bool {
+        CandidateConfidence(model.candidates) == .unsure
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if model.kind != .lyrics, !model.humContour.isEmpty || model.humDurationSeconds > 0 {
                 humRow
             }
             List(selection: $model.selectedCandidateID) {
+                if isUnsure {
+                    Text(model.kind == .lyrics ? Copy.notSureLyrics : Copy.notSureHum)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 2)
+                        .listRowSeparator(.hidden)
+                        .selectionDisabled()
+                        .accessibilityIdentifier("mf.candidates.unsure")
+                }
                 ForEach(Array(model.candidates.enumerated()), id: \.element.track.identityKey) { index, candidate in
                     CandidateRow(
                         model: model, candidate: candidate,
-                        isSelected: (model.selectedCandidateID ?? model.candidates.first?.track.identityKey) == candidate.track.identityKey
+                        isSelected: (model.selectedCandidateID ?? model.candidates.first?.track.identityKey) == candidate.track.identityKey,
+                        isUnsure: isUnsure
                     )
                     .tag(candidate.track.identityKey)
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
@@ -61,8 +77,9 @@ struct CandidatesView: View {
             } label: {
                 Label(Copy.humAgain, image: "contour.mark")
             }
-            .buttonStyle(.bordered)
+            .humAgainStyle(prominent: isUnsure)
             .fixedSize()
+            .accessibilityIdentifier("mf.humAgain")
         }
         .frame(height: 72)
         .padding(.horizontal, 28)
@@ -81,6 +98,8 @@ struct CandidateRow: View {
     var model: SessionModel
     var candidate: Candidate
     var isSelected: Bool
+    /// Every answer is a long shot: no row is offered as the default answer.
+    var isUnsure = false
 
     var body: some View {
         let track = candidate.track
@@ -110,7 +129,7 @@ struct CandidateRow: View {
                 .help(playing ? Copy.pausePreview : Copy.playPreview)
                 .accessibilityLabel(playing ? Copy.pausePreview : Copy.playPreview)
             }
-            if isSelected {
+            if isSelected, !isUnsure {
                 Button(Copy.thisIsIt) { app.confirm(candidate, in: model) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
@@ -123,6 +142,18 @@ struct CandidateRow: View {
         .contextMenu {
             OpenInMenu(track: track)
             Button(Copy.copy) { app.copy(track) }
+        }
+    }
+}
+
+extension View {
+    /// "Hum again": bordered, or prominent when it is the screen's best way forward.
+    @ViewBuilder
+    func humAgainStyle(prominent: Bool) -> some View {
+        if prominent {
+            buttonStyle(.borderedProminent)
+        } else {
+            buttonStyle(.bordered)
         }
     }
 }

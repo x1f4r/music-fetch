@@ -87,6 +87,17 @@ nonisolated enum PCMConversion {
         return data.map { ($0, UInt32(buffers.count)) }
     }
 
+    /// A mono f32 buffer (the standard deinterleaved format) holding `samples`.
+    static func monoBuffer(_ samples: [Float], rate: Double) -> AVAudioPCMBuffer? {
+        guard !samples.isEmpty, let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1),
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
+            let channel = buffer.floatChannelData?[0]
+        else { return nil }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
+        return buffer
+    }
+
     private static func interleave<S>(planes: [UnsafePointer<S>], frames: Int, convert: (S) -> Float) -> Data {
         let channels = planes.count
         var data = Data(count: frames * channels * MemoryLayout<Float>.size)

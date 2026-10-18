@@ -16,6 +16,19 @@ final class SettingsModel {
         case failed
     }
 
+    /// The index's learned encoder file (docs/CORE_API.md, "Melody index"): it helps the
+    /// search find more songs and installs with the index. Shown only when installed or
+    /// on offer.
+    nonisolated enum EncoderState: Equatable, Sendable {
+        /// No index, or the published index has no encoder file for this core.
+        case none
+        case installed(bytes: UInt64?)
+        /// The installed index is current but its encoder file isn't downloaded yet.
+        case available(bytes: UInt64?)
+        /// A newer encoder file for the installed index.
+        case updateAvailable(bytes: UInt64?)
+    }
+
     // MARK: Credentials
 
     /// What the fields show; saved to the Keychain on commit.
@@ -27,6 +40,11 @@ final class SettingsModel {
 
     private(set) var melody = MelodyIndexStatus(
         installed: false, version: nil, songCount: 0, sizeBytes: 0, availableVersion: nil, downloadBytes: nil)
+    /// Size of the installed encoder file (part of `melody.sizeBytes`).
+    private(set) var encoderBytes: UInt64?
+    /// The running download fetches only the encoder file.
+    private(set) var isDownloadingEncoderOnly = false
+    @ObservationIgnored private var checkedForEncoder = false
     private(set) var melodyState: MelodyState = .unknown
     private(set) var isCheckingMelody = false
     /// Size of the published index (from the manifest), for "Not installed · 48 MB".
@@ -86,18 +104,53 @@ final class SettingsModel {
     func refreshMelody() {
         guard let engine = app.engine else { return }
         if case .downloading = melodyState { return }
-        melody = engine.melodyIndexStatus()
+        setMelody(engine.melodyIndexStatus(), engine: engine)
         melodyState = melody.installed ? .installed : .notInstalled
         if !melody.installed, publishedBytes == nil {
+            checkForUpdates(quietly: true)
+        } else if melody.installed, !melody.encoderInstalled, !checkedForEncoder {
+            // Whether the installed index has an encoder file to offer is only known
+            // from the manifest: check once per launch.
+            checkedForEncoder = true
             checkForUpdates(quietly: true)
         }
     }
 
+    private func setMelody(_ status: MelodyIndexStatus, engine: any MusicEngine) {
+        melody = status
+        encoderBytes = status.encoderInstalled ? engine.melodyEncoderBytes() : nil
+    }
+
     var isMelodyInstalled: Bool { melody.installed }
 
-    /// True when a newer index than the installed one is published.
+    /// True when a newer index than the installed one is published. (The engine also
+    /// sets `availableVersion` to the installed version when only the encoder file is
+    /// missing or outdated; that is `encoder`, not an index update.)
     var hasMelodyUpdate: Bool {
-        melody.installed && melody.availableVersion != nil
+        guard melody.installed, let available = melody.availableVersion else { return false }
+        return available != melody.version
+    }
+
+    /// The index file alone (`sizeBytes` counts the encoder file too).
+    var libraryBytes: UInt64 {
+        let total = melody.sizeBytes
+        guard let encoderBytes, encoderBytes <= total else { return total }
+        return total - encoderBytes
+    }
+
+    var encoder: EncoderState {
+        Self.encoderState(melody, encoderBytes: encoderBytes)
+    }
+
+    nonisolated static func encoderState(_ status: MelodyIndexStatus, encoderBytes: UInt64?) -> EncoderState {
+        guard status.installed else { return .none }
+        let onlyEncoderPending = status.availableVersion != nil && status.availableVersion == status.version
+        switch (status.encoderInstalled, onlyEncoderPending) {
+        case (true, true): return .updateAvailable(bytes: status.downloadBytes)
+        case (true, false): return .installed(bytes: encoderBytes)
+        case (false, true): return .available(bytes: status.downloadBytes)
+        case (false, false): return .none
+        }
     }
 
     func checkForUpdates(quietly: Bool = false) {
@@ -107,7 +160,7 @@ final class SettingsModel {
             defer { isCheckingMelody = false }
             do {
                 let status = try await offMain { try engine.checkMelodyIndex() }
-                melody = status
+                setMelody(status, engine: engine)
                 if let bytes = status.downloadBytes { publishedBytes = bytes }
                 if case .downloading = melodyState { return }
                 melodyState = status.installed ? .installed : .notInstalled
@@ -131,6 +184,7 @@ final class SettingsModel {
             melodyState = .failed
             return
         }
+        isDownloadingEncoderOnly = melody.installed && !hasMelodyUpdate && encoder != .none
         melodyState = .downloading(fraction: 0)
         installTask = Task { [weak self] in
             for await event in bridge.events {
@@ -140,7 +194,7 @@ final class SettingsModel {
                     self.melodyState = .downloading(fraction: Double(fraction ?? 0))
                 case .finished:
                     self.install = nil
-                    self.melody = engine.melodyIndexStatus()
+                    self.setMelody(engine.melodyIndexStatus(), engine: engine)
                     self.melodyState = self.melody.installed ? .installed : .failed
                     self.refreshStorage()
                 case .failed(let code, _):
@@ -149,7 +203,7 @@ final class SettingsModel {
                     self.melodyState = .failed
                 case .canceled:
                     self.install = nil
-                    self.melody = engine.melodyIndexStatus()
+                    self.setMelody(engine.melodyIndexStatus(), engine: engine)
                     self.melodyState = self.melody.installed ? .installed : .notInstalled
                 default:
                     break
@@ -169,7 +223,7 @@ final class SettingsModel {
         } catch {
             Log.engine.error("Removing the melody index failed: \(String(describing: error), privacy: .public)")
         }
-        melody = engine.melodyIndexStatus()
+        setMelody(engine.melodyIndexStatus(), engine: engine)
         melodyState = melody.installed ? .installed : .notInstalled
         refreshStorage()
     }

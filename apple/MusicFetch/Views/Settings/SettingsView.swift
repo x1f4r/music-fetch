@@ -285,8 +285,9 @@ struct MelodyPane: View {
                 case .installed, .unknown:
                     if settings.melody.installed {
                         LabeledContent(Copy.melodyLibrary) {
-                            Text(Copy.melodyInstalled(songs: settings.melody.songCount, bytes: settings.melody.sizeBytes))
+                            Text(Copy.melodyInstalled(songs: settings.melody.songCount, bytes: settings.libraryBytes))
                         }
+                        encoderRow(settings)
                         if let updated = Format.indexDate(settings.melody.version) {
                             LabeledContent(Copy.updated, value: updated)
                         }
@@ -308,7 +309,7 @@ struct MelodyPane: View {
                 case .notInstalled:
                     notInstalledRow(settings)
                 case .downloading(let fraction):
-                    LabeledContent(Copy.melodyLibrary) {
+                    LabeledContent(settings.isDownloadingEncoderOnly ? Copy.melodyModel : Copy.melodyLibrary) {
                         HStack(spacing: 10) {
                             ProgressView(value: fraction)
                                 .frame(width: 140)
@@ -332,13 +333,64 @@ struct MelodyPane: View {
                 Text(Copy.melodyFooter).font(.callout).foregroundStyle(.secondary)
             }
             Section(Copy.whileHumming) {
-                Toggle(Copy.alsoSearchLyrics, isOn: $searchSungLyrics)
-                Toggle(Copy.autoStopAfterPause, isOn: $autoStop)
+                let speech = app.speech!
+                Toggle(isOn: $searchSungLyrics) {
+                    Text(Copy.alsoSearchLyrics)
+                    Text(Copy.speechNote(speech.status, language: speech.language))
+                }
+                .disabled(speech.status == .unsupported)
+                .onChange(of: searchSungLyrics) { _, on in
+                    // Turning it back on is the moment to ask (macOS 15).
+                    if on, speech.status == .needsPermission { Task { await speech.requestPermission() } }
+                }
+                if speech.status == .denied, searchSungLyrics {
+                    HStack {
+                        Spacer()
+                        Button(Copy.openSystemSettings) { app.openPrivacySettings(.speechRecognition) }
+                    }
+                }
+                Toggle(isOn: $autoStop) {
+                    Text(Copy.autoStopAfterPause)
+                    Text(Copy.autoStopFooter)
+                }
             }
         }
         .formStyle(.grouped)
-        .frame(minHeight: 320)
+        .frame(minHeight: 480)
         .onAppear { settings.refreshMelody() }
+        .task { await app.speech.refresh() }
+    }
+
+    /// The index's encoder file: its size once installed, or the offer to download it.
+    @ViewBuilder
+    private func encoderRow(_ settings: SettingsModel) -> some View {
+        switch settings.encoder {
+        case .none:
+            EmptyView()
+        case .installed(let bytes):
+            LabeledContent(Copy.melodyModel) {
+                Text(bytes.map(Format.bytes) ?? Copy.installed)
+            }
+        case .available(let bytes):
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Text(Copy.melodyNotInstalled(bytes)).foregroundStyle(.secondary)
+                    Button(Copy.melodyDownload) { settings.downloadMelody() }
+                        .accessibilityLabel(Copy.downloadMelodyModel)
+                }
+            } label: {
+                Text(Copy.melodyModel)
+                Text(Copy.melodyModelNote)
+            }
+        case .updateAvailable(let bytes):
+            LabeledContent(Copy.melodyModel) {
+                HStack(spacing: 10) {
+                    Text(Copy.updateAvailable(bytes)).foregroundStyle(.secondary)
+                    Button(Copy.update) { settings.downloadMelody() }
+                        .accessibilityLabel(Copy.updateMelodyModel)
+                }
+            }
+        }
     }
 
     private func notInstalledRow(_ settings: SettingsModel) -> some View {
@@ -367,7 +419,13 @@ struct StoragePane: View {
                 }
                 if let storage = settings.storage {
                     LabeledContent(Copy.cachedAudio, value: Format.bytes(storage.cacheBytes))
-                    LabeledContent(Copy.melodyLibrary, value: Format.bytes(storage.melodyIndexBytes))
+                    // The engine counts the encoder file with the index; Melody lists them apart.
+                    if let model = settings.encoderBytes, model <= storage.melodyIndexBytes {
+                        LabeledContent(Copy.melodyLibrary, value: Format.bytes(storage.melodyIndexBytes - model))
+                        LabeledContent(Copy.melodyModel, value: Format.bytes(model))
+                    } else {
+                        LabeledContent(Copy.melodyLibrary, value: Format.bytes(storage.melodyIndexBytes))
+                    }
                     LabeledContent(Copy.libraryTitle, value: Format.bytes(storage.databaseBytes))
                 }
                 HStack {

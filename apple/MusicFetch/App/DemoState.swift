@@ -6,10 +6,11 @@ import MusicFetchCore
 /// The app then runs on `FakeEngine` and never touches the real library, and nothing
 /// it changes is written to the app's preferences.
 ///
-/// States: idle, listening, hum, matching, result, candidates, mix, collection, library,
+/// States: idle, listening, hum, hum-answers, matching, result, candidates, candidates-unsure, mix, collection, library,
 /// library-selection, library-pinned, session, noMatch, captureSilent, downloading,
-/// prePrompt, micDenied, melodyPrompt, lyrics, failed, providers, providers-custom,
-/// settings-general, settings-general-custom, settings-services, settings-melody,
+/// prePrompt, speechPrePrompt, micDenied, melodyPrompt, lyrics, failed, providers, providers-custom,
+/// settings-general, settings-general-custom, settings-services, settings-melody, settings-melody-model,
+/// settings-melody-speech-off,
 /// settings-melody-downloading, settings-storage, settings-about.
 ///
 /// Options for the screenshot tests (apple/MusicFetchUITests):
@@ -32,7 +33,8 @@ nonisolated struct DemoState: Sendable {
     }
 
     static func fromLaunchArguments(_ defaults: UserDefaults = .standard) -> DemoState? {
-        // Unit tests host the app: keep them away from the real library.
+        // Unit tests host the app: keep them away from the real library. (Tests that drive
+        // live sessions themselves create `DemoState(name: "tests-manual")`.)
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return DemoState(name: "tests") }
         // The offscreen harness builds its own states; the app's model stays on the fake engine.
         if RenderHarness.isActive {
@@ -49,6 +51,9 @@ nonisolated struct DemoState: Sendable {
         return state
     }
 
+    /// Unit tests host the app (`tests`, `tests-manual`): no windows, no settling.
+    var isTest: Bool { name.hasPrefix("tests") }
+
     /// "1180x760".
     static func size(_ text: String) -> CGSize? {
         let parts = text.lowercased().split(separator: "x").compactMap { Double($0) }
@@ -60,11 +65,13 @@ nonisolated struct DemoState: Sendable {
         switch name {
         case "listening": .listening
         case "hum": .hum
+        case "hum-answers": .humAnswers
         case "matching": .matching
         case "noMatch": .noMatch
         case "captureSilent": .captureSilent
         case "downloading": .downloading
         case "mix": .mix
+        case "tests-manual": .manual
         default: .interactive
         }
     }
@@ -83,6 +90,7 @@ nonisolated struct DemoState: Sendable {
         case "mix": .seconds(6)
         case "collection", "downloading": .seconds(2)
         case "listening", "hum", "matching", "captureSilent": .seconds(2)
+        case "hum-answers": .seconds(5)
         case "lyrics": .seconds(1.5)
         default: .seconds(1)
         }
@@ -101,7 +109,7 @@ nonisolated struct DemoState: Sendable {
     @MainActor
     func apply(to app: AppModel) async {
         // Screenshots show the window in front, active when the system allows it.
-        if name != "tests", !offscreen {
+        if !isTest, !offscreen {
             NSApp.activate()
             NSApp.windows.filter(\.isVisible).forEach { $0.orderFrontRegardless() }
         }
@@ -114,7 +122,7 @@ nonisolated struct DemoState: Sendable {
         switch name {
         case "listening", "matching", "noMatch":
             app.listenNow(.microphone)
-        case "hum":
+        case "hum", "hum-answers":
             app.listenNow(.hum)
         case "captureSilent":
             app.listenNow(.thisMac)
@@ -122,6 +130,8 @@ nonisolated struct DemoState: Sendable {
             app.showOnListen(DemoFixtures.resultID)
         case "candidates":
             app.showOnListen(DemoFixtures.humID)
+        case "candidates-unsure":
+            app.showOnListen(DemoFixtures.unsureHumID)
         case "mix", "downloading":
             app.identify("https://www.youtube.com/watch?v=demo")
         case "collection":
@@ -142,6 +152,9 @@ nonisolated struct DemoState: Sendable {
             app.listen.showForDemo(.systemAudioPrePrompt)
         case "micDenied":
             app.listen.showForDemo(.microphoneDenied)
+        case "speechPrePrompt":
+            // The first hum on macOS 15 explains speech recognition before macOS asks.
+            app.listen.start(.hum)
         case "failed":
             app.listen.showForDemo(.failed(.mediaUnavailable, nil))
         case "melodyPrompt":
@@ -165,12 +178,16 @@ nonisolated struct DemoState: Sendable {
             try? await Task.sleep(for: .milliseconds(300))
             NSApp.activate()
             app.openSettingsAction?()
+            if name == "settings-melody-model" {
+                (app.engine as? FakeEngine)?.setMelodyStatus(DemoFixtures.melodyStatusWithoutEncoder)
+                app.settings.refreshMelody()
+            }
             if name == "settings-melody-downloading" {
                 try? await Task.sleep(for: .milliseconds(200))
                 app.settings.downloadMelody()
             }
         }
-        if name != "tests" {
+        if !isTest {
             try? await Task.sleep(for: settleTime)
             app.demoReady = true
         }

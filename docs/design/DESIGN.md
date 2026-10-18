@@ -405,6 +405,8 @@ Pane = detail column minus the 52pt toolbar. Everything is horizontally centered
 | `Notice::ImpressionDetected` | low live line + ring | "Keep going" | — (toggles disabled) | trace band scrolling |
 | Hum mode start (`ListenMode::Hum`) | low live line + ring at 0 | "Hum, whistle or sing" | same | trace band visible, empty |
 | `Notice::KeepGoing` | same | "Keep going" | same | — |
+| Live answers (`Candidates { is_final: false }` while humming) | same | unchanged | — | "Sounds like" (`.subheadline` secondary) over two fixed 28pt rows from the recovery row's top, as wide as the source toggles (text and tags line up with their outer edges): title (best semibold) · artist (secondary) · tier tag. Strong and Possible only, at most two; long shots never show while humming. A new answer crossfades in place (nothing moves); clicking a row stops and selects it in the final list. The recent row hides meanwhile. Kept while matching. |
+| Speech pre-prompt (first Hum on macOS 15 with "Also search lyrics you sing" on, permission not asked yet) | mark | "To search the words you sing, macOS will ask to allow speech recognition." | [Continue] [Not Now] | once; Continue shows the system prompt, then the hum starts either way; Not Now hums without words. macOS 26 needs no permission. |
 | Matching (`Phase::Recognizing` / `MatchingMelody` / `SearchingLyrics` after capture ends) | frozen line at 70 % | "⟳ Matching" (small `ProgressView` inline) | — (toggles disabled) | — |
 | `Outcome::Matched` | morphs into the result | — | — | §6.3 replaces the stage |
 | `Outcome::Candidates` | — | — | — | §6.4 replaces the stage |
@@ -519,6 +521,8 @@ footer   "Not here?" bodyMedium + [Type a lyric] TextButton (wraps at large font
 
 The first card is expanded by default. Tapping a collapsed card expands it (`animateContentSize`, hero spring) and collapses the other.
 
+**Not sure.** When every answer is a long shot (`CandidateTier::LongShot` on the first row), the list starts with "Not sure. Try humming the chorus." (`.callout` secondary; typed lyrics: "Not sure. Try different words."), no row's "This is it" is prominent or the default button, and "Hum again" is `.borderedProminent`. The announcement is the same sentence.
+
 ### 6.5 Mix session — both platforms
 
 **macOS** (pushed in the Library stack, or shown in Listen while analyzing a link):
@@ -587,7 +591,7 @@ Empty: `ContentUnavailableView("Nothing identified yet", systemImage: "waveform"
 |---|---|
 | General (`gearshape`) | "Open songs in" popup (Spotify, Apple Music, YouTube Music, YouTube, Deezer, Tidal, Amazon Music, SoundCloud) · "Show in menu bar" toggle · "Launch at login" toggle (`SMAppService`) · "Notify when a result arrives in the background" toggle |
 | Services (`key`) | **AudD**: "API token" secure field, footer "Optional. Tried when the free match fails." · **ACRCloud**: Host, Access key, Access secret; footer "Optional. Used for recordings." · **ACRCloud humming**: Host, Access key, Access secret; footer "Optional. A second opinion when you hum." Credentials go to the Keychain; fields show "••••" when set. |
-| Melody (the mark) | installed: "Melody library" → "41,234 songs · 48 MB"; "Updated" → "October 1, 2026"; buttons [Check for Updates] [Remove]; footer "Needed to recognize humming, whistling and singing. Stays on this Mac." · not installed: "Melody library" → "Not installed · 48 MB" + [Download] · downloading: `ProgressView(value:)` "23 of 48 MB" + [Cancel] · update available: "Update available · 52 MB" + [Update] · error: "Couldn't download. Check your connection." + [Try Again] · group "While humming": "Also search lyrics you sing" toggle, "Stop automatically after a pause" toggle |
+| Melody (the mark) | installed: "Melody library" → "41,234 songs · 48 MB"; "Melody model" → "13 MB" (the index's encoder file, when installed); "Updated" → "October 1, 2026"; buttons [Check for Updates] [Remove]; footer "Needed to recognize humming, whistling and singing. Stays on this Mac." · model on offer (the installed index lacks it): "Melody model" / "Helps recognize more hums." → "Not installed · 13 MB" + [Download]; newer model: "Update available · 13 MB" + [Update] · not installed: "Melody library" → "Not installed · 48 MB" + [Download] · downloading: `ProgressView(value:)` "23 of 48 MB" + [Cancel] (labelled "Melody model" when only the model downloads) · update available: "Update available · 52 MB" + [Update] · error: "Couldn't download. Check your connection." + [Try Again] · group "While humming": "Also search lyrics you sing" toggle with the note "Words are recognized on this Mac." (macOS 15, permission off: "Speech recognition is off for Music Fetch in System Settings." + [Open System Settings]; no recognizer for the language: "This Mac can't recognize ‹language› speech on its own.", toggle disabled), "Stop automatically" toggle with the note "After a pause, or as soon as the song is clear." |
 | Storage (`internaldrive`) | "On disk" → "1.2 GB" · "Keep audio for pinned sessions" toggle · [Clear Cache] with confirmation "Clear 1.2 GB of cached audio? Pinned sessions keep their audio." · "Location" → path + [Show in Finder] |
 | About (`info.circle`) | app icon, "Music Fetch 1.0 (build)", [Licenses] (pushes a list of third-party licenses), "Acknowledgements" |
 
@@ -662,6 +666,9 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | state.offline | You're offline. Saved to identify later. |
 | state.micOff.mac | Microphone access is off. |
 | state.systemAudioPrePrompt.mac | macOS will ask to allow system audio recording. |
+| state.speechPrePrompt.mac | To search the words you sing, macOS will ask to allow speech recognition. |
+| live.soundsLike | Sounds like |
+| live.answerHint | Stops listening and shows the matches (accessibility hint) |
 | state.phoneAudioPrePrompt.android | Android will ask to allow capture for this session. |
 | action.tryAgain | Try again |
 | action.humIt | Hum it |
@@ -698,7 +705,13 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | melody.update | Update |
 | melody.tryAgain | Try Again |
 | melody.alsoLyrics | Also search lyrics you sing |
-| melody.autoStop | Stop automatically after a pause |
+| melody.alsoLyrics.note | Words are recognized on this Mac. |
+| melody.alsoLyrics.denied.mac | Speech recognition is off for Music Fetch in System Settings. |
+| melody.alsoLyrics.unsupported.mac | This Mac can't recognize %@ speech on its own. |
+| melody.autoStop | Stop automatically |
+| melody.autoStop.note | After a pause, or as soon as the song is clear. |
+| melody.model | Melody model |
+| melody.model.note | Helps recognize more hums. |
 
 **Results**
 
@@ -743,6 +756,8 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | cand.notHere | Not here? |
 | cand.overlayTitle | Your hum vs. %@ |
 | cand.legend.you | You |
+| cand.notSure | Not sure. Try humming the chorus. |
+| cand.notSure.lyrics | Not sure. Try different words. |
 | lyrics.prompt | Type a lyric you remember |
 | lyrics.empty | No songs with that lyric. |
 | lyrics.tryDifferent | Try different words |

@@ -20,6 +20,7 @@ nonisolated enum Copy {
     static let offline = String(localized: "You're offline. Saved to identify later.")
     static let microphoneOff = String(localized: "Microphone access is off.")
     static let systemAudioPrePrompt = String(localized: "macOS will ask to allow system audio recording.")
+    static let speechPrePrompt = String(localized: "To search the words you sing, macOS will ask to allow speech recognition.")
 
     static func rateLimited(seconds: Int) -> String {
         String(localized: "Too many requests. Trying again in \(seconds) s.")

@@ -8,6 +8,9 @@ final class LowPowerMonitor {
     private var observer: NSObjectProtocol?
     private var current: Bool?
 
+    /// Whether the engine runs in low-power mode now.
+    var isEnabled: Bool { current ?? false }
+
     /// The rule: weak hardware, or the system asks to save energy.
     nonisolated static func shouldUseLowPower(memoryBytes: UInt64, cores: Int, lowPowerMode: Bool) -> Bool {
         memoryBytes < 8 << 30 || cores <= 4 || lowPowerMode

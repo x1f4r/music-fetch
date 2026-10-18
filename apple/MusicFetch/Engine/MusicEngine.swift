@@ -9,6 +9,9 @@ nonisolated protocol LiveSessionHandle: AnyObject, Sendable {
     /// The user stopped capture: analyze what was captured.
     func finish()
     func cancel()
+    /// What the on-device recognizer heard so far (sung words); each call replaces the
+    /// last. Cheap; any thread.
+    func pushTranscript(_ words: HeardWords)
 }
 
 /// A running analysis (link, file, lyric search, melody-index download).
@@ -22,6 +25,9 @@ nonisolated protocol AnalysisSessionHandle: AnyObject, Sendable {
 ///
 /// Methods marked "blocking" must not run on the main thread; use `offMain`.
 nonisolated protocol MusicEngine: AnyObject, Sendable {
+    /// Live sessions take the app's transcripts of sung words (`ListenOptions.transcripts`,
+    /// `LiveSessionHandle.pushTranscript`); otherwise the engine asks its speech service.
+    var acceptsTranscripts: Bool { get }
     func setCredentials(_ credentials: Credentials)
     /// Less CPU and memory for weaker Macs and Low Power Mode.
     func setLowPower(_ enabled: Bool)
@@ -50,6 +56,8 @@ nonisolated protocol MusicEngine: AnyObject, Sendable {
     /// Blocking.
     func clearCache() throws
     func melodyIndexStatus() -> MelodyIndexStatus
+    /// Size of the installed index's encoder file, when there is one.
+    func melodyEncoderBytes() -> UInt64?
     /// Blocking (network).
     func checkMelodyIndex() throws -> MelodyIndexStatus
     func installMelodyIndex(observer: SessionObserver) throws -> AnalysisSessionHandle
@@ -76,10 +84,14 @@ nonisolated func offMain<T: Sendable>(_ body: @Sendable () -> T) async -> T {
 /// `MusicEngine` backed by the Rust engine.
 nonisolated final class CoreEngine: MusicEngine {
     private let engine: Engine
+    private let dataDir: URL?
 
-    init(engine: Engine) {
+    init(engine: Engine, dataDir: URL? = nil) {
         self.engine = engine
+        self.dataDir = dataDir
     }
+
+    var acceptsTranscripts: Bool { true }
 
     func setCredentials(_ credentials: Credentials) {
         engine.setCredentials(credentials: credentials)
@@ -155,6 +167,13 @@ nonisolated final class CoreEngine: MusicEngine {
         try engine.checkMelodyIndex()
     }
 
+    /// `data_dir/melody/melody-encoder.mfe` (docs/CORE_API.md, "Melody index").
+    func melodyEncoderBytes() -> UInt64? {
+        guard let dataDir else { return nil }
+        let url = dataDir.appending(path: "melody", directoryHint: .isDirectory).appending(path: "melody-encoder.mfe")
+        return (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value
+    }
+
     func installMelodyIndex(observer: SessionObserver) throws -> AnalysisSessionHandle {
         CoreAnalysisSession(try engine.installMelodyIndex(observer: observer))
     }
@@ -191,6 +210,13 @@ nonisolated private final class CoreLiveSession: LiveSessionHandle {
 
     func cancel() {
         session.cancel()
+    }
+
+    func pushTranscript(_ words: HeardWords) {
+        session.pushTranscript(
+            transcript: SpeechTranscript(
+                text: words.text, alternatives: words.alternatives, language: words.language, confidence: words.confidence,
+                isFinal: words.isFinal))
     }
 }
 

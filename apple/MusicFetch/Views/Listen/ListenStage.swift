@@ -10,6 +10,8 @@ struct ListenStage: View {
 
     var listen: ListenModel
     var glass: Namespace.ID
+    /// The source toggles' width: the live answers line up with their edges.
+    @State private var togglesWidth: CGFloat = 340
 
     private var showsTrace: Bool {
         (listen.stage == .listening || listen.stage == .matching) && listen.impression
@@ -44,19 +46,33 @@ struct ListenStage: View {
 
                 SourceToggles(listen: listen)
                     .frame(height: 28)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { togglesWidth = $0 }
                     .position(x: x, y: c + 30 + stateLineHeight + 20 + 14)
 
                 RecoveryRow(listen: listen)
                     .frame(height: 28)
                     .position(x: x, y: c + 30 + stateLineHeight + 20 + 28 + 12 + 14)
 
-                if let recent = app.library.recent, size.height > 420 {
+                // While humming, the recovery row's slot holds the live answers; the
+                // block grows downwards and keeps its frame whatever it shows. Its text
+                // and tags line up with the toggles' outer edges (rows inset 10 pt).
+                LiveAnswersView(listen: listen)
+                    .frame(width: min(max(togglesWidth + 20, 320), size.width - 48), height: LiveAnswersView.height)
+                    .position(x: x, y: c + 30 + stateLineHeight + 20 + 28 + 12 + LiveAnswersView.height / 2)
+                    .opacity(listen.showsLiveAnswers ? 1 : 0)
+                    .allowsHitTesting(listen.showsLiveAnswers && listen.isCapturing)
+                    .accessibilityHidden(!listen.showsLiveAnswers)
+
+                // A previous result next to live answers would be one song list too many.
+                if let recent = app.library.recent, size.height > 420, !listen.showsLiveAnswers {
                     RecentRow(entry: recent)
                         .frame(width: min(520, size.width - 48), height: 56)
                         .position(x: x, y: size.height - 24 - 28)
+                        .transition(.opacity)
                 }
             }
             .animation(app.motion(.hero), value: showsTrace)
+            .animation(.easeInOut(duration: 0.2), value: listen.showsLiveAnswers)
         }
     }
 }
@@ -119,6 +135,85 @@ struct RecoveryRow: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: actions)
+    }
+}
+
+/// "Sounds like" and the best one or two answers of the progressive melody search while
+/// someone hums (`LiveAnswers`). Two fixed rows: a new answer crossfades in place, so
+/// nothing moves while the user hums. Clicking an answer stops listening and selects it.
+struct LiveAnswersView: View {
+    static let rowHeight: CGFloat = 28
+    static let height: CGFloat = 20 + 4 + rowHeight * 2 + 2
+
+    var listen: ListenModel
+
+    var body: some View {
+        let answers = listen.liveAnswers
+        VStack(alignment: .leading, spacing: 0) {
+            Text(Copy.soundsLike)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(height: 20, alignment: .bottom)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(0..<LiveAnswers.limit, id: \.self) { row in
+                LiveAnswerRow(candidate: answers.candidate(at: row), isBest: row == 0) { listen.choose($0) }
+                    .frame(height: Self.rowHeight)
+                    .padding(.bottom, row == 0 ? 2 : 0)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .animation(.easeInOut(duration: 0.2), value: answers.candidates.map(\.liveKey))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Copy.soundsLike)
+        .accessibilityIdentifier("mf.liveAnswers")
+    }
+}
+
+/// One live answer: "Title · Artist" and its tier. Empty rows keep their height.
+struct LiveAnswerRow: View {
+    var candidate: Candidate?
+    var isBest: Bool
+    var choose: (Candidate) -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        if let candidate {
+            Button {
+                choose(candidate)
+            } label: {
+                HStack(spacing: 6) {
+                    Text(candidate.track.title)
+                        .fontWeight(isBest ? .semibold : .regular)
+                        .layoutPriority(1)
+                    if !candidate.track.artist.isEmpty {
+                        Text(verbatim: "·").foregroundStyle(.tertiary)
+                        Text(candidate.track.artist).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    CandidateTag(tier: candidate.tier)
+                }
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.fill.quaternary)
+                    .opacity(hovering ? 1 : 0)
+            }
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            .id(candidate.track.identityKey)
+            .transition(.opacity)
+            .accessibilityLabel(Copy.liveAnswerAccessibility(candidate))
+            .accessibilityHint(Copy.liveAnswerHint)
+        } else {
+            Color.clear
+        }
     }
 }
 

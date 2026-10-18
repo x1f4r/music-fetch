@@ -88,6 +88,8 @@ nonisolated enum DemoFixtures {
     static let collectionID = "00000000-0000-4000-8000-000000000007"
     static let dreamsID = "00000000-0000-4000-8000-000000000008"
     static let waitingID = "00000000-0000-4000-8000-000000000009"
+    /// A hum where every answer is a long shot (screenshots only; not in the library).
+    static let unsureHumID = "00000000-0000-4000-8000-000000000010"
 
     static func at(daysAgo: Int, hour: Int, minute: Int) -> Int64 {
         let calendar = Calendar.current
@@ -175,6 +177,42 @@ nonisolated enum DemoFixtures {
         }
     }
 
+    /// The progressive search's interim lists while humming: melody only, not enriched
+    /// (no artwork), each replacing the last. The first has only long shots.
+    static var liveLists: [[Candidate]] {
+        [
+            [live(2, 0.18, .longShot), live(0, 0.12, .longShot)],
+            [live(0, 0.58, .possible), live(1, 0.41, .possible), live(2, 0.2, .longShot)],
+            [live(0, 0.81, .strong), live(1, 0.37, .possible), live(2, 0.12, .longShot)],
+        ]
+    }
+
+    private static func live(_ index: Int, _ score: Float, _ tier: CandidateTier) -> Candidate {
+        var track = candidateTracks[index]
+        track.artworkUrl = nil
+        track.previewUrl = nil
+        return Candidate(
+            track: track, score: score, tier: tier, sources: [CandidateSource(kind: .melody, score: score, detail: nil)],
+            alignment: nil)
+    }
+
+    /// Final candidates of a hum the matcher is not sure about.
+    static var unsureCandidates: [Candidate] {
+        let scores: [Float] = [0.22, 0.14, 0.09]
+        return [candidateTracks[2], candidateTracks[3], dreams].enumerated().map { index, track in
+            let reference = contour(seed: index + 3, frames: 220, shift: 1.2)
+            return Candidate(
+                track: track, score: scores[index], tier: .longShot,
+                sources: [CandidateSource(kind: .melody, score: scores[index], detail: nil)],
+                alignment: MelodyAlignment(frameMs: 50, query: contour(seed: 0, frames: 220), reference: reference))
+        }
+    }
+
+    static var unsureEntry: LibraryEntry {
+        entry(unsureHumID, .hum, .candidates, at(daysAgo: 0, hour: 15, minute: 2), title: "Africa", subtitle: "Toto",
+              artwork: candidateTracks[2].artworkUrl, track: nil)
+    }
+
     static var entries: [LibraryEntry] {
         [
             entry(resultID, .listen, .matched, at(daysAgo: 0, hour: 14, minute: 32), title: "Houdini", subtitle: "Dua Lipa",
@@ -202,6 +240,9 @@ nonisolated enum DemoFixtures {
     }
 
     static func detail(_ id: String) -> SessionDetail? {
+        if id == unsureHumID {
+            return SessionDetail(entry: unsureEntry, source: nil, segments: [], candidates: unsureCandidates, transcript: nil)
+        }
         guard let entry = entries.first(where: { $0.id == id }) else { return nil }
         switch id {
         case mixID:
@@ -246,6 +287,15 @@ nonisolated enum DemoFixtures {
             """,
         synced: [])
 
+    static let encoderBytes: UInt64 = 13_000_000
+
+    /// The index and its encoder file installed.
     static let melodyStatus = MelodyIndexStatus(
-        installed: true, version: "2026.10.1", songCount: 41_234, sizeBytes: 48_000_000, availableVersion: nil, downloadBytes: nil)
+        installed: true, version: "2026.10.1", songCount: 41_234, sizeBytes: 61_000_000, availableVersion: nil, downloadBytes: nil,
+        encoderInstalled: true)
+
+    /// The index is current; its encoder file is not downloaded yet.
+    static let melodyStatusWithoutEncoder = MelodyIndexStatus(
+        installed: true, version: "2026.10.1", songCount: 41_234, sizeBytes: 48_000_000, availableVersion: "2026.10.1",
+        downloadBytes: encoderBytes, encoderInstalled: false)
 }
