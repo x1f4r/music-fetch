@@ -9,6 +9,7 @@ import app.musicfetch.core.coreVersion
 import app.musicfetch.platform.AppSettings
 import app.musicfetch.platform.CredentialField
 import app.musicfetch.platform.ProviderPreference
+import app.musicfetch.platform.SungLyrics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -51,6 +52,13 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setNotify(on: Boolean) {
         viewModelScope.launch { graph.settings.setNotifyInBackground(on) }
+    }
+
+    /** Whether this phone can read sung words on the device (Android 13+ with an on-device recognizer). */
+    val sungLyricsAvailable: Boolean = SungLyrics(app).isAvailable()
+
+    fun setSungLyrics(on: Boolean) {
+        viewModelScope.launch { graph.settings.setSungLyrics(on) }
     }
 
     fun setAutoStop(on: Boolean) {

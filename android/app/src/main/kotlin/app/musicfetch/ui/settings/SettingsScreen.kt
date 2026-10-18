@@ -64,6 +64,7 @@ import app.musicfetch.engine.MelodyDownload
 import app.musicfetch.platform.CredentialField
 import app.musicfetch.ui.common.Formatters
 import app.musicfetch.ui.common.ListRow
+import app.musicfetch.ui.common.tag
 import app.musicfetch.ui.navigation.LicensesRoute
 import app.musicfetch.ui.navigation.LocalNavigator
 import app.musicfetch.ui.navigation.ProviderRoute
@@ -160,12 +161,24 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                     )
                 }
                 item { Header(R.string.settings_while_humming) }
+                // Only where the phone can read sung words on the device (Android 13+).
+                if (viewModel.sungLyricsAvailable) {
+                    item {
+                        val on = settings?.sungLyrics ?: true
+                        ListRow(
+                            headline = stringResource(R.string.settings_sung_lyrics),
+                            trailing = { Switch(checked = on, onCheckedChange = null) },
+                            modifier = Modifier.semantics { role = Role.Switch }.tag("settings.sungLyrics"),
+                            onClick = { viewModel.setSungLyrics(!on) },
+                        )
+                    }
+                }
                 item {
                     val on = settings?.autoStop ?: true
                     ListRow(
                         headline = stringResource(R.string.settings_auto_stop),
                         trailing = { Switch(checked = on, onCheckedChange = null) },
-                        modifier = Modifier.semantics { role = Role.Switch },
+                        modifier = Modifier.semantics { role = Role.Switch }.tag("settings.autoStop"),
                         onClick = { viewModel.setAutoStop(!on) },
                     )
                 }

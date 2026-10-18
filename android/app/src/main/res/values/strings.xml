@@ -102,7 +102,7 @@
 
     <!-- While humming: the progressive search's answer so far -->
     <string name="hum_sounds_like">Sounds like</string>
-    <string name="hum_preview_track">%1$s · %2$s</string>
+    <string name="hum_preview_artist">" · %1$s"</string>
     <string name="hum_preview_description">Sounds like %1$s by %2$s, %3$s</string>
     <string name="hum_preview_stop">Stop listening</string>
     <string name="lyrics_prompt">Type a lyric you remember</string>
@@ -306,6 +306,7 @@
     <!-- Low power, offline, segment edits -->
     <string name="settings_while_humming">While humming</string>
     <string name="settings_auto_stop">Stop automatically after a pause</string>
+    <string name="settings_sung_lyrics">Also search lyrics you sing</string>
     <string name="state_offline">You\'re offline. Saved to identify later.</string>
     <string name="library_waiting">Waiting for connection</string>
     <string name="session_waiting_message">It will be identified when you\'re back online.</string>

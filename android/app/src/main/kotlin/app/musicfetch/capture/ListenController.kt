@@ -358,6 +358,7 @@ class ListenController(
             return
         }
         if (!finalCandidates) lastCandidates = candidates
+        Log.i(TAG, "interim candidates: ${candidates.size}, top ${candidates.firstOrNull()?.tier}")
         _state.update { if (it.isActive) it.copy(preview = candidates) else it }
     }
 

@@ -47,6 +47,8 @@ class EngineHost(
     private val scope: CoroutineScope,
     private val credentials: CredentialStore,
     private val lowPower: LowPower,
+    /** Settings, "Also search lyrics you sing". */
+    private val sungLyricsEnabled: () -> Boolean = { true },
 ) {
     private val appContext = context.applicationContext
     private val _state = MutableStateFlow<EngineState>(EngineState.Starting)
@@ -107,7 +109,8 @@ class EngineHost(
             mediaTools = null,
             melodyIndexManifestUrl = melodyManifestUrl(),
         )
-        val speech = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) AndroidSpeechToText(appContext) else null
+        // Android 13+ can give the on-device recognizer a recording (SungLyrics).
+        val speech = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) AndroidSpeechToText(appContext, sungLyricsEnabled) else null
         return Engine(config, mediaBackend, MediaCodecDecoder(), speech)
     }
 

@@ -83,7 +83,12 @@ class AppGraph(val app: Application) {
     val settings = SettingsStore(app)
     val credentials = CredentialStore(app)
     val lowPower = LowPower(app)
-    val engineHost = EngineHost(app, scope, credentials, lowPower)
+
+    /** Settings, "Also search lyrics you sing", readable from any thread. */
+    val sungLyricsEnabled: StateFlow<Boolean> = settings.settings.map { it.sungLyrics }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, true)
+    val engineHost = EngineHost(app, scope, credentials, lowPower) { sungLyricsEnabled.value }
     val listen = ListenController(app, scope, engineHost, settings)
     val analyses = AnalysisController(app, scope, engineHost, settings)
     val melody = MelodyLibrary(scope, engineHost)
