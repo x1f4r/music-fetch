@@ -62,6 +62,7 @@
     <string name="melody_status_not_installed">Not installed · %1$s</string>
     <string name="melody_status_not_installed_unknown">Not installed</string>
     <string name="melody_status_update_available">Update available · %1$s</string>
+    <string name="melody_status_encoder_available">Better matching available · %1$s</string>
     <string name="melody_status_downloading">%1$s of %2$s</string>
     <string name="melody_status_preparing">Preparing download</string>
     <string name="melody_error">Couldn\'t download. Check your connection.</string>

@@ -159,6 +159,10 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                         version = melody?.version,
                         updateVersion = melody?.availableVersion,
                         downloadBytes = melody?.downloadBytes?.toLong(),
+                        // The index is current; only its learned encoder is still to come.
+                        encoderOnly = melody?.let {
+                            it.installed && !it.encoderInstalled && it.availableVersion != null && it.availableVersion == it.version
+                        } == true,
                         download = download,
                         checkFailed = checkFailed,
                         onDownload = viewModel::downloadMelody,
@@ -350,6 +354,7 @@ private fun MelodySection(
     version: String?,
     updateVersion: String?,
     downloadBytes: Long?,
+    encoderOnly: Boolean,
     download: MelodyDownload,
     checkFailed: Boolean,
     onDownload: () -> Unit,
@@ -370,6 +375,8 @@ private fun MelodySection(
                 }
             }
             download is MelodyDownload.Failed -> stringResource(R.string.melody_error)
+            installed && encoderOnly && downloadBytes != null ->
+                stringResource(R.string.melody_status_encoder_available, Formatters.bytes(context, downloadBytes))
             installed && updateVersion != null && downloadBytes != null ->
                 stringResource(R.string.melody_status_update_available, Formatters.bytes(context, downloadBytes))
             installed -> stringResource(R.string.melody_status_installed, "%,d".format(songs), Formatters.bytes(context, sizeBytes))
@@ -397,7 +404,9 @@ private fun MelodySection(
                 download is MelodyDownload.Running -> OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.session_cancel)) }
                 download is MelodyDownload.Failed -> FilledTonalButton(onClick = onDownload) { Text(stringResource(R.string.melody_try_again)) }
                 installed && updateVersion != null -> {
-                    FilledTonalButton(onClick = onDownload) { Text(stringResource(R.string.melody_update)) }
+                    FilledTonalButton(onClick = onDownload, modifier = Modifier.tag("melody.update")) {
+                        Text(stringResource(if (encoderOnly) R.string.melody_download else R.string.melody_update))
+                    }
                     OutlinedButton(onClick = onRemove) { Text(stringResource(R.string.melody_remove)) }
                 }
                 installed -> {

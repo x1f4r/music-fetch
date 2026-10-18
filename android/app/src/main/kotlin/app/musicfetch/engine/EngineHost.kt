@@ -133,10 +133,11 @@ class EngineHost(
 
         /**
          * Manifest of the downloadable melody index for the format this core reads (format 2
-         * since 1.1; docs/CORE_API.md, "Melody index"). Each format has its own release tag;
-         * 1.0.x keeps reading `melody-index-1`.
+         * since 1.1; docs/CORE_API.md, "Melody index"), phone tier: the index and its learned
+         * encoder sized for phones. Each format has its own release tag; 1.0.x keeps reading
+         * `melody-index-1`.
          */
         const val MELODY_MANIFEST_URL =
-            "https://github.com/x1f4r/music-fetch/releases/download/melody-index-2/manifest.json"
+            "https://github.com/x1f4r/music-fetch/releases/download/melody-index-2/manifest-android.json"
     }
 }
