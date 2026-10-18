@@ -1,5 +1,6 @@
 import { mount, tick, type Component } from 'svelte';
 import { browserPlatform } from '../../platform/browser-platform';
+import { useMemorySecrets } from '../../platform/secrets';
 import { useMemorySettings } from '../../settings/settings';
 import type { Platform } from '../context';
 import type { EngineClient } from '../../engine/client';
@@ -39,6 +40,7 @@ export async function bootDemo(component: Component<SurfaceProps>, surface: Demo
     return;
   }
   useMemorySettings(state.settings ?? DECIDED);
+  useMemorySecrets(state.secrets ?? {});
   if (state.route && location.hash !== `#${state.route}`) history.replaceState(null, '', `${location.pathname}${location.search}#${state.route}`);
 
   let base: Platform | null = null;

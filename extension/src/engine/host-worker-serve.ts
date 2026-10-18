@@ -1,6 +1,7 @@
 import type { PcmChunk } from '../audio/types';
 import type { CaptureHost } from '../capture/types';
 import { RpcClient, serveRpc } from '../messaging/bus';
+import { applyStoredCredentials } from '../platform/secrets';
 import type { EngineTopics } from '../messaging/protocol';
 import { BACKEND_METHODS, type BackendConfig, type BackendFactory, type EngineBackend } from './host-backend';
 import { channelPort } from './host-ports';
@@ -47,6 +48,8 @@ export async function serveWorker(init: WorkerInit, factory: BackendFactory, rep
     // Capture calls last as long as a listen-through: no timeout.
     const capture = captureProxy(new RpcClient<CaptureHost>(channelPort(init.capture, 'capture'), { timeoutMs: 0 }));
     const backend = await factory({ ...init.config, capture });
+    // The paid providers' keys, straight from the encrypted store into the engine.
+    if (backend.setCredentials) applyStoredCredentials((credentials) => backend.setCredentials!(credentials));
     const engine = channelPort(init.engine, 'engine');
     engine.onMessage.addListener((message) => {
       if (isPcm(message)) backend.pushPcm(message.sessionId, message.chunk);

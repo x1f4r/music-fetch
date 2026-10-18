@@ -383,7 +383,8 @@ export function demoSessions(): SessionDetail[] {
 export interface DemoLibraryOptions {
   /** Which sessions: everything, nothing (first run, empty library), or a chosen list. */
   sessions?: 'all' | 'none' | SessionDetail[];
-  melody?: 'none' | 'installed' | 'update';
+  /** `encoder`: installed together with its encoder companion file. */
+  melody?: 'none' | 'installed' | 'update' | 'encoder';
 }
 
 export const DEMO_MELODY = { version: '2026.10.1', songs: 41_234, bytes: 55_200_000 } as const;
@@ -405,6 +406,7 @@ export function demoSnapshot(options: DemoLibraryOptions = {}): MockSnapshot {
             size_bytes: DEMO_MELODY.bytes,
             available_version: melody === 'update' ? '2026.11.1' : null,
             download_bytes: melody === 'update' ? 58_000_000 : null,
+            ...(melody === 'encoder' ? { encoder_installed: true, encoder_bytes: 13_500_000 } : {}),
           },
   };
 }

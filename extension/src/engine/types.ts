@@ -275,6 +275,13 @@ export interface MelodyIndexStatus {
   size_bytes: number;
   available_version: string | null;
   download_bytes: number | null;
+  /**
+   * The index's encoder companion file (`melody-encoder-<tier>.mfe`, docs/PIPELINES.md
+   * "Melody encoder") is installed next to it. Optional until the core reports it.
+   */
+  encoder_installed?: boolean;
+  /** The encoder file's own size: on disk when installed, else what the next download adds. */
+  encoder_bytes?: number | null;
 }
 
 export interface StorageUsage {

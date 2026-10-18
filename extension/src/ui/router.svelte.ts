@@ -11,7 +11,7 @@ export type Route =
   | { name: 'grant-mic'; state: 'granted' | 'denied' | 'session' | null }
   | { name: 'open'; url: string };
 
-export const SETTINGS_PANES = ['general', 'listening', 'melody', 'storage', 'privacy', 'shortcuts', 'about'] as const;
+export const SETTINGS_PANES = ['general', 'listening', 'services', 'melody', 'storage', 'privacy', 'shortcuts', 'about'] as const;
 export type SettingsPane = (typeof SETTINGS_PANES)[number];
 
 export function parseRoute(hash: string): Route {

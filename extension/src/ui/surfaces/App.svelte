@@ -14,7 +14,7 @@
   import ListenRoute from '../routes/ListenRoute.svelte';
   import OpenRoute from '../routes/OpenRoute.svelte';
   import SessionRoute from '../routes/SessionRoute.svelte';
-  import SettingsRoute from '../routes/SettingsRoute.svelte';
+  import SettingsView from '../settings/SettingsView.svelte';
   import WelcomeRoute from '../routes/WelcomeRoute.svelte';
 
   /**
@@ -117,7 +117,7 @@
         <SessionRoute id={route.id} {providers} {narrow} columns={withDetails} onback={() => go({ name: 'library', pinned: false })} onlisten={() => go({ name: 'listen' })} ondetails={(subject) => (details = subject)} />
       {/key}
     {:else if route.name === 'settings'}
-      <SettingsRoute pane={route.pane} {providers} {narrow} onpane={(pane) => go({ name: 'settings', pane })} />
+      <SettingsView pane={route.pane} {providers} {narrow} onpane={(pane) => go({ name: 'settings', pane })} />
     {:else if route.name === 'open'}
       <OpenRoute url={route.url} onstarted={(id) => router.go({ name: 'session', id }, true)} />
     {:else}
