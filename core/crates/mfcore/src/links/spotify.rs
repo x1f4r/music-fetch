@@ -5,11 +5,12 @@
 use serde_json::Value;
 use url::Url;
 
-use super::fetch::{self, Agent, PageRequest};
+use super::fetch::{self, PageRequest};
 use super::html::{Document, str_at, u64_at, year_of};
 use super::{Ctx, Resolution, Site, canonical, finish_track, service_link, source_info};
 use crate::error::{MfError, Result};
 use crate::model::{Service, Track};
+use crate::util::http::HeaderRuleId;
 
 const SITE: &str = "Spotify";
 
@@ -64,7 +65,8 @@ pub(super) async fn resolve(ctx: &Ctx<'_>, url: &Url) -> Result<Resolution> {
         Err(MfError::Canceled) => return Err(MfError::Canceled),
         Err(e) => tracing::debug!("spotify embed failed: {e}"),
     }
-    let page = fetch::get_page(ctx.http, &canonical, &PageRequest::new(SITE).agent(Agent::Crawler), ctx.cancel).await?;
+    let page =
+        fetch::get_page(ctx.http, &canonical, &PageRequest::new(SITE).rule(HeaderRuleId::Crawler), ctx.cancel).await?;
     let page = fetch::require_success(page, SITE)?;
     parse_crawler_page(&page.body, kind, &canonical_url)
         .ok_or_else(|| MfError::MediaUnavailable { message: "Couldn't read this Spotify page.".into() })

@@ -119,6 +119,7 @@ impl WasmEngine {
                 ..QueuePolicy::default()
             }),
             call_budget: fast.map(|spacing| CallBudget::new(1e6, spacing)),
+            ..EngineOptions::default()
         };
         let engine = js(mfcore::Engine::in_browser(engine_config, store, files, None, config.low_power, options))?;
         Ok(WasmEngine {

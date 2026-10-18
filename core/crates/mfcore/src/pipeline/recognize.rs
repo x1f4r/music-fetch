@@ -1,15 +1,10 @@
 //! Recording recognition shared by every pipeline: persistent cache, the
-//! engine-wide call budget, rate-limit notices and the optional paid providers.
-//!
-//! Budget: a token bucket shared by all sessions (capacity 4, one token per 9 s,
-//! half that rate for an hour after any throttling). Interactive calls may use
-//! every token; batch calls leave 2 in reserve so a person listening never waits
-//! behind a mix. Cache hits cost nothing.
+//! engine-wide call budget ([`CallBudget`], see `shazam/budget.rs`), rate-limit
+//! notices and the optional paid providers.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
-use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 
 use crate::audio::wav::encode_wav;
@@ -19,8 +14,8 @@ use crate::pipeline::ctx::SessionCtx;
 use crate::providers::ProviderMatch;
 use crate::providers::acrcloud::AcrCloud;
 use crate::providers::audd::AudD;
+pub use crate::shazam::budget::CallBudget;
 use crate::shazam::{self, Priority, ShazamMatch};
-use crate::util::rt::Instant;
 
 const CACHE_NAMESPACE: &str = "shazam";
 const POSITIVE_TTL_MS: i64 = 30 * 24 * 3600 * 1000;
@@ -62,72 +57,6 @@ impl RecognitionHit {
     /// max(|timeskew|, |frequency_skew|)
     pub fn skew(&self) -> f32 {
         self.timeskew.abs().max(self.frequency_skew.abs())
-    }
-}
-
-/// Engine-wide token bucket for recognizer calls.
-pub struct CallBudget {
-    state: Mutex<BudgetState>,
-    capacity: f64,
-    refill: Duration,
-}
-
-struct BudgetState {
-    tokens: f64,
-    updated: Instant,
-    slow_until: Option<Instant>,
-}
-
-impl Default for CallBudget {
-    fn default() -> Self {
-        Self::new(4.0, Duration::from_secs(9))
-    }
-}
-
-impl CallBudget {
-    pub fn new(capacity: f64, refill: Duration) -> Self {
-        Self {
-            state: Mutex::new(BudgetState { tokens: capacity, updated: Instant::now(), slow_until: None }),
-            capacity,
-            refill,
-        }
-    }
-
-    /// Time until a token is available for `priority`, taking it when available now.
-    fn try_take(&self, priority: Priority) -> Option<Duration> {
-        let mut state = self.state.lock();
-        let now = Instant::now();
-        let slow = state.slow_until.is_some_and(|t| t > now);
-        let per_token = if slow { self.refill * 2 } else { self.refill };
-        let gained = now.duration_since(state.updated).as_secs_f64() / per_token.as_secs_f64();
-        state.tokens = (state.tokens + gained).min(self.capacity);
-        state.updated = now;
-        let reserve = match priority {
-            Priority::Interactive => 0.0,
-            Priority::Batch => 2.0,
-        };
-        if state.tokens >= 1.0 + reserve {
-            state.tokens -= 1.0;
-            None
-        } else {
-            let missing = 1.0 + reserve - state.tokens;
-            Some(per_token.mul_f64(missing))
-        }
-    }
-
-    /// Wait for a token.
-    pub async fn take(&self, priority: Priority, cancel: &crate::util::cancel::CancelToken) -> Result<()> {
-        while let Some(wait) = self.try_take(priority) {
-            cancel.sleep(wait.max(Duration::from_millis(50))).await?;
-        }
-        Ok(())
-    }
-
-    /// Slow the refill down for an hour after the service throttled us.
-    pub fn penalize(&self) {
-        let mut state = self.state.lock();
-        state.slow_until = Some(Instant::now() + Duration::from_secs(3600));
-        state.tokens = state.tokens.min(1.0);
     }
 }
 
@@ -240,30 +169,4 @@ pub async fn paid(ctx: &SessionCtx, samples: &[i16]) -> Result<Option<Recognitio
         }
     }
     Ok(None)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn batch_keeps_a_reserve_for_interactive() {
-        let budget = CallBudget::new(4.0, Duration::from_secs(9));
-        assert!(budget.try_take(Priority::Batch).is_none());
-        assert!(budget.try_take(Priority::Batch).is_none());
-        // Two tokens left: batch must wait, interactive may proceed.
-        assert!(budget.try_take(Priority::Batch).is_some());
-        assert!(budget.try_take(Priority::Interactive).is_none());
-        assert!(budget.try_take(Priority::Interactive).is_none());
-        assert!(budget.try_take(Priority::Interactive).is_some());
-    }
-
-    #[test]
-    fn penalty_slows_refill() {
-        let budget = CallBudget::new(4.0, Duration::from_secs(9));
-        budget.penalize();
-        assert!(budget.try_take(Priority::Interactive).is_none());
-        let wait = budget.try_take(Priority::Interactive).unwrap();
-        assert!(wait > Duration::from_secs(9));
-    }
 }

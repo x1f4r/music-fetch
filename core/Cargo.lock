@@ -1712,6 +1712,7 @@ name = "mf-cli"
 version = "1.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
  "ctrlc",
  "mfcore",
@@ -1721,6 +1722,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "url",
 ]
 
 [[package]]
