@@ -5,7 +5,13 @@ import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import webExt from 'web-ext';
 import { ARTIFACTS, HEADLESS, tempProfile } from './support';
-import { E2E_OUTPUT, RUNTIME_E2E, sleep, startFixtureServer, type FixtureServer } from './runtime-support';
+import { E2E_OUTPUT, RUNTIME_E2E, rpc, sleep, startFixtureServer, type FixtureServer } from './runtime-support';
+
+
+/** A screenshot for a human look; Firefox can't capture extension pages (privileged), so it may be missing. */
+async function shot(page: Page, path: string): Promise<void> {
+  await page.screenshot({ path }).catch(() => undefined);
+}
 
 /**
  * Shortcuts and context menus (X7) in both browsers, on the e2e builds: the test invokes
@@ -62,7 +68,30 @@ async function waitForNote(driver: Page, since: number, match: (note: Note) => b
     if (found) return found;
     await sleep(250);
   }
-  throw new Error(`no matching notification; saw ${JSON.stringify(seen)}`);
+  const log = await rpc<string[]>(driver, 'mf-host', 'log').catch(() => []);
+  throw new Error(`no matching notification; saw ${JSON.stringify(seen)}; host: ${log.slice(-12).join(' | ')}`);
+}
+
+/** Hum needs the melody library: install it in the mock engine first. */
+async function installMelody(driver: Page): Promise<void> {
+  const status = await rpc<{ installed: boolean }>(driver, 'mf-engine', 'melodyIndexStatus');
+  if (status.installed) return;
+  await rpc(driver, 'mf-engine', 'installMelodyIndex');
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if ((await rpc<{ installed: boolean }>(driver, 'mf-engine', 'melodyIndexStatus')).installed) return;
+    await sleep(500);
+  }
+  throw new Error('the melody library did not install');
+}
+
+/** Every hash the page shows from now on (a route may pass quickly, like #/open → #/session). */
+async function recordHashes(driver: Page): Promise<void> {
+  await driver.evaluate(() => {
+    const w = globalThis as unknown as { __hashes: string[] };
+    w.__hashes = [location.hash];
+    addEventListener('hashchange', () => w.__hashes.push(decodeURIComponent(location.hash)));
+  });
 }
 
 async function badge(driver: Page): Promise<string> {
@@ -190,16 +219,16 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const note = await waitForNote(app, since, (n) => n.id.startsWith('mf-') && !n.id.startsWith('mf-problem'));
     expect(note.title).toBe('Test Signal B — Music Fetch Test Signals');
     expect(note.buttons).toEqual(['Open in Spotify', 'Pin']);
-    await page.screenshot({ path: join(ARTIFACTS, 'triggers-chromium-tab.png') });
+    await shot(page, join(ARTIFACTS, 'triggers-chromium-tab.png'));
     await page.close();
   });
 
   it('identifies a tab from the page menu', async () => {
-    const page = await playingTab('/pages/generic.html?src=/media/song-c.wav&autoplay');
+    const page = await playingTab('/pages/generic.html?src=/media/song-a.wav&autoplay');
     const tabId = await invoke(page);
     const since = Date.now();
     await trigger(app, { click: { menuItemId: 'mf-identify-tab', pageUrl: page.url() }, tabId });
-    const note = await waitForNote(app, since, (n) => n.title.startsWith('Test Signal C'));
+    const note = await waitForNote(app, since, (n) => n.title.startsWith('Test Signal A'));
     expect(note.buttons).toEqual(['Open in Spotify', 'Pin']);
     await page.close();
   });
@@ -222,9 +251,10 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
 
   it('opens a video link in the app’s Open and analyze flow', async () => {
     const link = 'https://www.youtube.com/watch?v=mf-e2e';
+    await recordHashes(app);
     await trigger(app, { click: { menuItemId: 'mf-identify-link', linkUrl: link } });
-    await app.waitForFunction((u) => decodeURIComponent(location.hash).includes(u), { timeout: 15_000 }, link);
-    expect(decodeURIComponent(await app.evaluate(() => location.hash))).toContain('#/open?url=');
+    // The app tab is reused: it shows #/open?url=…, which starts the analysis and moves on to the session.
+    await app.waitForFunction((u) => (globalThis as unknown as { __hashes: string[] }).__hashes.some((h) => h.startsWith('#/open?url=') && h.includes(u)), { timeout: 15_000, polling: 100 }, link);
     await app.goto(`chrome-extension://${id}/app.html#/library`);
   });
 
@@ -239,6 +269,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
   });
 
   it('hums from the shortcut: without a panel gesture the app tab starts humming', async () => {
+    await installMelody(app);
     await app.evaluate(() => localStorage.setItem('mf.mock.next', 'hold'));
     const page = await playingTab('/pages/generic.html?src=/media/song-f.wav&autoplay');
     const tabId = await tabIdOf(page.url());
@@ -248,7 +279,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
       timeout: 30_000,
       polling: 200,
     });
-    await app.screenshot({ path: join(ARTIFACTS, 'triggers-chromium-hum.png') });
+    await shot(app, join(ARTIFACTS, 'triggers-chromium-hum.png'));
     await app.click('.listen .disc');
     await page.close();
   });
@@ -331,6 +362,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
   it('answers a catalog link from its menu', async () => {
     const since = Date.now();
     await trigger(tab, { click: { menuItemId: 'mf-identify-link', linkUrl: 'https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8' } });
+    // A link to one song reads like a match (title — artist).
     expect((await waitForNote(tab, since, (n) => n.title.includes(' — '))).id).toMatch(/^mf-/);
   });
 
@@ -344,6 +376,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
   });
 
   it('hums from the shortcut: without a sidebar gesture the app tab starts humming', async () => {
+    await installMelody(tab);
     await tab.evaluate(() => localStorage.setItem('mf.mock.next', 'hold'));
     const tabId = await activate(`${server.origin}/pages/generic.html`);
     await trigger(tab, { command: 'hum', tabId });

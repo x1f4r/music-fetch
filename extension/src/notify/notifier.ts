@@ -1,8 +1,8 @@
 import type { EngineClient } from '../engine/client';
 import { isTerminal } from '../engine/events';
-import type { Outcome, SessionEvent } from '../engine/types';
+import type { Outcome, SessionEvent, Track } from '../engine/types';
 import { tm, type Message } from '../i18n';
-import { badgeFor, resultNotification } from '../models/notifications';
+import { badgeFor, notifiedTrack, resultNotification } from '../models/notifications';
 import { errorLine } from '../models/stage';
 import { primaryLink, providerLinks } from '../providers/links';
 import { serviceName } from '../providers/services';
@@ -56,7 +56,7 @@ const RECENT_MS = 30_000;
 
 export function startNotifier(engine: EngineClient, api: NotifierApi, hooks: NotifierHooks): Notifier {
   const running = new Map<string, Running>();
-  const shown = new Map<string, { sessionId: string; outcome: Outcome }>();
+  const shown = new Map<string, { sessionId: string; outcome: Outcome; track: Track | null }>();
   const expected = new Set<string>();
   const recent = new Map<string, { event: SessionEvent; at: number; shown: boolean }>();
   const problems = new Set<string>();
@@ -105,7 +105,7 @@ export function startNotifier(engine: EngineClient, api: NotifierApi, hooks: Not
     const content = resultNotification(detail.entry, event.Finished.outcome, name);
     if (!content) return;
     const id = `mf-${sessionId}`;
-    shown.set(id, { sessionId, outcome: event.Finished.outcome });
+    shown.set(id, { sessionId, outcome: event.Finished.outcome, track: notifiedTrack(detail.entry, event.Finished.outcome) });
     const text = (m: Message | string) => (typeof m === 'string' ? m : tm(m));
     api.notify(id, { title: text(content.title), message: text(content.message), buttons: content.buttons.map(text) });
   }
@@ -151,13 +151,13 @@ export function startNotifier(engine: EngineClient, api: NotifierApi, hooks: Not
       api.clear(notificationId);
       shown.delete(notificationId);
       const outcome = entry.outcome;
-      if (typeof outcome === 'object' && 'Matched' in outcome && button !== undefined) {
+      if (entry.track && button !== undefined) {
         if (button === 1) {
           await engine.setPinned(entry.sessionId, true);
           return;
         }
         const providers = await loadProviderSettings();
-        const link = primaryLink(providerLinks(outcome.Matched.track, providers.custom), providers.provider);
+        const link = primaryLink(providerLinks(entry.track, providers.custom), providers.provider);
         if (link) hooks.openUrl(link.url);
         return;
       }

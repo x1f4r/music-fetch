@@ -9,6 +9,12 @@ import webExt from 'web-ext';
 import { ARTIFACTS, HEADLESS, tempProfile } from './support';
 import { E2E_OUTPUT, RUNTIME_E2E, rpc, sleep } from './runtime-support';
 
+
+/** A screenshot for a human look; Firefox can't capture extension pages (privileged), so it may be missing. */
+async function shot(page: Page, path: string): Promise<void> {
+  await page.screenshot({ path }).catch(() => undefined);
+}
+
 /**
  * Settings in both browsers on the e2e builds (X10, X11): every pane on the real host and
  * mock engine, and the Services flow against a local ACRCloud stub that checks the request
@@ -120,7 +126,7 @@ function settingsFlow(name: string, page: () => Page, go: (hash: string) => Prom
     await p.click('#svc-acrHumming-title + form button[type="submit"]');
     await waitStatus(p, 'acrHumming', 'Works. Hum something to try it.');
     expect(stub().requests.at(-1)).toEqual({ accessKey: ACCESS_KEY, ok: true });
-    await p.screenshot({ path: join(ARTIFACTS, `settings-${name}-services.png`) });
+    await shot(p, join(ARTIFACTS, `settings-${name}-services.png`));
 
     const stored = await storedText(p);
     for (const area of [stored.sync, stored.local, stored.vault]) expect(area).not.toContain(SECRET);
@@ -164,7 +170,7 @@ function settingsFlow(name: string, page: () => Page, go: (hash: string) => Prom
     await button('Up to date');
     await press('Remove');
     await button('Download');
-    await p.screenshot({ path: join(ARTIFACTS, `settings-${name}-melody.png`) });
+    await shot(p, join(ARTIFACTS, `settings-${name}-melody.png`));
   });
 
   it(`${name}: applies low power at once`, async () => {
@@ -192,7 +198,7 @@ function settingsFlow(name: string, page: () => Page, go: (hash: string) => Prom
     await p.waitForFunction(() => document.querySelector('.form')?.textContent?.includes('Short audio fingerprints, to Shazam'), { timeout: 20_000 });
     await go('#/settings/about');
     await p.waitForFunction(() => document.querySelector('.licenses')?.textContent?.includes('svelte'), { timeout: 20_000 });
-    await p.screenshot({ path: join(ARTIFACTS, `settings-${name}-about.png`) });
+    await shot(p, join(ARTIFACTS, `settings-${name}-about.png`));
   });
 }
 
@@ -281,7 +287,6 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     tab = (await target.asPage())!;
     await tab.waitForSelector('.welcome', { timeout: 30_000 });
     await tab.evaluate(() => (globalThis as unknown as { browser: Ext }).browser.storage.sync.set({ providerDecision: { provider: 'spotify', skipped: true } }));
-    await tab.bringToFront();
   });
 
   afterAll(async () => {

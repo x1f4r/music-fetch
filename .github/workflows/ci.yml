@@ -154,6 +154,69 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
+  extension:
+    name: Browser extension
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: extension
+    env:
+      # Pinned like the Legion's: Chrome for Testing (branded Chrome can't load unpacked
+      # extensions) and Firefox release.
+      CHROME_VERSION: "155.0.8059.84"
+      FIREFOX_VERSION: "158.0"
+      BROWSERS_DIR: ${{ github.workspace }}/.browsers
+      SCREENS_SCALE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.22.0"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - name: Dependencies
+        run: npm ci
+      - uses: actions/cache@v6
+        with:
+          path: .browsers
+          key: browsers-chrome-${{ env.CHROME_VERSION }}-firefox-${{ env.FIREFOX_VERSION }}
+      - name: Browsers
+        run: |
+          npx @puppeteer/browsers install "chrome@$CHROME_VERSION" --path "$BROWSERS_DIR" >/dev/null
+          npx @puppeteer/browsers install "firefox@stable_$FIREFOX_VERSION" --path "$BROWSERS_DIR" >/dev/null
+          echo "CHROMIUM_BIN=$BROWSERS_DIR/chrome/linux-$CHROME_VERSION/chrome-linux64/chrome" >> "$GITHUB_ENV"
+          echo "FIREFOX_BIN=$(find "$BROWSERS_DIR/firefox" -maxdepth 3 -type f -name firefox | head -1)" >> "$GITHUB_ENV"
+      # The e2e pages play synthetic songs: tab capture needs an output device, so a null sink.
+      - name: Display and audio
+        run: |
+          # Chrome for Testing's sandbox needs unprivileged user namespaces (AppArmor blocks them on 24.04).
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb pulseaudio >/dev/null
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=mf_ci >/dev/null
+          echo "PULSE_SINK=mf_ci" >> "$GITHUB_ENV"
+      - name: Types and unit tests
+        run: tests/ci/run.sh check unit
+      - name: Build
+        run: tests/ci/run.sh build
+      - name: web-ext lint
+        run: tests/ci/run.sh lint
+      - name: Demo states, accessibility and the Firefox layout
+        run: tests/ci/run.sh screens
+      - name: End to end (headful on Xvfb)
+        run: xvfb-run -a --server-args="-screen 0 1600x1000x24" tests/ci/run.sh e2e runtime
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: extension-artifacts
+          path: |
+            extension/.e2e-artifacts
+            extension/.screens/a11y.json
+            extension/.screens/firefox.json
+          if-no-files-found: ignore
+
   privacy:
     name: Privacy and secrets
     runs-on: ubuntu-24.04

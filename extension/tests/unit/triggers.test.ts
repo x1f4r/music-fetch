@@ -194,6 +194,10 @@ describe('notifications for triggers', () => {
     expect(api.notify).not.toHaveBeenCalled();
     n.expect(id);
     await vi.waitFor(() => expect(api.notify).toHaveBeenCalledOnce());
+    // A link to one song reads like a match, with Open in and Pin.
+    const [, content] = api.notify.mock.calls[0]!;
+    expect(content.title).toMatch(/ — /);
+    expect(content.buttons).toEqual(['Open in Spotify', 'Pin']);
   });
 
   it('turns a failed trigger session into a problem that opens Music Fetch', async () => {
