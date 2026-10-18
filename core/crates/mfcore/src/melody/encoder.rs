@@ -98,7 +98,7 @@ impl EncoderBudget {
             window_neighbours: 1000,
             songs: 200,
             pooling: Pooling::Sum,
-            hints: HintOptions { offsets: vec![(1.0, -20.0), (1.0, 0.0), (1.0, 20.0)], votes: false, reserve: 0 },
+            hints: HintOptions { offsets: vec![(1.0, -20.0), (1.0, 0.0), (1.0, 20.0)], votes: true, reserve: 0 },
         }
     }
 
@@ -111,7 +111,7 @@ impl EncoderBudget {
             pooling: Pooling::Sum,
             hints: HintOptions {
                 offsets: vec![(0.8, 0.0), (1.0, -20.0), (1.0, 0.0), (1.0, 20.0), (1.25, 0.0)],
-                votes: false,
+                votes: true,
                 reserve: 0,
             },
         }
@@ -136,7 +136,7 @@ impl EncoderBudget {
             window_neighbours: 500,
             songs: 100,
             pooling: Pooling::Sum,
-            hints: HintOptions { offsets: vec![(1.0, 0.0)], votes: false, reserve: 0 },
+            hints: HintOptions { offsets: vec![(1.0, 0.0)], votes: true, reserve: 0 },
         }
     }
 }
@@ -437,6 +437,19 @@ impl EncoderIndex {
     /// Unit embeddings of featurized windows (`n × 3 × window` → `n × dim`).
     pub fn embed(&self, features: &[f32]) -> Result<Vec<f32>> {
         self.model()?.embed(features)
+    }
+
+    /// Parse the model and plan it for the batch sizes a hum's searches mostly use
+    /// (1, 2 and 4 query windows), so the first search does not pay for it. Blocking
+    /// and CPU-bound; safe to call from several threads.
+    pub fn warm_up(&self) {
+        if let Ok(model) = self.model() {
+            for batch in [1, 2, 4] {
+                if let Err(e) = model.plan(batch) {
+                    tracing::warn!("melody encoder plan: {e:#}");
+                }
+            }
+        }
     }
 
     /// The songs whose coded windows come closest to the query's.

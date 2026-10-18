@@ -21,9 +21,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use mfcore::identity::{normalize_artists, normalize_title};
+use mfcore::lyrics::{Backend, LyricMatch, SearchOptions};
 use mfcore::melody::notes::query_from_details;
 use mfcore::melody::{MelodyIndex, PitchTracker, matcher};
-use mfcore::model::{Candidate, CandidateSourceKind, CandidateTier};
+use mfcore::model::{Candidate, CandidateSourceKind, CandidateTier, SpeechTranscript};
 use mfcore::pipeline::hum::{self, MelodySearcher};
 use mfcore::providers::ProviderMatch;
 use mfcore::providers::acrcloud::{self, AcrCloud};
@@ -59,6 +60,21 @@ pub struct CloudArgs {
     pub sample: Option<usize>,
     /// Price of 1,000 requests, for the cost line.
     pub price_per_1000: Option<f64>,
+    /// Transcripts of the takes (JSONL: wav file name, text, alternatives,
+    /// confidence): sung words are searched as lyrics, as a session does.
+    pub transcripts: Option<PathBuf>,
+    /// Keep lyric-search responses here.
+    pub lyrics_cache: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+struct TranscriptLine {
+    wav: String,
+    text: String,
+    #[serde(default)]
+    alternatives: Vec<String>,
+    #[serde(default)]
+    confidence: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -73,6 +89,7 @@ struct Row {
     name: String,
     in_index: bool,
     local: Option<usize>,
+    lyrics: Option<usize>,
     cloud: Option<usize>,
     merged: Option<usize>,
     /// Merged top answer: score, tier, right?
@@ -91,9 +108,13 @@ pub fn eval(
     encoder: Option<&EncoderArgs>,
     args: &CloudArgs,
 ) -> anyhow::Result<()> {
-    if args.provider != "acrcloud" {
-        bail!("unknown cloud provider {} (acrcloud)", args.provider);
+    if args.provider != "acrcloud" && args.provider != "none" {
+        bail!("unknown cloud provider {} (acrcloud or none)", args.provider);
     }
+    let transcripts = match &args.transcripts {
+        Some(path) => read_transcripts(path)?,
+        None => Default::default(),
+    };
     let items = match args.sample {
         Some(n) => sample(items, n),
         None => items,
@@ -108,7 +129,7 @@ pub fn eval(
     };
     let searcher = MelodySearcher { index: index.clone(), encoder };
     std::fs::create_dir_all(&args.cache).with_context(|| format!("creating {}", args.cache.display()))?;
-    let local_only = args.offline;
+    let local_only = args.offline || args.provider == "none";
     let pace = match &args.base_url {
         Some(url) if is_local(url) => Duration::from_millis(args.pace_ms),
         _ => Duration::from_millis(args.pace_ms).max(MIN_PACE),
@@ -119,6 +140,13 @@ pub fn eval(
     let cancel = CancelToken::new();
 
     let mut sending = !local_only;
+    let http = mfcore::lyrics::eval::http_client()?;
+    // Never YouTube Music from evaluation machines.
+    let lyric_options = SearchOptions {
+        backends: vec![Backend::ITunes, Backend::Genius, Backend::Deezer],
+        cache_dir: args.lyrics_cache.clone(),
+        ..SearchOptions::default()
+    };
     let mut sent = 0usize;
     let mut failures = 0usize;
     let mut last: Option<Instant> = None;
@@ -135,13 +163,11 @@ pub fn eval(
         let query = query_from_details(&frames);
         let melody = query.as_ref().map(|q| searcher.search(q)).unwrap_or_default();
         let expected_work = expected.map(|e| matcher::work_key(&index, e));
-        let local = expected_work
-            .and_then(|w| melody.iter().position(|m| matcher::work_key(&index, m.song.id) == w).map(|p| p + 1));
 
         // Cloud, from the cache or one paced request.
         let key = cache_key(&bytes);
         let path = args.cache.join(format!("{key}.json"));
-        let mut origin = "skipped";
+        let mut origin = if args.provider == "none" { "off" } else { "skipped" };
         let mut response: Option<Value> = cached(&path);
         if response.is_some() {
             origin = "cache";
@@ -184,19 +210,64 @@ pub fn eval(
         let cloud = acr.iter().position(|m| is_expected(&m.track.title, &m.track.artist)).map(|p| p + 1);
         let cloud_top = acr.first().map(|m| (m.score, is_expected(&m.track.title, &m.track.artist)));
 
+        // Sung words, as the session searches them.
+        let sung: Vec<LyricMatch> = match transcripts.get(&name) {
+            Some(t) => {
+                let hypotheses = hum::sung_hypotheses(t);
+                if hypotheses.is_empty() {
+                    Vec::new()
+                } else {
+                    let search = mfcore::lyrics::search_with(&http, &hypotheses, "US", &cancel, &lyric_options);
+                    let weight = hum::transcript_weight(t.confidence);
+                    match runtime.block_on(search) {
+                        Ok(report) => report
+                            .matches
+                            .into_iter()
+                            .map(|mut m| {
+                                m.score *= weight;
+                                m
+                            })
+                            .collect(),
+                        Err(e) => {
+                            eprintln!("lyrics: {name}: {e}");
+                            Vec::new()
+                        }
+                    }
+                }
+            }
+            None => Vec::new(),
+        };
+        let lyrics = sung.iter().position(|m| is_expected(&m.track.title, &m.track.artist)).map(|p| p + 1);
+
         // Merged, as the session fuses them.
-        let merged_list = hum::fuse_answers(Some(&index), query.clone(), melody.clone(), Vec::new(), acr.clone());
+        let merged_list = hum::fuse_answers(Some(&index), query.clone(), melody.clone(), sung.clone(), acr.clone());
+        // Right: any recording of the expected work, as the matcher's answers count.
         let right = |c: &Candidate| {
-            expected.is_some_and(|e| c.track.ids.get("melody").is_some_and(|m| *m == e.to_string()))
+            let song: Option<u32> = c.track.ids.get("melody").and_then(|m| m.parse().ok());
+            song.zip(expected_work).is_some_and(|(s, w)| matcher::work_key(&index, s) == w)
                 || is_expected(&c.track.title, &c.track.artist)
         };
         let merged = merged_list.iter().position(&right).map(|p| p + 1);
+        // Local: what the app shows from the melody search alone.
+        let local_list = hum::fuse_answers(Some(&index), query.clone(), melody.clone(), Vec::new(), Vec::new());
+        let local = local_list.iter().position(&right).map(|p| p + 1);
         let top = merged_list.first().map(|c| (c.score, c.tier, right(c)));
-        let row =
-            Row { name: name.clone(), in_index: expected.is_some(), local, cloud, merged, top, cloud_top, origin };
+        let row = Row {
+            name: name.clone(),
+            in_index: expected.is_some(),
+            local,
+            lyrics,
+            cloud,
+            merged,
+            top,
+            cloud_top,
+            origin,
+        };
         lines.push(json!({
             "wav": wav, "expected": [title, artist], "in_index": row.in_index, "local_rank": local,
-            "cloud_rank": cloud, "merged_rank": merged, "cloud": origin,
+            "lyrics_rank": lyrics, "cloud_rank": cloud, "merged_rank": merged, "cloud": origin,
+            "transcript": transcripts.get(&name).map(|t| t.text.clone()),
+            "lyrics_answers": sung.iter().map(|m| json!([m.track.title, m.track.artist, m.score])).collect::<Vec<_>>(),
             "local_top": melody.first().map(|m| json!([m.song.title, m.song.artist, m.score])),
             "cloud_answers": acr.iter().map(|m| json!([m.track.title, m.track.artist, m.score])).collect::<Vec<_>>(),
             "merged": merged_list.iter().map(|c| json!({
@@ -214,8 +285,27 @@ pub fn eval(
     Ok(())
 }
 
+/// Transcripts by wav file name.
+fn read_transcripts(path: &Path) -> anyhow::Result<std::collections::HashMap<String, SpeechTranscript>> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut out = std::collections::HashMap::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let t: TranscriptLine = serde_json::from_str(line).context("a transcript line")?;
+        let name = Path::new(&t.wav).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(t.wav);
+        let transcript = SpeechTranscript {
+            text: t.text,
+            alternatives: t.alternatives,
+            confidence: t.confidence,
+            is_final: true,
+            ..SpeechTranscript::default()
+        };
+        out.insert(name, transcript);
+    }
+    Ok(out)
+}
+
 fn client(args: &CloudArgs) -> anyhow::Result<AcrCloud> {
-    let http = mfcore::util::http::build_client(env!("CARGO_PKG_VERSION"))?;
+    let http = mfcore::lyrics::eval::http_client()?;
     let creds = match std::fs::read_to_string(&args.credentials) {
         Ok(text) => {
             let f: CredentialFile = serde_json::from_str(&text)
@@ -337,6 +427,7 @@ fn report(rows: &[Row], sent: usize, price: Option<f64>) {
     println!("            top-1          top-10");
     for (label, f) in [
         ("local", &(|r: &Row| r.local) as &dyn Fn(&Row) -> Option<usize>),
+        ("lyrics", &|r: &Row| r.lyrics),
         ("cloud", &|r: &Row| r.cloud),
         ("merged", &|r: &Row| r.merged),
     ] {
@@ -375,7 +466,7 @@ fn report(rows: &[Row], sent: usize, price: Option<f64>) {
         }
     }
     if rows.len() <= 60 {
-        println!("\n  take                                                    local cloud merged  merged top");
+        println!("\n  take                                                    local lyrics cloud merged  merged top");
         let rank = |r: Option<usize>| r.map(|x| x.to_string()).unwrap_or_else(|| "-".into());
         for r in rows {
             let top = r
@@ -383,9 +474,10 @@ fn report(rows: &[Row], sent: usize, price: Option<f64>) {
                 .map(|(s, t, ok)| format!("{s:.2} {t:?}{}", if ok { " (right)" } else { "" }))
                 .unwrap_or_else(|| "no answer".into());
             println!(
-                "  {:55} {:>5} {:>5} {:>6}  {top}{}",
+                "  {:55} {:>5} {:>6} {:>5} {:>6}  {top}{}",
                 r.name,
                 rank(r.local),
+                rank(r.lyrics),
                 rank(r.cloud),
                 rank(r.merged),
                 if r.in_index { "" } else { " [not in the index]" }
@@ -513,6 +605,8 @@ mod tests {
             offline: false,
             sample: None,
             price_per_1000: Some(5.0),
+            transcripts: None,
+            lyrics_cache: None,
         };
         let out = dir.join("out.jsonl");
         let started = Instant::now();

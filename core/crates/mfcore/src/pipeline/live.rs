@@ -432,8 +432,6 @@ struct Live {
     detector: Option<ImpressionDetector>,
     frames: Vec<PitchFrame>,
     details: Vec<FrameDetail>,
-    /// First frame of the whistle path, when the stream switched to it mid-capture.
-    whistle_from: Option<usize>,
     // Progressive melody search.
     search: Option<SearchTask>,
     searched: Option<Searched>,
@@ -482,7 +480,6 @@ impl Live {
             detector: None,
             frames: Vec::new(),
             details: Vec::new(),
-            whistle_from: None,
             search: None,
             searched: None,
             next_search_ms: 0,
@@ -656,7 +653,6 @@ impl Live {
             }
         }
         if let Some(pitch) = self.pitch.as_mut() {
-            let was_whistle = pitch.is_whistle();
             match guarded("pitch tracking", || pitch.push_detailed(new)) {
                 Some(details) => {
                     let frames: Vec<PitchFrame> = details.iter().map(FrameDetail::to_pitch_frame).collect();
@@ -670,11 +666,6 @@ impl Live {
                     }
                     self.frames.extend(frames);
                     self.details.extend(details);
-                    // Frames from here on come from the whistle path; the ones before
-                    // were tracked on the direct path and are no whistle melody.
-                    if !was_whistle && pitch.is_whistle() {
-                        self.whistle_from = Some(self.details.len());
-                    }
                 }
                 None => {
                     self.pitch = None;
@@ -685,9 +676,15 @@ impl Live {
     }
 
     /// Humming needs the melody index: tell the app as soon as an impression starts.
+    /// With an encoder, plan its model meanwhile, so the first search does not wait.
     fn notify_missing_index(&self) {
-        if self.ctx.engine.melody_index().is_none() {
-            self.ctx.emitter.notice(Notice::MelodyIndexMissing);
+        match self.ctx.engine.melody_index() {
+            None => self.ctx.emitter.notice(Notice::MelodyIndexMissing),
+            Some(index) => {
+                if let Some(encoder) = self.ctx.engine.melody_encoder(&index) {
+                    drop(self.ctx.engine.runtime.spawn_blocking(move || encoder.warm_up()));
+                }
+            }
         }
     }
 
@@ -747,8 +744,11 @@ impl Live {
         let Some(searcher) = hum::MelodySearcher::installed(&self.ctx.engine) else { return };
         let every = if self.ctx.engine.is_low_power() { SEARCH_EVERY_LOW_POWER_MS } else { SEARCH_EVERY_MS };
         self.next_search_ms = elapsed + every;
-        let frames = search_frames(&self.details, self.whistle_from).to_vec();
-        let n = self.details.len();
+        // After a switch to the whistle path the direct path's earlier frames stay in:
+        // on whistles below ~1.5 kHz they hold the opening notes (dropping them cost
+        // 11 of 58 synthetic whistles their answer after 4 s), and no set gained.
+        let frames = self.details.clone();
+        let n = frames.len();
         let task = self.ctx.engine.runtime.spawn_blocking(move || searcher.search_frames(&frames));
         self.search = Some((n, task));
     }
@@ -1139,16 +1139,6 @@ impl Live {
     }
 }
 
-/// The frames a progressive search uses: after a mid-capture switch to the whistle
-/// path only the whistle path's (the direct path's frames before it hold no
-/// whistle melody, and the final answer re-tracks the whole capture anyway).
-fn search_frames(details: &[FrameDetail], whistle_from: Option<usize>) -> &[FrameDetail] {
-    match whistle_from {
-        Some(i) => &details[i.min(details.len())..],
-        None => details,
-    }
-}
-
 /// `m:ss`
 fn clock(ms: u64) -> String {
     let s = ms / 1000;
@@ -1311,16 +1301,6 @@ mod tests {
         assert!((perceptual(-30.0) - 0.5).abs() < 1e-6);
         assert!((rms_db(&[0.5; 100]) - (-6.02)).abs() < 0.01);
         assert_eq!(clock(74_000), "1:14");
-    }
-
-    #[test]
-    fn searches_after_a_whistle_switch_skip_the_direct_path_frames() {
-        let frames: Vec<FrameDetail> = (0..10)
-            .map(|i| FrameDetail { t_ms: i * 16, hz: 440.0, confidence: 0.9, loudness_db: -20.0, voiced: true })
-            .collect();
-        assert_eq!(search_frames(&frames, None).len(), 10);
-        assert_eq!(search_frames(&frames, Some(4))[0].t_ms, 64);
-        assert!(search_frames(&frames, Some(20)).is_empty());
     }
 
     #[test]

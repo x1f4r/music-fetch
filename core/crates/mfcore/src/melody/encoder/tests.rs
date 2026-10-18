@@ -309,3 +309,45 @@ fn cached_embeddings_give_the_same_file() {
     assert!(!said.lock().unwrap().iter().any(|m| m.contains("from the cache")));
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn hinted_tracks_get_votes_in_one_pass_and_the_encoder_evidence_scores() {
+    let index = library(6, 80);
+    let (bytes, _) = build(&index, TINY, &options(), &|_| {}).expect("build");
+    let enc = EncoderIndex::from_bytes(bytes, &index).expect("open");
+    let target = index.find_song("Target", "Test").expect("target");
+    let track = index.song_tracks(target.id).start;
+    let contour = index.track(track).expect("track").contour;
+    let start = (0..contour.len().saturating_sub(160))
+        .step_by(40)
+        .find(|&s| contour[s].is_finite() && contour[s + 159].is_finite())
+        .expect("excerpt");
+    let excerpt: Vec<f32> = contour[start..start + 160].iter().map(|x| x + 3.0).collect();
+    let voiced = excerpt.iter().filter(|x| x.is_finite()).count() as u32;
+    let query = MelodyQuery { contour: excerpt, notes: Vec::new(), voiced_ms: voiced * 50 };
+    let budget = EncoderBudget::android();
+    let hits = enc.search(&index, &query, &budget).expect("search");
+    assert!(hits.iter().enumerate().all(|(i, h)| h.rank == i as u32 + 1));
+    let hints: Vec<_> = hits.iter().map(EncoderHit::hint).collect();
+    // No track passes the shortlists by itself: only forced tracks keep their votes.
+    let narrow = MatchOptions { shortlist: 0, ..MatchOptions::default() };
+    let votes_of = |how: &HintOptions| {
+        matcher::candidates_with_hints(&index, &query, &narrow, &hints, how)
+            .into_iter()
+            .filter(|c| c.song == target.id)
+            .map(|c| (c.features.votes, c.features.enc_best, c.features.enc_hit))
+            .fold((0.0f32, 0.0f32, 0.0f32), |a, b| (a.0.max(b.0), a.1.max(b.1), a.2.max(b.2)))
+    };
+    let without = votes_of(&HintOptions { votes: false, ..budget.hints.clone() });
+    let with = votes_of(&HintOptions { votes: true, ..budget.hints.clone() });
+    assert_eq!(without.0, 0.0, "hint placements alone carry no votes");
+    assert!(with.0 > 0.0, "forced retrieval gives the hinted track its votes: {with:?}");
+    let best = hits.iter().find(|h| h.song == target.id).expect("hit").best;
+    assert!((with.1 - best).abs() < 1e-6 && with.2 == 1.0, "encoder evidence: {with:?}");
+    // Without hints nothing is shortlisted, and no encoder evidence appears.
+    assert!(
+        matcher::candidates(&index, &query, &narrow)
+            .iter()
+            .all(|c| c.features.votes == 0.0 && c.features.enc_hit == 0.0)
+    );
+}

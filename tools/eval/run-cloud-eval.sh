@@ -9,14 +9,16 @@
 # (DATA/eval/acrcloud/*.json); --offline only reads the cache. About 320 requests on
 # the first run, none after it. Results: DATA/eval/acrcloud/{user,chad300}-<index>.{jsonl,txt}.
 #
-# Environment: DATA (private data folder, default ../music-fetch-data next to the
-# repo), INDEX and ENCODER (default the Android tier and its encoder file in
+# Environment: DATA (private data folder, default music-fetch-data next to the main
+# checkout), INDEX and ENCODER (default the Android tier and its encoder file in
 # DATA/index/tiers), PRICE (price of 1,000 requests from the ACRCloud console),
 # MF (mf binary; built with --profile release-fast when missing).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-data="${DATA:-$(cd .. && pwd)/music-fetch-data}"
+# The main checkout's sibling (also from a worktree).
+main="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+data="${DATA:-$(dirname "$main")/music-fetch-data}"
 index="${INDEX:-$data/index/tiers/android.mfi}"
 encoder="${ENCODER:-$data/index/tiers/melody-encoder-android.mfe}"
 cache="$data/eval/acrcloud"

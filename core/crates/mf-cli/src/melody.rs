@@ -135,10 +135,10 @@ pub enum EvalCommand {
         /// Track pitch with the streaming tracker (the live session's frames).
         #[arg(long)]
         stream: bool,
-        /// With --stream, keep the frames before a switch to the whistle path in prefix
-        /// rows (the live session drops them since 1.1).
+        /// With --stream, drop the frames before a switch to the whistle path from prefix
+        /// rows (an experiment: the live session keeps them).
         #[arg(long)]
-        keep_pre_switch: bool,
+        drop_pre_switch: bool,
         /// The index's learned-encoder file: its hits join the rerank as anchored placements.
         #[arg(long)]
         encoder: Option<PathBuf>,
@@ -195,6 +195,13 @@ pub enum EvalCommand {
         /// Price of 1,000 requests, for the cost line.
         #[arg(long)]
         cloud_price_per_1000: Option<f64>,
+        /// With --cloud (acrcloud or none): transcripts of the takes (JSONL: wav, text,
+        /// alternatives, confidence), searched as sung lyrics (iTunes, Genius, Deezer).
+        #[arg(long)]
+        transcripts: Option<PathBuf>,
+        /// Keep lyric-search responses here.
+        #[arg(long)]
+        lyrics_cache: Option<PathBuf>,
     },
     /// Run the impression detector over labelled clips (TSV: wav, impression|music,
     /// start s, duration s) as a live session would, and report its verdicts.
@@ -264,7 +271,7 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             no_trace,
             prefix_ms,
             stream,
-            keep_pre_switch,
+            drop_pre_switch,
             encoder,
             encoder_budget,
             encoder_songs,
@@ -283,6 +290,8 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             cloud_offline,
             cloud_sample,
             cloud_price_per_1000,
+            transcripts,
+            lyrics_cache,
         }) => {
             let mut options = MatchOptions { popularity_weight: popularity, ..MatchOptions::default() };
             if let Some(spec) = encoder_model {
@@ -324,6 +333,8 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
                     offline: cloud_offline,
                     sample: cloud_sample,
                     price_per_1000: cloud_price_per_1000,
+                    transcripts,
+                    lyrics_cache,
                 };
                 let mut items = read_queries(&queries)?;
                 if let Some(n) = limit {
@@ -331,7 +342,7 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
                 }
                 return crate::cloud::eval(&index, items, out.as_deref(), encoder.as_ref(), &cloud);
             }
-            let run = EvalRun { options, trace: !no_trace, prefixes: prefix_ms, stream, keep_pre_switch, encoder };
+            let run = EvalRun { options, trace: !no_trace, prefixes: prefix_ms, stream, drop_pre_switch, encoder };
             eval_qbsh(&index, &queries, out.as_deref(), threads, limit, &run)
         }
         MelodyCommand::Eval(EvalCommand::Detect { list, out, threads }) => eval_detect(&list, out.as_deref(), threads),
@@ -689,7 +700,7 @@ struct EvalRun {
     trace: bool,
     prefixes: Vec<u64>,
     stream: bool,
-    keep_pre_switch: bool,
+    drop_pre_switch: bool,
     /// The learned-encoder stage, if the run uses one.
     encoder: Option<crate::encoder::EncoderArgs>,
 }
@@ -892,7 +903,7 @@ fn eval_one(
                 let end = frames.partition_point(|f| f.t_ms < p);
                 // As the live session searches while humming.
                 let start = match switch {
-                    Some(i) if !run.keep_pre_switch => i.min(end),
+                    Some(i) if run.drop_pre_switch => i.min(end),
                     _ => 0,
                 };
                 &frames[start..end]

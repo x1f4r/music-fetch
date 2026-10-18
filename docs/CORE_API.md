@@ -95,7 +95,7 @@ early confident stop already shortens their sessions):
 ### Sung words
 
 Takes sung with words are also found by their lyrics: the engine runs its lyric search
-on what the speech recognizer heard (when it holds at least 3 real words, not "la la"
+on what the speech recognizer heard (when it holds at least 3 distinct real words, not "la la"
 or "hmm") and fuses those candidates with the melody (and ACRCloud) candidates on one
 calibrated scale; a song both find gets a bonus. There are two ways to hand over the
 words; the first is preferred because it costs no time after capture:

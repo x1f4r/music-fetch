@@ -33,13 +33,14 @@ import argparse
 import json
 import os
 import re
+import sys
 
 import numpy as np
 from scipy.optimize import minimize
 
-import fit_fusion as ff
-
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)  # fit_fusion sits next to this file (also under python -I)
+import fit_fusion as ff  # noqa: E402
 DEFAULT_MATCHER = os.path.join(HERE, "..", "..", "core", "crates", "mfcore", "src", "melody", "matcher.rs")
 
 
@@ -62,7 +63,7 @@ def enc_x(c, use, hit_rank):
     for n in use:
         rank = c.get("enc_rank") or 0
         if n == "enc_best":
-            out.append(max(c.get("enc_best", 0.0), 0.0))
+            out.append(max(c.get("enc_best", 0.0), 0.0) if 0 < rank <= hit_rank else 0.0)
         elif n == "enc_hit":
             out.append(1.0 if 0 < rank <= hit_rank else 0.0)
         elif n == "enc_score":

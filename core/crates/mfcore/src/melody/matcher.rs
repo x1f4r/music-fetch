@@ -122,7 +122,7 @@ pub struct Features {
     /// ln((popularity + 0.05) / 0.55): the song's popularity prior.
     pub prior: f32,
     /// The learned encoder's best window cosine for the song (0 when the encoder
-    /// did not run or did not return the song).
+    /// did not run or did not rank the song among its first [`ENC_HIT_RANK`] hits).
     pub enc_best: f32,
     /// 1 when the encoder ranked the song among its first [`ENC_HIT_RANK`] hits.
     pub enc_hit: f32,
@@ -175,9 +175,9 @@ const CALIBRATION: (f32, f32) = (-0.7345, 0.9035);
 /// the other weights fixed, so searches without the encoder score exactly as
 /// before): weights of [`Features::enc_best`] and [`Features::enc_hit`], the
 /// shift of "none of these" when the encoder ran, and that path's calibration.
-const ENC_WEIGHTS: [f32; 2] = [0.0, 0.0];
-const ENC_NONE: f32 = 0.0;
-const CALIBRATION_ENCODER: (f32, f32) = CALIBRATION;
+const ENC_WEIGHTS: [f32; 2] = [10.6787, -5.0795];
+const ENC_NONE: f32 = 3.0519;
+const CALIBRATION_ENCODER: (f32, f32) = (-0.2851, 0.6003);
 /// Encoder hits up to this rank count as [`Features::enc_hit`] (the same for every
 /// budget, so the weight means the same everywhere).
 pub const ENC_HIT_RANK: u32 = 200;
@@ -577,11 +577,13 @@ impl Query {
         utility(f) + w[0] * f.enc_best + w[1] * f.enc_hit
     }
 
-    /// [`Features::enc_best`] and [`Features::enc_hit`] of `song`.
+    /// [`Features::enc_best`] and [`Features::enc_hit`] of `song`. Only the first
+    /// [`ENC_HIT_RANK`] hits count as evidence, whatever the budget: a larger budget's
+    /// further hits are placements without encoder evidence.
     fn encoder_features(&self, song: u32) -> (f32, f32) {
         match self.encoder.as_ref().and_then(|e| e.get(&song)) {
-            Some(&(best, rank)) => (best.max(0.0), if rank <= ENC_HIT_RANK { 1.0 } else { 0.0 }),
-            None => (0.0, 0.0),
+            Some(&(best, rank)) if rank <= ENC_HIT_RANK => (best.max(0.0), 1.0),
+            _ => (0.0, 0.0),
         }
     }
 
@@ -987,6 +989,12 @@ fn retrieve(
     let mut stamp = vec![u32::MAX; tracks];
     // Forced tracks' postings beyond one window's neighbour limit.
     let mut extra: Vec<(u32, f32, f32, f32)> = Vec::new();
+    let mut forced = vec![false; if force.is_empty() { 0 } else { tracks }];
+    for &t in force {
+        if let Some(f) = forced.get_mut(t as usize) {
+            *f = true;
+        }
+    }
     for (wi, &(ti, start, ref vec)) in q.windows.iter().enumerate() {
         probe_cells(index, books, vec, options.probe, &mut probed);
         if probed.is_empty() {
@@ -1045,7 +1053,7 @@ fn retrieve(
         if found.len() > WINDOW_NEIGHBOURS {
             found.select_nth_unstable_by(WINDOW_NEIGHBOURS, |a, b| a.2.total_cmp(&b.2));
             if !force.is_empty() {
-                extra.extend(found[WINDOW_NEIGHBOURS..].iter().copied().filter(|f| force.contains(&f.0)));
+                extra.extend(found[WINDOW_NEIGHBOURS..].iter().copied().filter(|f| forced[f.0 as usize]));
             }
             found.truncate(WINDOW_NEIGHBOURS);
         }
