@@ -123,7 +123,7 @@
         </div>
       {/if}
       <div class="frow svc-actions">
-        <div class="k">
+        <div class="k" class:has-status={status && check?.state === 'host'}>
           {#if status && check?.state === 'host'}
             <span class="sub svc-status problem" role="status">{status.text}</span>
           {:else}
@@ -156,7 +156,7 @@
         <div class="frow"><div class="k">{t('settings.apiToken')}</div><div class="v"><span class="svc-value">{t('settings.services.secretSet')}</span></div></div>
       {/if}
       <div class="frow svc-actions">
-        <div class="k">
+        <div class="k" class:has-status={Boolean(status)}>
           {#if status}
             <span class="sub svc-status {status.tone}" role="status">
               {#if status.tone === 'ok'}<span class="ic ic-check s12" aria-hidden="true"></span>{/if}{status.text}

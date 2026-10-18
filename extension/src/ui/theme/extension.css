@@ -333,8 +333,11 @@ ul.plain-list .frow.prose { line-height: 1.5; }
 .ic-key { --m: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><circle cx='8' cy='15' r='4'/><path d='M10.85 12.15L19 4M16 7l2.5 2.5M14 9l2 2'/></svg>"); }
 .svc .group { margin-bottom: 16px; }
 .svc-value { max-width: 260px; color: var(--on-surface); }
-.svc-actions { min-height: 48px; }
+.svc-actions { min-height: 48px; flex-wrap: wrap; row-gap: 4px; }
 .svc-actions .k { flex: 1; }
+/* A status keeps a readable width; where the row is too narrow the buttons go under it. */
+.svc-actions .k.has-status { flex: 1 1 13em; }
+.svc-actions .v { margin-left: auto; }
 .svc-status { display: inline-flex; align-items: center; gap: 6px; }
 .frow .k .sub.svc-status.ok { color: var(--primary); }
 .svc-actions .get-keys { margin-left: -12px; }
