@@ -30,11 +30,11 @@ describe('site adapters', () => {
     const { win, doc } = page('youtube.html', 'https://www.youtube.com/watch?v=fakemix0001');
     const facts = ADAPTERS.youtube.facts(win, doc);
     expect(facts).toMatchObject({ title: 'Fake Mix', artist: 'Test Channel', durationMs: 60_000, live: false });
-    expect(facts.description).toContain('0:20 Music Fetch Test Signals - Test Signal B');
+    expect(facts.description).toContain('0:20 Music Fetch Test Signals - Bravo Signal');
     expect(facts.chapters).toEqual([
-      { title: 'Test Signal A', startMs: 0 },
-      { title: 'Test Signal B', startMs: 20_000 },
-      { title: 'Test Signal C', startMs: 40_000 },
+      { title: 'Alpha Signal', startMs: 0 },
+      { title: 'Bravo Signal', startMs: 20_000 },
+      { title: 'Charlie Signal', startMs: 40_000 },
     ]);
     expect(ADAPTERS.youtube.element(win, doc, [])?.className).toBe('html5-main-video');
     // Player API: seek, quality (restored afterwards), ads.
@@ -68,16 +68,16 @@ describe('site adapters', () => {
   it('read SoundCloud tracks and sets from the hydration data, and the now-playing badge', () => {
     const track = page('soundcloud.html', 'https://soundcloud.com/test/b');
     expect(ADAPTERS.soundcloud.facts(track.win, track.doc)).toMatchObject({
-      title: 'Test Signal B',
+      title: 'Bravo Signal',
       artist: 'Music Fetch Test Signals',
       durationMs: 32_000,
-      nowPlaying: { title: 'Test Signal B', artist: 'Music Fetch Test Signals', album: '' },
+      nowPlaying: { title: 'Bravo Signal', artist: 'Music Fetch Test Signals', album: '' },
     });
     const set = page('soundcloud-set.html', 'https://soundcloud.com/test/sets/test-set');
     const facts = ADAPTERS.soundcloud.facts(set.win, set.doc);
     expect(facts.title).toBe('Test Set');
     // Entries without a title (not yet loaded) are left out.
-    expect(facts.entries?.map((e) => e.title)).toEqual(['Test Signal A', 'Test Signal B']);
+    expect(facts.entries?.map((e) => e.title)).toEqual(['Alpha Signal', 'Bravo Signal']);
   });
 
   it('find SoundCloud’s detached player through the elements that played', () => {
@@ -90,7 +90,7 @@ describe('site adapters', () => {
   it('read Mixcloud, Twitch, Bandcamp, streaming and generic pages', () => {
     const mix = page('mixcloud.html', 'https://www.mixcloud.com/test/test-mix/');
     expect(ADAPTERS.mixcloud.facts(mix.win, mix.doc)).toMatchObject({ title: 'Test Mix', artist: 'Music Fetch Test Signals', durationMs: 60_000 });
-    expect(ADAPTERS.mixcloud.facts(mix.win, mix.doc).entries?.map((e) => e.title)).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
+    expect(ADAPTERS.mixcloud.facts(mix.win, mix.doc).entries?.map((e) => e.title)).toEqual(['Alpha Signal', 'Bravo Signal', 'Charlie Signal']);
 
     const vod = page('twitch.html', 'https://www.twitch.tv/videos/123456');
     expect(ADAPTERS.twitch.facts(vod.win, vod.doc)).toMatchObject({ title: 'Test stream VOD', live: false });
@@ -99,19 +99,19 @@ describe('site adapters', () => {
 
     const bc = page('bandcamp.html', 'https://test.bandcamp.com/track/test-signal-e');
     expect(ADAPTERS.bandcamp.facts(bc.win, bc.doc)).toMatchObject({
-      title: 'Test Signal E',
+      title: 'Echo Signal',
       artist: 'Music Fetch Test Signals',
       durationMs: 32_000,
       mediaUrl: 'https://t4.bcbits.example/stream/test-signal-e.mp3',
     });
 
     const sp = page('streaming.html', 'https://open.spotify.com/');
-    expect(ADAPTERS.streaming.facts(sp.win, sp.doc).nowPlaying).toEqual({ title: 'Test Signal F', artist: 'Music Fetch Test Signals', album: '' });
+    expect(ADAPTERS.streaming.facts(sp.win, sp.doc).nowPlaying).toEqual({ title: 'Foxtrot Signal', artist: 'Music Fetch Test Signals', album: '' });
     expect(ADAPTERS.streaming.element(sp.win, sp.doc, [])).toBeNull();
 
     const gen = page('generic.html', 'https://example.org/song');
     expect(ADAPTERS.generic.facts(gen.win, gen.doc)).toMatchObject({
-      title: 'Test Signal A',
+      title: 'Alpha Signal',
       artist: 'Music Fetch Test Signals',
       durationMs: 32_000,
       mediaUrl: 'https://example.org/test-signal-a.mp3',

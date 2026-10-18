@@ -160,6 +160,10 @@ pub(crate) async fn ensure_public(url: &Url) -> Result<()> {
     if allowed_in_test(url) {
         return Ok(());
     }
+    // Test runs: the request goes to the local stub, not to this host.
+    if crate::util::endpoints::covers(url) {
+        return Ok(());
+    }
     match target(url)? {
         Target::Ip(ip) => is_public_ip(ip).then_some(()).ok_or_else(private_address_error),
         #[cfg(not(target_family = "wasm"))]

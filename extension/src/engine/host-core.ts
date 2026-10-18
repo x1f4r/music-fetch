@@ -207,8 +207,11 @@ export class EngineHost {
     })();
   }
 
-  private config(): BackendConfig {
-    return { target: this.options.platform.target, android: this.options.platform.android, lowPower: this.lowPower, cpus: this.options.cpus ?? 8 };
+  private async config(): Promise<BackendConfig> {
+    const config: BackendConfig = { target: this.options.platform.target, android: this.options.platform.android, lowPower: this.lowPower, cpus: this.options.cpus ?? 8 };
+    if (import.meta.env.MODE !== 'e2e') return config;
+    const settings = await this.options.platform.settings().catch(() => null);
+    return { ...config, recognizerUrl: settings?.e2eRecognizer ?? null };
   }
 
   get surfaces(): number {

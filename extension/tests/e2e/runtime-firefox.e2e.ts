@@ -6,7 +6,7 @@ import webExt from 'web-ext';
 import { HEADLESS } from './support';
 import { join } from 'node:path';
 import { ARTIFACTS } from './support';
-import { E2E_OUTPUT, RUNTIME_E2E, echoed, eventsOf, rpc, sleep, startFixtureServer, trackEvents, waitForSession, type FixtureServer } from './runtime-support';
+import { E2E_OUTPUT, LONG_MIX_QUERY, LONG_SONG_MS, RUNTIME_E2E, echoed, eventsOf, rpc, sleep, startFixtureServer, trackEvents, useStubRecognizer, waitForSession, type FixtureServer } from './runtime-support';
 
 const FIREFOX = process.env.FIREFOX_BIN ?? '/usr/bin/firefox';
 const FRAME = 'mf-rt-frame';
@@ -40,6 +40,8 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
   let browser: Browser;
   let server: FixtureServer;
   let tab: Page;
+  /** The real engine (module built) or the mock; the mix test differs. */
+  let engine: 'wasm' | 'mock' = 'mock';
 
   beforeAll(async () => {
     server = await startFixtureServer();
@@ -74,6 +76,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     tab = (await target.asPage())!;
     await tab.waitForSelector('.welcome', { timeout: 30_000 });
     await tab.evaluate(() => (globalThis as unknown as { browser: Api }).browser.storage.sync.set({ providerDecision: { provider: 'spotify', skipped: true } }));
+    engine = await useStubRecognizer(tab, server.origin);
     await trackEvents(tab);
   });
 
@@ -105,22 +108,24 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     const sources = await rpc<{ sessionId: string; via: string; frames: number }[]>(tab, 'mf-host', 'sources');
     expect(sources.find((s) => s.sessionId === id)).toMatchObject({ via: 'element' });
     const result = await waitForSession(tab, id, (s) => s !== 'Running', 45_000);
-    expect(result, await eventsOf(tab, id)).toMatchObject({ status: 'Matched', title: 'Test Signal A' });
+    expect(result, await eventsOf(tab, id)).toMatchObject({ status: 'Matched', title: 'Alpha Signal' });
   });
 
   it('listens a fake YouTube mix through at 4×, muted, and restores the player', async () => {
-    const url = `${server.origin}/pages/youtube.html?preroll=3`;
+    // 20 s songs for the mock, 90 s for the real engine's mix pipeline.
+    const songMs = engine === 'wasm' ? LONG_SONG_MS : 20_000;
+    const url = `${server.origin}/pages/youtube.html?preroll=3${engine === 'wasm' ? `&${LONG_MIX_QUERY}` : ''}`;
     const tabId = await openTab(url);
     await sleep(1500);
     const session = await rpc<string>(tab, 'mf-engine', 'analyze', [url, 'Mix', { tab_id: tabId, url, title: 'Fake Mix', facts: null }]);
-    const result = await waitForSession(tab, session, (s) => s !== 'Running', 120_000).catch(async (error: Error) => {
+    const result = await waitForSession(tab, session, (s) => s !== 'Running', 6 * songMs + 60_000).catch(async (error: Error) => {
       throw new Error(`${error.message} ${await eventsOf(tab, session)}`);
     });
-    const where = `${JSON.stringify(result.segments)} ${await eventsOf(tab, session)}`;
+    const where = `${JSON.stringify(result.segments)} ${await eventsOf(tab, session)} · recognizer ${JSON.stringify(server.recognizer.slice(-8))}`;
     expect(result.status, where).toBe('Completed');
-    expect(result.segments.map((s) => s.title), where).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
-    expect(Math.abs(result.segments[0]!.end_ms - 20_000)).toBeLessThanOrEqual(2000);
-    expect(Math.abs(result.segments[1]!.end_ms - 40_000)).toBeLessThanOrEqual(2000);
+    expect(result.segments.map((s) => s.title), where).toEqual(['Alpha Signal', 'Bravo Signal', 'Charlie Signal']);
+    expect(Math.abs(result.segments[0]!.end_ms - songMs), where).toBeLessThanOrEqual(2000);
+    expect(Math.abs(result.segments[1]!.end_ms - 2 * songMs), where).toBeLessThanOrEqual(2000);
   });
 
   it('finds SoundCloud’s detached player through the page script and identifies it', async () => {
@@ -132,7 +137,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     const id = await rpc<string>(tab, 'mf-engine', 'startListening', ['Tab', 'Auto', { auto_stop: true }]).catch((e: Error) => `failed: ${e.message}`);
     expect(id).not.toMatch(/^failed/);
     const result = await waitForSession(tab, id, (s) => s !== 'Running', 45_000);
-    expect(result, await eventsOf(tab, id)).toMatchObject({ status: 'Matched', title: 'Test Signal B' });
+    expect(result, await eventsOf(tab, id)).toMatchObject({ status: 'Matched', title: 'Bravo Signal' });
   });
 
   it('keeps the event page alive through a job with no traffic', async () => {

@@ -94,6 +94,8 @@ export interface HostSettings {
   /** Microphone device ids, most preferred first. */
   micPriority: string[];
   lowPower: 'auto' | 'on' | 'off';
+  /** e2e builds only: where the test's stub recognizer listens (`storage.local.mfE2eRecognizer`). */
+  e2eRecognizer?: string | null;
 }
 
 export type EngineHostKind = 'offscreen' | 'background';

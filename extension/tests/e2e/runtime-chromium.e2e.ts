@@ -4,7 +4,7 @@ import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ARTIFACTS, HEADLESS, tempProfile } from './support';
 import { writeFileSync } from 'node:fs';
-import { E2E_OUTPUT, RUNTIME_E2E, echoed, eventsOf, micFile, rpc, sleep, startFixtureServer, trackEvents, waitForSession, type FixtureServer } from './runtime-support';
+import { E2E_OUTPUT, LONG_MIX_QUERY, LONG_SONG_MS, RUNTIME_E2E, echoed, eventsOf, micFile, rpc, sleep, startFixtureServer, trackEvents, useStubRecognizer, waitForSession, type FixtureServer } from './runtime-support';
 
 const CHROMIUM = process.env.CHROMIUM_BIN ?? '/usr/bin/chromium';
 const offscreenLog: string[] = [];
@@ -40,6 +40,8 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
   let server: FixtureServer;
   let id = '';
   let app: Page;
+  /** The real engine (module built) or the mock; the mix tests differ. */
+  let engine: 'wasm' | 'mock' = 'mock';
 
   beforeAll(async () => {
     server = await startFixtureServer();
@@ -75,8 +77,15 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     await welcome!.close();
     app = await browser.newPage();
     await app.goto(`chrome-extension://${id}/app.html#/library`);
+    engine = await useStubRecognizer(app, server.origin);
     await trackEvents(app);
   });
+
+  /** The fake YouTube mix for this engine: 20 s songs for the mock, 90 s for the real one. */
+  function mixUrl(extra = ''): { url: string; songMs: number } {
+    const long = engine === 'wasm';
+    return { url: `${server.origin}/pages/youtube.html${long ? `?${LONG_MIX_QUERY}${extra ? `&${extra}` : ''}` : extra ? `?${extra}` : ''}`, songMs: long ? LONG_SONG_MS : 20_000 };
+  }
 
   afterAll(async () => {
     writeFileSync(join(ARTIFACTS, 'rt-chromium-offscreen.log'), offscreenLog.join('\n'));
@@ -126,11 +135,11 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const popup = await openPopup(page);
     await listenFrom(popup, 'This tab');
     await popup
-      .waitForFunction(() => document.querySelector('.hero .ttl')?.textContent?.includes('Test Signal A'), { timeout: 45_000 })
+      .waitForFunction(() => document.querySelector('.hero .ttl')?.textContent?.includes('Alpha Signal'), { timeout: 45_000 })
       .catch(async (error: unknown) => {
         await popup.screenshot({ path: join(ARTIFACTS, 'rt-chromium-tab-failed.png') }).catch(() => undefined);
         const [newest] = await rpc<{ id: string }[]>(app, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
-        throw new Error(`no Test Signal A: ${newest ? await eventsOf(app, newest.id) : 'no session'} · sources ${JSON.stringify(await rpc(app, 'mf-host', 'sources'))}`, { cause: error });
+        throw new Error(`no Alpha Signal: ${newest ? await eventsOf(app, newest.id) : 'no session'} · sources ${JSON.stringify(await rpc(app, 'mf-host', 'sources'))}`, { cause: error });
       });
     await popup.screenshot({ path: join(ARTIFACTS, 'rt-chromium-tab-result.png') });
     expect(browser.targets().some((t) => t.url() === `chrome-extension://${id}/offscreen.html`)).toBe(true);
@@ -151,7 +160,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     await app.goto(`chrome-extension://${id}/app.html#/library`);
     await trackEvents(app);
     const [newest] = await rpc<{ id: string; title: string; status: string }[]>(app, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
-    expect(newest).toMatchObject({ title: 'Test Signal C', status: 'Matched' });
+    expect(newest).toMatchObject({ title: 'Charlie Signal', status: 'Matched' });
     const notifications = await app.evaluate(() => (globalThis as unknown as { chrome: { notifications: { getAll(): Promise<Record<string, unknown>> } } }).chrome.notifications.getAll());
     expect(Object.keys(notifications)).toContain(`mf-${newest!.id}`);
     await page.close();
@@ -206,7 +215,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const popup = (await (await micBrowser.waitForTarget((t) => t.url() === `chrome-extension://${micId}/popup.html`, { timeout: 15_000 })).asPage())!;
     await popup.waitForSelector('.listen .disc', { timeout: 20_000 });
     await listenFrom(popup, 'Microphone');
-    await popup.waitForFunction(() => document.querySelector('.hero .ttl')?.textContent?.includes('Test Signal B'), { timeout: 45_000 });
+    await popup.waitForFunction(() => document.querySelector('.hero .ttl')?.textContent?.includes('Bravo Signal'), { timeout: 45_000 });
     await micBrowser.close();
   });
 
@@ -245,7 +254,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
   });
 
   it('listens a fake YouTube mix through at 4× with tab capture, past a pre-roll ad, and restores the player', async () => {
-    const url = `${server.origin}/pages/youtube.html?preroll=3`;
+    const { url, songMs } = mixUrl('preroll=3');
     const page = await browser.newPage();
     await page.goto(url);
     // Invoking the extension on the tab allows tab capture (the popup's "Analyze this page").
@@ -254,14 +263,14 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const tabId = await tabIdOf(url);
     const started = Date.now();
     const session = await rpc<string>(app, 'mf-engine', 'analyze', [url, 'Mix', { tab_id: tabId, url, title: 'Fake Mix', facts: null }]);
-    const result = await waitForSession(app, session, (s) => s !== 'Running', 120_000);
-    const where = `${JSON.stringify(result.segments)} ${await eventsOf(app, session)}`;
+    const result = await waitForSession(app, session, (s) => s !== 'Running', 6 * songMs + 60_000);
+    const where = `${JSON.stringify(result.segments)} ${await eventsOf(app, session)} · recognizer ${JSON.stringify(server.recognizer.slice(-8))}`;
     expect(result.status, where).toBe('Completed');
-    expect(result.segments.map((s) => s.title), where).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
-    expect(Math.abs(result.segments[0]!.end_ms - 20_000), where).toBeLessThanOrEqual(2000);
-    expect(Math.abs(result.segments[1]!.end_ms - 40_000), where).toBeLessThanOrEqual(2000);
-    // 60 s of media at 4×: well under a minute, ad included.
-    expect(Date.now() - started).toBeLessThan(60_000);
+    expect(result.segments.map((s) => s.title), where).toEqual(['Alpha Signal', 'Bravo Signal', 'Charlie Signal']);
+    expect(Math.abs(result.segments[0]!.end_ms - songMs), where).toBeLessThanOrEqual(2000);
+    expect(Math.abs(result.segments[1]!.end_ms - 2 * songMs), where).toBeLessThanOrEqual(2000);
+    // The media at 4× plus the analysis: well under real time, ad included.
+    expect(Date.now() - started).toBeLessThan((3 * songMs) / 4 + (engine === 'wasm' ? 60_000 : 45_000));
     const player = await page.evaluate(() => {
       const v = document.querySelector('video')!;
       return { rate: v.playbackRate, muted: v.muted, pitch: v.preservesPitch, quality: (window as unknown as { fakeQuality(): string }).fakeQuality() };
@@ -271,13 +280,13 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
   });
 
   it('falls back to muted element capture on a tab the extension was not invoked on', async () => {
-    const url = `${server.origin}/pages/youtube.html`;
+    const { url, songMs } = mixUrl();
     const page = await browser.newPage();
     await page.goto(url);
     const tabId = await tabIdOf(url);
     const session = await rpc<string>(app, 'mf-engine', 'analyze', [url, 'Mix', { tab_id: tabId, url, title: 'Fake Mix', facts: null }]);
-    const result = await waitForSession(app, session, (s) => s !== 'Running', 120_000);
-    expect(result.segments.map((s) => s.title), `${JSON.stringify(result.segments)} ${await eventsOf(app, session)}`).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
+    const result = await waitForSession(app, session, (s) => s !== 'Running', 6 * songMs + 60_000);
+    expect(result.segments.map((s) => s.title), `${JSON.stringify(result.segments)} ${await eventsOf(app, session)}`).toEqual(['Alpha Signal', 'Bravo Signal', 'Charlie Signal']);
     expect(await page.evaluate(() => document.querySelector('video')!.muted)).toBe(false);
     await page.close();
   });
@@ -289,9 +298,9 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const popup = await openPopup(page);
     await popup.close();
     const tabId = await tabIdOf(url);
-    const session = await rpc<string>(app, 'mf-engine', 'analyze', [url, 'Auto', { tab_id: tabId, url, title: 'Test Signal B', facts: null }]);
+    const session = await rpc<string>(app, 'mf-engine', 'analyze', [url, 'Auto', { tab_id: tabId, url, title: 'Bravo Signal', facts: null }]);
     const result = await waitForSession(app, session, (s) => s !== 'Running', 90_000);
-    expect(result.segments.map((s) => s.title), `${JSON.stringify(result.segments)} ${await eventsOf(app, session)}`).toEqual(['Test Signal B']);
+    expect(result.segments.map((s) => s.title), `${JSON.stringify(result.segments)} ${await eventsOf(app, session)}`).toEqual(['Bravo Signal']);
     await page.close();
   });
 
