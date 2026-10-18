@@ -62,5 +62,4 @@ if (( opt )) && command -v wasm-opt >/dev/null; then
     "$out/mfcore_wasm_bg.wasm" -o "$out/mfcore_wasm_bg.wasm.opt"
   mv "$out/mfcore_wasm_bg.wasm.opt" "$out/mfcore_wasm_bg.wasm"
 fi
-printf '*\n!.gitignore\n' > "$out/.gitignore"
 ls -l "$out"/mfcore_wasm_bg.wasm | awk '{printf "%s: %.1f MB\n", $NF, $5 / 1048576}'
