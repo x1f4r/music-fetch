@@ -158,9 +158,18 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
       [...doc.querySelectorAll<HTMLButtonElement>('.sources button')].find((b) => b.textContent?.trim() === 'Microphone')?.click();
       doc.querySelector<HTMLElement>('.listen .disc')!.click();
     }, FRAME);
-    await sleep(2500);
-    const sources = await rpc<{ via: string; frames: number }[]>(tab, 'mf-host', 'sources');
-    expect(sources.some((s) => s.via === 'mic' && s.frames > 0)).toBe(true);
+    let sources: { via: string; frames: number }[] = [];
+    for (let i = 0; i < 20 && !sources.some((s) => s.via === 'mic' && s.frames > 0); i++) {
+      await sleep(500);
+      sources = await rpc<{ via: string; frames: number }[]>(tab, 'mf-host', 'sources');
+    }
+    const why = await tab.evaluate(async (id) => {
+      const frame = document.getElementById(id) as HTMLIFrameElement;
+      const doc = frame.contentDocument!;
+      const permission = await (frame.contentWindow as Window).navigator.permissions.query({ name: 'microphone' as PermissionName }).then((p) => p.state, (e: Error) => `query failed: ${e.message}`);
+      return `stage "${doc.querySelector('#stage-state')?.textContent?.trim()}", permission ${permission}`;
+    }, FRAME);
+    expect(sources.some((s) => s.via === 'mic' && s.frames > 0), `${JSON.stringify(sources)} ${why}`).toBe(true);
     await inFrame("return doc.querySelector('.hero .ttl')");
   });
 
