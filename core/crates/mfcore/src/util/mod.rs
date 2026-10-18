@@ -1,6 +1,9 @@
-//! Shared helpers: cancellation, HTTP, rate limiting, system info, clocks and timers.
+//! Shared helpers: cancellation, work files, HTTP, rate limiting, system info, clocks and timers.
 
 pub mod cancel;
+pub mod files;
+#[cfg(feature = "store")]
+pub mod files_sqlite;
 #[cfg(feature = "net")]
 pub mod http;
 pub mod ratelimit;

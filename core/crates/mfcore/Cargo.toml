@@ -27,8 +27,9 @@ ffi = ["dep:uniffi"]
 net = ["dep:reqwest", "dep:rustls", "dep:webpki-roots"]
 # symphonia and Opus decoding.
 decode = ["dep:symphonia", "dep:opus-decoder"]
-# SQLite store: bundled SQLite natively, sqlite-wasm-rs on wasm32.
-store = ["dep:rusqlite"]
+# SQLite store and SQLite-backed work files: bundled SQLite natively; on wasm32
+# sqlite-wasm-rs (SQLite built from C with clang) and the OPFS "sahpool" VFS.
+store = ["dep:rusqlite", "dep:sqlite-wasm-rs", "dep:sqlite-wasm-vfs"]
 # Memory-mapped melody index (`MelodyIndex::open` reads the file without it).
 mmap = ["dep:memmap2"]
 
@@ -42,7 +43,7 @@ tracing.workspace = true
 parking_lot = "0.12"
 fastrand = "2"
 uuid = { version = "1", features = ["v4"] }
-rusqlite = { version = "0.40", features = ["bundled"], optional = true }
+rusqlite = { version = "0.40.2", features = ["bundled", "blob", "serialize"], optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "gzip", "brotli", "multipart", "http2", "charset", "query", "form"], optional = true }
 # audio
 symphonia = { version = "0.6.1", default-features = false, features = ["isomp4", "aac", "mp3", "flac", "vorbis", "ogg", "wav", "mkv", "alac", "pcm", "caf", "aiff", "adpcm"], optional = true }
@@ -85,6 +86,10 @@ fastrand = { version = "2", features = ["js"] }
 uuid = { version = "1", features = ["v4", "rng-getrandom"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 send_wrapper = { version = "0.6", features = ["futures"] }
+# Pinned together: rusqlite 0.40.2 needs sqlite-wasm-rs ^0.5.1, which only
+# sqlite-wasm-vfs 0.2 supports.
+sqlite-wasm-rs = { version = "=0.5.5", default-features = false, optional = true }
+sqlite-wasm-vfs = { version = "=0.2.0", optional = true }
 
 [[test]]
 name = "engine"
@@ -100,3 +105,7 @@ required-features = ["net"]
 disallowed_methods = "allow"
 
 [dev-dependencies]
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+# Matches wasm-bindgen 0.2.129 and its test runner.
+wasm-bindgen-test = "0.3.79"

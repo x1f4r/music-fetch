@@ -680,3 +680,92 @@ fn database_size_is_reported() {
     assert!(store.database_bytes() > 0);
     assert!(memory().database_bytes() > 0);
 }
+
+#[test]
+fn pinning_many_sessions_at_once() {
+    let store = memory();
+    for id in ["a", "b", "c"] {
+        store.create_session(id, SessionKind::Listen, id, None, 1).unwrap();
+    }
+    let ids: Vec<String> = ["a", "c", "missing"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(store.set_pinned_many(&ids, true).unwrap(), 2, "unknown ids are ignored");
+    let pinned = |store: &Store| {
+        let mut ids: Vec<String> =
+            store.library(&LibraryQuery { pinned_only: true, ..query() }).unwrap().into_iter().map(|e| e.id).collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(pinned(&store), vec!["a", "c"]);
+    assert_eq!(store.set_pinned_many(&[], false).unwrap(), 0);
+    // More ids than one statement binds.
+    let many: Vec<String> = (0..1203).map(|i| format!("x{i}")).chain(["a".to_string()]).collect();
+    assert_eq!(store.set_pinned_many(&many, false).unwrap(), 1);
+    assert_eq!(pinned(&store), vec!["c"]);
+}
+
+#[test]
+fn recovery_reports_the_interrupted_sessions() {
+    let store = memory();
+    store.create_session("r2", SessionKind::Hum, "", None, 2).unwrap();
+    store.create_session("r1", SessionKind::Listen, "", None, 1).unwrap();
+    store.create_session("done", SessionKind::Listen, "", None, 3).unwrap();
+    store
+        .update_session("done", SessionUpdate { status: Some(SessionStatus::Completed), ..Default::default() })
+        .unwrap();
+    assert_eq!(store.recover_interrupted_sessions().unwrap(), vec!["r1", "r2"]);
+    assert!(store.recover_interrupted_sessions().unwrap().is_empty());
+    let detail = store.session_detail("r1").unwrap().unwrap();
+    assert_eq!(detail.entry.status, SessionStatus::Failed);
+}
+
+#[test]
+fn kv_values_persist_and_survive_purges() {
+    let dir = TempDir::new();
+    let store = Store::open(&dir.db()).unwrap();
+    assert_eq!(store.kv_get("shazam.breaker").unwrap(), None);
+    store.kv_put("shazam.breaker", r#"{"until":1}"#).unwrap();
+    store.kv_put("shazam.breaker", r#"{"until":2}"#).unwrap();
+    store.cache_put_at("shazam", "sig", "x", 10, 0).unwrap();
+    assert_eq!(store.purge_expired_cache_at(i64::MAX - 1).unwrap(), 1, "only the expiring entry goes");
+    drop(store);
+    let store = Store::open(&dir.db()).unwrap();
+    assert_eq!(store.kv_get("shazam.breaker").unwrap().as_deref(), Some(r#"{"until":2}"#));
+    assert!(store.kv_remove("shazam.breaker").unwrap());
+    assert!(!store.kv_remove("shazam.breaker").unwrap());
+    assert_eq!(store.kv_get("shazam.breaker").unwrap(), None);
+}
+
+#[test]
+fn serialized_snapshot_round_trip() {
+    let store = memory();
+    store.create_session("s", SessionKind::Listen, "Snapshot", None, 1).unwrap();
+    store.kv_put("k", "v").unwrap();
+    let bytes = store.serialize().unwrap();
+    assert!(bytes.starts_with(b"SQLite format 3\0"));
+    let restored = Store::open_serialized(&bytes).unwrap();
+    assert_eq!(restored.library(&query()).unwrap()[0].title, "Snapshot");
+    assert_eq!(restored.kv_get("k").unwrap().as_deref(), Some("v"));
+    restored.create_session("t", SessionKind::Listen, "", None, 2).unwrap();
+    assert_eq!(restored.library(&query()).unwrap().len(), 2);
+    assert!(Store::open_serialized(b"not a database").is_err());
+}
+
+#[test]
+fn vfs_databases_use_a_rollback_journal() {
+    let dir = TempDir::new();
+    let path = dir.path().join("vfs.sqlite3");
+    // Natively the platform VFS stands in for the browser's OPFS pool.
+    let vfs = if cfg!(windows) { "win32" } else { "unix" };
+    let store = Store::open_vfs(vfs, path.to_str().unwrap()).unwrap();
+    let mode: String = store.inner.lock().conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+    assert_eq!(mode, "truncate");
+    store.create_session("v", SessionKind::Listen, "On a VFS", None, 1).unwrap();
+    drop(store);
+    let store = Store::open_vfs(vfs, path.to_str().unwrap()).unwrap();
+    assert_eq!(store.library(&query()).unwrap()[0].title, "On a VFS");
+    drop(store);
+    std::fs::write(&path, b"garbage, not a database ".repeat(400)).unwrap();
+    let err = Store::open_vfs(vfs, path.to_str().unwrap()).err().expect("damaged");
+    assert!(Store::is_damaged_error(&err), "{err:?}");
+    assert!(Store::open_vfs("no-such-vfs", "x.sqlite3").is_err());
+}

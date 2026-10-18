@@ -5,9 +5,16 @@
 //! WAL mode. Model records are stored as JSON next to the columns used for
 //! filtering and sorting. Rows whose JSON no longer decodes are skipped and
 //! logged, never fatal.
+//!
+//! In the browser the database lives in the OPFS "sahpool" VFS ([`opfs`]),
+//! with a rollback journal instead of WAL and one connection owned by the
+//! engine's Worker; where OPFS is unavailable an in-memory database is
+//! snapshotted with [`Store::serialize`].
 
 mod codec;
 mod export;
+#[cfg(target_family = "wasm")]
+pub mod opfs;
 mod schema;
 mod search;
 #[cfg(test)]
@@ -18,10 +25,12 @@ use std::path::{Path, PathBuf};
 use parking_lot::Mutex;
 use rusqlite::types::Value;
 use rusqlite::{
-    Connection, ErrorCode, OptionalExtension, Row, Transaction, TransactionBehavior, params, params_from_iter,
+    Connection, ErrorCode, MAIN_DB, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, params,
+    params_from_iter,
 };
 
 use self::codec::DbText;
+use self::schema::Journal;
 use crate::error::{MfError, Result};
 use crate::model::{
     Candidate, ExportFormat, LibraryEntry, LibraryQuery, Segment, SegmentKind, SessionDetail, SessionKind,
@@ -33,6 +42,10 @@ pub use self::export::render as render_export;
 
 /// Error stored on sessions that were `Running` when the app stopped.
 pub const INTERRUPTED: &str = "Interrupted";
+
+/// Cache namespace of the persistent key-value entries ([`Store::kv_get`]).
+/// They never expire, so cache purges keep them.
+const KV_NAMESPACE: &str = "kv";
 
 /// Expired cache rows are purged at most this often, besides lazy expiry on read.
 const CACHE_PURGE_INTERVAL_MS: i64 = 10 * 60 * 1000;
@@ -147,13 +160,15 @@ impl StoreError {
     }
 }
 
+const DAMAGED_MESSAGE: &str = "The library database is damaged.";
+
 fn db_message(e: &rusqlite::Error) -> &'static str {
     match e.sqlite_error_code() {
         Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => "The library is busy. Try again in a moment.",
         Some(ErrorCode::DiskFull) => "There is not enough disk space to save the library.",
         Some(ErrorCode::ReadOnly | ErrorCode::PermissionDenied) => "The library is read-only.",
         Some(ErrorCode::CannotOpen) => "The library could not be opened.",
-        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => "The library database is damaged.",
+        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => DAMAGED_MESSAGE,
         Some(ErrorCode::SystemIoFailure) => "The library could not be read or written.",
         _ => "The library could not be accessed.",
     }
@@ -186,26 +201,61 @@ impl Store {
     pub fn open_in_memory() -> Result<Self> {
         Connection::open_in_memory()
             .map_err(StoreError::from)
-            .and_then(|conn| Self::connect(conn, true))
+            .and_then(|conn| Self::connect(conn, Journal::Memory))
             .map_err(|e| e.into_mf("open"))
+    }
+
+    /// Opens (creating it if needed) the library `name` in the SQLite VFS `vfs`,
+    /// which the host registered (in the browser the OPFS pool, see [`opfs`]).
+    /// Uses a rollback journal: WAL needs shared memory such VFSs lack.
+    ///
+    /// Damaged databases are reported, not replaced: the VFS owner moves them
+    /// aside (see `opfs::BrowserStorage::open`).
+    pub fn open_vfs(vfs: &str, name: &str) -> Result<Self> {
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        Connection::open_with_flags_and_vfs(name, flags, vfs)
+            .map_err(StoreError::from)
+            .and_then(|conn| Self::connect(conn, Journal::Truncate))
+            .map_err(|e| e.into_mf("open"))
+    }
+
+    /// An in-memory library restored from [`serialize`](Self::serialize) output:
+    /// the browser fallback where OPFS is unavailable, snapshotted to IndexedDB.
+    pub fn open_serialized(bytes: &[u8]) -> Result<Self> {
+        Connection::open_in_memory()
+            .and_then(|mut conn| conn.deserialize_read_exact(MAIN_DB, bytes, bytes.len(), false).map(|()| conn))
+            .map_err(StoreError::from)
+            .and_then(|conn| Self::connect(conn, Journal::Memory))
+            .map_err(|e| e.into_mf("open"))
+    }
+
+    /// The whole database as bytes, for [`open_serialized`](Self::open_serialized).
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        let inner = self.inner.lock();
+        inner.conn.serialize(MAIN_DB).map(|data| data.to_vec()).map_err(|e| StoreError::from(e).into_mf("serialize"))
+    }
+
+    /// True when `e` (from an open) means the database file is damaged.
+    pub fn is_damaged_error(e: &MfError) -> bool {
+        matches!(e, MfError::Storage { message } if message == DAMAGED_MESSAGE)
     }
 
     fn open_file(path: &Path) -> StoreResult<Self> {
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
-        match Self::connect(Connection::open(path)?, false) {
+        match Self::connect(Connection::open(path)?, Journal::Wal) {
             Err(StoreError::Db(e)) if is_damaged(&e) => {
                 tracing::error!(error = %e, "store: database is damaged; starting an empty library");
                 quarantine(path)?;
-                Self::connect(Connection::open(path)?, false)
+                Self::connect(Connection::open(path)?, Journal::Wal)
             }
             result => result,
         }
     }
 
-    fn connect(mut conn: Connection, in_memory: bool) -> StoreResult<Self> {
-        schema::configure(&conn, in_memory)?;
+    fn connect(mut conn: Connection, journal: Journal) -> StoreResult<Self> {
+        schema::configure(&conn, journal)?;
         schema::migrate(&mut conn)?;
         let now = now_ms();
         if let Err(e) = purge_cache(&conn, now) {
@@ -485,6 +535,28 @@ impl Store {
         })
     }
 
+    /// Pins or unpins several sessions in one transaction; unknown ids are
+    /// ignored. Returns how many sessions exist among `ids`.
+    pub fn set_pinned_many(&self, ids: &[String], pinned: bool) -> Result<u32> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let now = now_ms();
+        self.write("set_pinned_many", |tx| {
+            let mut changed = 0;
+            for chunk in ids.chunks(DELETE_CHUNK) {
+                let sql = format!(
+                    "UPDATE sessions SET pinned = ?1, updated_at = ?2 WHERE id IN ({})",
+                    (3..3 + chunk.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ")
+                );
+                let mut args: Vec<Value> = vec![Value::Integer(i64::from(pinned)), Value::Integer(now)];
+                args.extend(chunk.iter().map(|id| Value::Text(id.clone())));
+                changed += tx.execute(&sql, params_from_iter(args))?;
+            }
+            Ok(u32::try_from(changed).unwrap_or(u32::MAX))
+        })
+    }
+
     /// Pinned sessions keep their cached media and can be listed on their own.
     pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<()> {
         let now = now_ms();
@@ -501,13 +573,26 @@ impl Store {
     /// Mark sessions left `Running` by a crash as failed (called at startup).
     /// Returns how many were marked.
     pub fn recover_interrupted(&self) -> Result<u32> {
+        self.recover_interrupted_sessions().map(|ids| u32::try_from(ids.len()).unwrap_or(u32::MAX))
+    }
+
+    /// Like [`recover_interrupted`](Self::recover_interrupted), returning the
+    /// ids, so the caller can drop their work files. In the browser this runs
+    /// whenever the engine's Worker starts: a recycled or crashed Worker leaves
+    /// its sessions `Running`, and only one Worker owns the database.
+    pub fn recover_interrupted_sessions(&self) -> Result<Vec<String>> {
         let now = now_ms();
         self.write("recover_interrupted", |tx| {
-            let changed = tx.execute(
-                "UPDATE sessions SET status = ?1, error = ?2, updated_at = ?3 WHERE status = ?4",
-                params![SessionStatus::Failed.as_text(), INTERRUPTED, now, SessionStatus::Running.as_text()],
+            let mut stmt = tx.prepare_cached(
+                "UPDATE sessions SET status = ?1, error = ?2, updated_at = ?3 WHERE status = ?4 RETURNING id",
             )?;
-            Ok(u32::try_from(changed).unwrap_or(u32::MAX))
+            let rows = stmt.query_map(
+                params![SessionStatus::Failed.as_text(), INTERRUPTED, now, SessionStatus::Running.as_text()],
+                |row| row.get::<_, String>(0),
+            )?;
+            let mut ids = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            ids.sort();
+            Ok(ids)
         })
     }
 
@@ -630,6 +715,36 @@ impl Store {
             }
         }
         result.map(drop).map_err(|e| StoreError::from(e).into_mf("cache_put"))
+    }
+
+    /// A persistent value (no expiry; kept by cache purges), e.g. the Shazam
+    /// client's back-off state, which must survive engine restarts.
+    pub fn kv_get(&self, key: &str) -> Result<Option<String>> {
+        self.cache_get(KV_NAMESPACE, key)
+    }
+
+    /// Stores a persistent value; see [`kv_get`](Self::kv_get).
+    pub fn kv_put(&self, key: &str, value: &str) -> Result<()> {
+        let inner = self.inner.lock();
+        inner
+            .conn
+            .prepare_cached(
+                "INSERT INTO cache (namespace, key, value, expires_at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (namespace, key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at",
+            )
+            .and_then(|mut stmt| stmt.execute(params![KV_NAMESPACE, key, value, i64::MAX]))
+            .map(drop)
+            .map_err(|e| StoreError::from(e).into_mf("kv_put"))
+    }
+
+    /// Removes a persistent value; false when there was none.
+    pub fn kv_remove(&self, key: &str) -> Result<bool> {
+        let inner = self.inner.lock();
+        inner
+            .conn
+            .execute("DELETE FROM cache WHERE namespace = ?1 AND key = ?2", params![KV_NAMESPACE, key])
+            .map(|n| n > 0)
+            .map_err(|e| StoreError::from(e).into_mf("kv_remove"))
     }
 
     /// Deletes expired cache entries now; returns how many were removed.

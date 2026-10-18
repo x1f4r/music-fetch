@@ -78,17 +78,34 @@ CREATE TABLE cache (
 CREATE INDEX cache_by_expiry ON cache (expires_at);
 ";
 
-/// Applies connection pragmas. WAL is skipped for in-memory databases.
-pub(crate) fn configure(conn: &Connection, in_memory: bool) -> Result<(), StoreError> {
+/// How a database keeps its journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Journal {
+    /// A file on disk: WAL, so other processes (the CLI) can read alongside.
+    Wal,
+    /// A host VFS without shared memory (the browser's OPFS pool), which has a
+    /// single connection: a rollback journal truncated after each commit.
+    Truncate,
+    /// In memory: SQLite's default.
+    Memory,
+}
+
+/// Applies connection pragmas.
+pub(crate) fn configure(conn: &Connection, journal: Journal) -> Result<(), StoreError> {
     conn.busy_timeout(BUSY_TIMEOUT)?;
-    if !in_memory {
-        // WAL is persistent; only switch (which takes a lock) when needed.
+    let wanted = match journal {
+        Journal::Wal => "wal",
+        Journal::Truncate => "truncate",
+        Journal::Memory => "",
+    };
+    if !wanted.is_empty() {
+        // The mode is persistent; only switch (which takes a lock) when needed.
         let mut mode: String = conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-        if !mode.eq_ignore_ascii_case("wal") {
-            mode = conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
+        if !mode.eq_ignore_ascii_case(wanted) {
+            mode = conn.pragma_update_and_check(None, "journal_mode", wanted, |row| row.get(0))?;
         }
-        if !mode.eq_ignore_ascii_case("wal") {
-            tracing::warn!(mode, "store: WAL journal mode unavailable");
+        if !mode.eq_ignore_ascii_case(wanted) {
+            tracing::warn!(mode, wanted, "store: journal mode unavailable");
         }
     }
     conn.pragma_update(None, "synchronous", "NORMAL")?;
