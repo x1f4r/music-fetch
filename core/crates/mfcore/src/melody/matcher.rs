@@ -1031,22 +1031,22 @@ fn quick_stage(q: &Query, refs: &mut References, placements: Vec<Placement>, kee
     let coarse_q: Vec<f32> = q.voiced.iter().step_by(2).map(|&i| q.contour[i]).collect();
     let coarse_t: Vec<f32> = q.voiced.iter().step_by(2).map(|&i| i as f32 * CONTOUR_MS as f32).collect();
     let mut rows = AlignRows::default();
+    let mut buf = LinearBuf::default();
     let mut out: Vec<(f32, Placement)> = Vec::with_capacity(placements.len());
     for p in placements {
         let Some(r) = refs.get(p.track) else { continue };
-        let mut best: Option<(f32, f32, f32)> = None;
+        let mut best: Option<(f32, f32, f32, f32)> = None;
         for f in QUICK_FACTORS {
             for s in QUICK_SHIFTS {
                 let tempo = p.tempo * f;
                 let anchor_ms = rescaled_anchor(q, p.anchor, p.tempo, tempo, s) * CONTOUR_MS as f32;
-                let (cost, _) = linear_cost(q, r, &sample, tempo, anchor_ms, None);
+                let (cost, key) = linear_cost(q, r, &sample, tempo, anchor_ms, &mut buf);
                 if best.is_none_or(|b| cost < b.0) {
-                    best = Some((cost, tempo, anchor_ms));
+                    best = Some((cost, key, tempo, anchor_ms));
                 }
             }
         }
-        if let Some((cost, tempo, anchor_ms)) = best {
-            let (_, key) = linear_cost(q, r, &sample, tempo, anchor_ms, None);
+        if let Some((cost, key, tempo, anchor_ms)) = best {
             let dtw = coarse_dtw(&coarse_q, &coarse_t, q.duration_ms(), r, key, tempo, anchor_ms).unwrap_or(cost + 1.0);
             let align = r.align_cost(q, tempo, anchor_ms, &mut rows);
             // The score model's utility on what the quick check knows (coverage and
@@ -1125,19 +1125,33 @@ fn rescaled_anchor(q: &Query, anchor: f32, from: f32, to: f32, shift: f32) -> f3
     anchor + mid / from - mid / to + shift
 }
 
+/// Scratch buffers of [`linear_cost`], reused across calls.
+#[derive(Default)]
+struct LinearBuf {
+    refs: Vec<f32>,
+    diffs: Vec<f32>,
+}
+
 /// Mean clipped distance of `sample` query frames to the reference placed at
-/// (tempo, anchor), at `key` or the sample's median difference; returns (cost, key).
-fn linear_cost(q: &Query, r: &Reference, sample: &[usize], tempo: f32, anchor_ms: f32, key: Option<f32>) -> (f32, f32) {
+/// (tempo, anchor), at the sample's median difference; returns (cost, key).
+fn linear_cost(
+    q: &Query,
+    r: &Reference,
+    sample: &[usize],
+    tempo: f32,
+    anchor_ms: f32,
+    buf: &mut LinearBuf,
+) -> (f32, f32) {
     let frame = CONTOUR_MS as f32;
-    let refs: Vec<f32> = sample.iter().map(|&i| r.at(anchor_ms + i as f32 * frame / tempo)).collect();
-    let key = key.unwrap_or_else(|| {
-        let mut d: Vec<f32> =
-            sample.iter().zip(&refs).filter(|(_, v)| v.is_finite()).map(|(&i, v)| q.contour[i] - v).collect();
-        median(&mut d).unwrap_or(0.0)
-    });
+    let LinearBuf { refs, diffs } = buf;
+    refs.clear();
+    refs.extend(sample.iter().map(|&i| r.at(anchor_ms + i as f32 * frame / tempo)));
+    diffs.clear();
+    diffs.extend(sample.iter().zip(refs.iter()).filter(|(_, v)| v.is_finite()).map(|(&i, v)| q.contour[i] - v));
+    let key = median(diffs).unwrap_or(0.0);
     let cost: f32 = sample
         .iter()
-        .zip(&refs)
+        .zip(refs.iter())
         .map(|(&i, &v)| if v.is_finite() { (q.contour[i] - v - key).abs().min(LS_CLIP) } else { MISS_COST })
         .sum();
     (cost / sample.len().max(1) as f32, key)
@@ -1147,19 +1161,20 @@ fn linear_cost(q: &Query, r: &Reference, sample: &[usize], tempo: f32, anchor_ms
 /// around a placement, refined over all voiced frames.
 fn linear_scaling(q: &Query, r: &Reference, tempo: f32, anchor: f32) -> Option<(f32, f32, f32, f32, f32)> {
     let sample: Vec<usize> = q.voiced.iter().copied().step_by(2).collect();
+    let mut buf = LinearBuf::default();
     let mut best: Option<(f32, f32, f32)> = None;
     for f in FACTORS {
         for s in SHIFTS {
             let t = tempo * f;
             let a = rescaled_anchor(q, anchor, tempo, t, s) * CONTOUR_MS as f32;
-            let (cost, _) = linear_cost(q, r, &sample, t, a, None);
+            let (cost, _) = linear_cost(q, r, &sample, t, a, &mut buf);
             if best.is_none_or(|b| cost < b.0) {
                 best = Some((cost, t, a));
             }
         }
     }
     let (_, tempo, anchor_ms) = best?;
-    let (cost, key) = linear_cost(q, r, &q.voiced, tempo, anchor_ms, None);
+    let (cost, key) = linear_cost(q, r, &q.voiced, tempo, anchor_ms, &mut buf);
     let frame = CONTOUR_MS as f32;
     let met = q.voiced.iter().filter(|&&i| r.at(anchor_ms + i as f32 * frame / tempo).is_finite()).count();
     Some((cost, key, tempo, anchor_ms, met as f32 / q.voiced.len().max(1) as f32))
@@ -1250,30 +1265,38 @@ fn dtw(qv: &[f32], rv: &[f32], expected: &[usize], band: usize, key: f32) -> Opt
     let lo: Vec<usize> = expected.iter().map(|e| e.saturating_sub(band)).collect();
     let mut d = vec![f32::INFINITY; n * width];
     let mut from = vec![0u8; n * width];
-    // Row i covers reference indices lo[i]..lo[i] + width.
-    let at = |d: &[f32], i: usize, j: isize| -> f32 {
-        let k = j - lo[i] as isize;
-        if k < 0 || k >= width as isize { f32::INFINITY } else { d[i * width + k as usize] }
-    };
-    for i in 0..n {
+    // Row i covers reference indices lo[i]..lo[i] + width; outside it, infinity.
+    let at =
+        |row: &[f32], k: isize| -> f32 { if k < 0 || k >= width as isize { f32::INFINITY } else { row[k as usize] } };
+    let l = lo[0];
+    let q = qv[0] - key;
+    for w in 0..width.min(m.saturating_sub(l)) {
+        d[w] = (q - rv[l + w]).abs().min(DTW_CLIP);
+    }
+    for i in 1..n {
         let l = lo[i];
         let q = qv[i] - key;
-        let row = i * width;
-        let end = width.min(m.saturating_sub(l));
-        if i == 0 {
-            for w in 0..end {
-                d[row + w] = (q - rv[l + w]).abs().min(DTW_CLIP);
-            }
-            continue;
-        }
         let q_prev = qv[i - 1] - key;
+        let end = width.min(m.saturating_sub(l));
+        let (done, rest) = d.split_at_mut(i * width);
+        let row = &mut rest[..width];
+        let moves = &mut from[i * width..(i + 1) * width];
+        let prev = &done[(i - 1) * width..];
+        // Offsets of this row's reference indices in the rows above.
+        let shift = l as isize - lo[i - 1] as isize;
+        let (prev2, shift2) = if i >= 2 {
+            (&done[(i - 2) * width..(i - 1) * width], l as isize - lo[i - 2] as isize)
+        } else {
+            (&done[..0], 0)
+        };
         for w in 0..end {
-            let j = (l + w) as isize;
-            let c = (q - rv[l + w]).abs().min(DTW_CLIP);
-            let diag = at(&d, i - 1, j - 1);
-            let skip_r = at(&d, i - 1, j - 2);
+            let r = rv[l + w];
+            let c = (q - r).abs().min(DTW_CLIP);
+            let k = w as isize;
+            let diag = at(prev, k + shift - 1);
+            let skip_r = at(prev, k + shift - 2);
             let skip_q =
-                if i >= 2 { at(&d, i - 2, j - 1) + (q_prev - rv[l + w]).abs().min(DTW_CLIP) } else { f32::INFINITY };
+                if i >= 2 { at(prev2, k + shift2 - 1) + (q_prev - r).abs().min(DTW_CLIP) } else { f32::INFINITY };
             let (mut best, mut f) = (diag, 1u8);
             if skip_r < best {
                 best = skip_r;
@@ -1283,13 +1306,14 @@ fn dtw(qv: &[f32], rv: &[f32], expected: &[usize], band: usize, key: f32) -> Opt
                 best = skip_q;
                 f = 3;
             }
-            d[row + w] = best + c;
-            from[row + w] = f;
+            row[w] = best + c;
+            moves[w] = f;
         }
     }
     let l = lo[n - 1];
+    let last = &d[(n - 1) * width..];
     let (mut j, total) =
-        (l..(l + width).min(m)).map(|j| (j, at(&d, n - 1, j as isize))).min_by(|a, b| a.1.total_cmp(&b.1))?;
+        (l..(l + width).min(m)).map(|j| (j, at(last, j as isize - l as isize))).min_by(|a, b| a.1.total_cmp(&b.1))?;
     if !total.is_finite() {
         return None;
     }
