@@ -6,7 +6,8 @@ import { startNotifier, type NotifierApi } from '@/src/notify/notifier';
 import { buildManifest } from '@/src/platform/manifest';
 import { settings, skipProviderPanel } from '@/src/settings/settings';
 import { installMenus, MENU, menuItems, type MenuItem } from '@/src/triggers/menus';
-import { followPendingStart, requestStart, takePendingStart } from '@/src/triggers/pending';
+import { followPendingStart, requestStart, startFromShortcut, takePendingStart } from '@/src/triggers/pending';
+import { idleStage } from '@/src/models/stage';
 import { problemText, Triggers, type TriggerDeps } from '@/src/triggers/triggers';
 
 function setup(overrides: Partial<TriggerDeps> = {}) {
@@ -151,6 +152,14 @@ describe('the hum request', () => {
     expect(await takePendingStart(2000)).toBeNull();
     await requestStart('Hum', 1000);
     expect(await takePendingStart(60_000)).toBeNull();
+  });
+
+  it('starts on the first press and stops on the second', () => {
+    const listen = { stage: idleStage('Tab'), toggle: vi.fn(async () => undefined), listenWith: vi.fn(async () => undefined) };
+    startFromShortcut(listen, 'Hum');
+    expect(listen.listenWith).toHaveBeenCalledWith('Hum');
+    startFromShortcut({ ...listen, stage: { ...idleStage('Hum'), phase: 'listening', sessionId: 's' } }, 'Hum');
+    expect(listen.toggle).toHaveBeenCalledOnce();
   });
 
   it('reaches a panel that is already open', async () => {

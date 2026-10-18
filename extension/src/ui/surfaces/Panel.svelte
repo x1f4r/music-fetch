@@ -17,7 +17,7 @@
   import { provideSurface, type Platform } from '../context';
   import { LibraryController } from '../library.svelte';
   import { exportFileName, EXPORT_FORMATS, SessionController } from '../session.svelte';
-  import { followPendingStart, isDemo } from '../../triggers/pending';
+  import { followPendingStart, isDemo, startFromShortcut } from '../../triggers/pending';
   import { ListenSurface } from '../surface.svelte';
 
   /**
@@ -54,7 +54,7 @@
 
   onMount(() => {
     // The Hum shortcut opens this panel and asks it to start (src/triggers/pending.ts).
-    void surface.start().then(() => (stopPending = isDemo() ? null : followPendingStart((source) => void listen.listenWith(source))));
+    void surface.start().then(() => (stopPending = isDemo() ? null : followPendingStart((source) => startFromShortcut(listen, source))));
     void library.start();
   });
   onDestroy(() => {

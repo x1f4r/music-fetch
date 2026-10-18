@@ -9,7 +9,7 @@
   import ResultView from '../components/ResultView.svelte';
   import Stage from '../components/Stage.svelte';
   import { useSurface } from '../context';
-  import { followPendingStart, isDemo } from '../../triggers/pending';
+  import { followPendingStart, isDemo, startFromShortcut } from '../../triggers/pending';
   import { ListenSurface } from '../surface.svelte';
 
   /**
@@ -42,7 +42,7 @@
     await surface.start();
     if (listen.source === 'Tab') await listen.chooseSource('Microphone');
     // The Hum shortcut where no side panel or sidebar exists opens this route to hum.
-    if (!isDemo()) stopPending = followPendingStart((source) => void listen.listenWith(source));
+    if (!isDemo()) stopPending = followPendingStart((source) => startFromShortcut(listen, source));
   });
   onDestroy(() => {
     stopPending?.();

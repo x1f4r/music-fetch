@@ -1,4 +1,5 @@
 import { storage } from 'wxt/utils/storage';
+import { isRunning, type StageState } from '../models/stage';
 import type { ListenChoice } from '../settings/settings';
 
 /**
@@ -42,4 +43,12 @@ export function followPendingStart(start: (source: ListenChoice) => void): () =>
 /** Demo states (`?demo=`) never act on a real request. */
 export function isDemo(): boolean {
   return typeof location !== 'undefined' && new URLSearchParams(location.search).has('demo');
+}
+
+/**
+ * What the shortcut does on a surface that already shows the stage: start with `source`,
+ * or, pressed again while listening, stop and identify (like the Listen button).
+ */
+export function startFromShortcut(listen: { stage: StageState; toggle(): Promise<void>; listenWith(source: ListenChoice): Promise<void> }, source: ListenChoice): void {
+  void (isRunning(listen.stage) ? listen.toggle() : listen.listenWith(source));
 }
