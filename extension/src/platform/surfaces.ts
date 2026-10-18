@@ -9,6 +9,7 @@ export type AppRoute =
   | `/settings/${string}`
   | '/welcome'
   | '/grant-mic'
+  | `/grant-mic?state=${string}`
   | `/open?url=${string}`;
 
 export function appUrl(route: AppRoute = '/listen'): string {

@@ -319,6 +319,7 @@ export class MockBackend implements EngineBackend {
     if (env.lowPower) void this.engine.setLowPower(true);
     this.engine.subscribe({
       sessionEvent: (id, event) => this.forward(id, event),
+      captureStatus: (id, status) => this.notify((l) => l.captureStatus?.(id, status)),
       libraryChanged: () => this.notify((l) => l.libraryChanged?.()),
     });
   }
@@ -420,6 +421,9 @@ export class MockBackend implements EngineBackend {
     return mode === 'Mix' || shape === 'media' || shape === 'mix';
   }
 
+  analyzeFile(name: string, bytes: ArrayBuffer, mode: AnalyzeMode) {
+    return this.engine.analyzeFile(name, bytes, mode);
+  }
   searchLyrics(text: string) {
     return this.engine.searchLyrics(text);
   }

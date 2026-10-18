@@ -10,7 +10,7 @@ import {
   type HostSettings,
   type TabInfo,
 } from '../messaging/protocol';
-import { ENGINE_METHODS, EngineError, type ActiveSession, type EngineApi, type EngineInfo } from './client';
+import { ENGINE_METHODS, EngineError, type ActiveSession, type CaptureErrorCode, type CaptureStatus, type EngineApi, type EngineInfo } from './client';
 import { isTerminal } from './events';
 import type { BackendConfig, EngineBackend, NetProbeResult } from './host-backend';
 import type { SessionRegistry, RegistryEntry } from './host-registry';
@@ -78,13 +78,31 @@ export class CaptureError extends Error {
   }
 }
 
+/** The UI's capture problem (`CaptureErrorCode`, client.ts) for each of the host's reasons. */
+export const CAPTURE_CODE: Record<CaptureReason, CaptureErrorCode> = {
+  CantCapture: 'CaptureNotAllowed',
+  NeedsInvocation: 'CaptureNotAllowed',
+  TabGone: 'CaptureNotAllowed',
+  TabBusy: 'CaptureBusy',
+  NothingPlaying: 'NothingPlaying',
+  CaptureBlocked: 'CaptureBlocked',
+  MicNotGranted: 'MicDenied',
+  MicUnavailable: 'MicDenied',
+};
+
+/** A capture problem as the UI gets it: the code for the line, the reason for what to offer. */
+export function captureError(reason: CaptureReason, message: string): EngineError {
+  return new EngineError(CAPTURE_CODE[reason], message, reason);
+}
+
 function toEngineError(error: unknown): EngineError {
   if (error instanceof EngineError) return error;
   if (error instanceof RpcError) return new EngineError(error.code as EngineError['code'], error.message, error.reason as CaptureReason | undefined);
+  const message = error instanceof Error ? error.message : String(error);
   const reason = (error as { reason?: unknown } | null)?.reason;
-  if (typeof reason === 'string') return new EngineError('Platform', error instanceof Error ? error.message : String(error), reason as CaptureReason);
-  if (error instanceof DOMException && error.name === 'NotAllowedError') return new EngineError('Platform', error.message, 'MicNotGranted');
-  return new EngineError('Internal', error instanceof Error ? error.message : String(error));
+  if (typeof reason === 'string' && reason in CAPTURE_CODE) return captureError(reason as CaptureReason, message);
+  if (error instanceof DOMException && error.name === 'NotAllowedError') return captureError('MicNotGranted', message);
+  return new EngineError('Internal', message);
 }
 
 const MINUTE = 60_000;
@@ -164,6 +182,7 @@ export class EngineHost {
       idleMs: () => options.idleMs ?? (this.lowPower ? 2 * MINUTE : 10 * MINUTE),
       onSessionEvent: (id, event) => this.sessionEvent(id, event),
       onLibraryChanged: () => this.broadcast('library:changed', null),
+      onCaptureStatus: (sessionId, status) => this.captureStatus(sessionId, status),
       onState: (state) => {
         if (state === 'down') this.maybeIdle();
       },
@@ -224,6 +243,11 @@ export class EngineHost {
 
   private broadcast<K extends keyof EngineTopics & string>(topic: K, payload: EngineTopics[K]) {
     for (const { served } of this.ui.values()) served.emit(topic, payload);
+  }
+
+  /** How a page capture is going, for every page (the coordinator and the engine report it). */
+  captureStatus(sessionId: string, status: CaptureStatus): void {
+    this.broadcast('capture', { sessionId, status });
   }
 
   private hostApi(): HostApi {
@@ -291,7 +315,7 @@ export class EngineHost {
       // A forced mock outcome: scripted, no audio needed.
       return this.call('startLive', [source, mode, options, { kind: 'none', sampleRate: 0, label: '', directive }]) as Promise<string>;
     }
-    if (source === 'SystemAudio') throw new EngineError('Platform', 'Computer audio is not available in this browser yet.', 'CantCapture');
+    if (source === 'SystemAudio') throw captureError('CantCapture', 'Computer audio is not available in this browser yet.');
     const release = this.worker.hold();
     let opened: OpenedSource | null = null;
     try {

@@ -1,4 +1,4 @@
-import { EngineError, type ActiveSession, type EngineClient, type EngineInfo, type EngineListener } from '../client';
+import { EngineError, type ActiveSession, type CaptureErrorCode, type CaptureStatus, type EngineClient, type EngineInfo, type EngineListener } from '../client';
 import { isTerminal } from '../events';
 import { extractUrl } from '../links';
 import {
@@ -46,7 +46,32 @@ import {
  * reach). Read from `MockEngineOptions.directive` when a session starts; analysis
  * sessions take `mf-mock=<directive>` in the link's query instead.
  */
-export const MOCK_DIRECTIVES = ['match', 'nomatch', 'quiet', 'silent', 'ratelimited', 'offline', 'fail', 'mix', 'unsupported'] as const;
+export const MOCK_DIRECTIVES = [
+  'match',
+  'hold',
+  'nomatch',
+  'quiet',
+  'silent',
+  'ratelimited',
+  'offline',
+  'fail',
+  'mix',
+  'unsupported',
+  // Capture that can't start (the host rejects startListening).
+  'busy',
+  'cantlisten',
+  'nothing',
+  'blocked',
+  'micdenied',
+] as const;
+
+const CAPTURE_REJECTIONS: Partial<Record<MockDirective, [CaptureErrorCode, string]>> = {
+  busy: ['CaptureBusy', 'Another capture is using this tab.'],
+  cantlisten: ['CaptureNotAllowed', 'This page can’t be captured.'],
+  nothing: ['NothingPlaying', 'Nothing is playing in this tab.'],
+  blocked: ['CaptureBlocked', 'This tab blocks audio capture.'],
+  micdenied: ['MicDenied', 'The microphone permission is off.'],
+};
 export type MockDirective = (typeof MOCK_DIRECTIVES)[number];
 
 export interface MockEngineOptions {
@@ -58,6 +83,8 @@ export interface MockEngineOptions {
   /** Fill an empty library with a few finished sessions. */
   seed?: boolean;
   now?: () => number;
+  /** Mark sessions stored as Running as Failed on open, like the core after a crash (default). */
+  recoverInterrupted?: boolean;
   /**
    * Live listening (not Hum) whose outcome depends on the audio the engine host feeds in
    * (`host-mock-backend.ts`). Called when the capture script ends or the UI finishes the
@@ -158,7 +185,7 @@ export class MockEngine implements EngineClient {
     // Like the core: sessions a crash left running are failed on open.
     let recovered = false;
     for (const detail of this.snapshot.sessions) {
-      if (detail.entry.status === 'Running') {
+      if (detail.entry.status === 'Running' && options.recoverInterrupted !== false) {
         detail.entry.status = 'Failed';
         recovered = true;
       }
@@ -175,7 +202,7 @@ export class MockEngine implements EngineClient {
     return () => this.listeners.delete(listener);
   }
 
-  private notify(fn: (listener: EngineListener) => void) {
+  protected notify(fn: (listener: EngineListener) => void) {
     for (const listener of this.listeners) {
       try {
         fn(listener);
@@ -211,6 +238,8 @@ export class MockEngine implements EngineClient {
   async startListening(source: CaptureSource, mode: ListenMode, options: ListenOptions): Promise<string> {
     void options;
     const directive = asDirective(this.options.directive?.());
+    const rejection = directive ? CAPTURE_REJECTIONS[directive] : undefined;
+    if (rejection && (source === 'Tab' || rejection[0] === 'MicDenied')) throw new EngineError(rejection[0], rejection[1]);
     const hum = mode === 'Hum';
     const kind: SessionKind = hum ? 'Hum' : source === 'Microphone' ? 'Listen' : 'SystemAudio';
     const title = hum ? 'Hum' : source === 'Microphone' ? 'Microphone' : 'This tab';
@@ -240,6 +269,10 @@ export class MockEngine implements EngineClient {
           break;
         case 'offline':
           script = waitingScript();
+          break;
+        case 'hold':
+          // Keeps listening until stopped, then matches: deterministic for tests.
+          script = { ...matchScript(demoTrack(n), { captureMs: 2000 }), loop: true };
           break;
         default:
           script = matchScript(demoTrack(n));
@@ -291,7 +324,29 @@ export class MockEngine implements EngineClient {
       const title = pageTitle ?? (track ? `${track.artist} - ${track.title} (Official Video)` : 'Untitled video');
       script = mediaScript(track, url.href, route.service, route.site, title);
     }
-    return this.begin('Link', null, url.hostname.replace(/^www\./, ''), url.href, script);
+    const id = this.begin('Link', null, url.hostname.replace(/^www\./, ''), url.href, script);
+    // A mix plays muted at 4× in its tab while it is analyzed (listen-through).
+    if (shape === 'mix') this.captureStatus(id, { state: 'capturing', rate: 4, muted: true });
+    return id;
+  }
+
+  /** Report a page capture's state, as the capture coordinator does next to the engine. */
+  captureStatus(sessionId: string, status: CaptureStatus): void {
+    this.notify((l) => l.captureStatus?.(sessionId, status));
+  }
+
+  async analyzeFile(name: string, bytes: ArrayBuffer, mode: AnalyzeMode): Promise<string> {
+    if (!name.trim() || bytes.byteLength === 0) throw new EngineError('Decode', 'That file is empty.');
+    if (!/\.(mp3|m4a|aac|mp4|m4v|mov|webm|ogg|oga|opus|flac|wav|aiff?)$/i.test(name)) {
+      throw new EngineError('Decode', 'That file type can’t be read.');
+    }
+    const n = this.listenCount++;
+    // About a megabyte per minute of compressed audio: long files are mixes.
+    const long = mode === 'Mix' || bytes.byteLength > 12_000_000;
+    const script = long
+      ? mixScript([...DEMO_TRACKS], `file:${name}`, null, 'File', name.replace(/\.[^.]+$/, ''))
+      : mediaScript(demoTrack(n), `file:${name}`, null, 'File', name.replace(/\.[^.]+$/, ''));
+    return this.begin('File', null, name, null, script);
   }
 
   async searchLyrics(text: string): Promise<string> {
@@ -399,7 +454,7 @@ export class MockEngine implements EngineClient {
       this.playOutcome(run);
       return;
     }
-    this.playEvents(run, run.script.capture, () => this.playOutcome(run));
+    this.playEvents(run, run.script.capture, () => (run.script.loop ? this.playCapture(run) : this.playOutcome(run)));
   }
 
   private playOutcome(run: Running, reason: 'script' | 'finish' = 'script') {

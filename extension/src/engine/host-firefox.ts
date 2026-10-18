@@ -78,7 +78,7 @@ class PageMicRelay {
 
 async function readSettings(): Promise<HostSettings> {
   const [micPriority, lowPower] = await Promise.all([settings.micPriority.getValue(), settings.lowPower.getValue()]);
-  return { micPriority, lowPower };
+  return { micPriority: micPriority.map((m) => m.id), lowPower };
 }
 
 /**
@@ -99,6 +99,7 @@ export function startFirefoxHost(): EngineHost {
     tabs: { resolve: resolveTab, inject: injectAgent },
     pushPcm: (sessionId, chunk) => host?.worker.pushPcm(sessionId, chunk),
     captureEvent: (sessionId, event) => void host?.worker.call('captureEvent', sessionId, event).catch(() => undefined),
+    onStatus: (sessionId, status) => host?.captureStatus(sessionId, status),
   });
   const platform: HostPlatform = {
     target: 'firefox',

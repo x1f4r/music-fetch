@@ -33,6 +33,7 @@ export function startChromiumHost(): EngineHost {
     tabs: swTabs,
     pushPcm: (sessionId, chunk) => host?.worker.pushPcm(sessionId, chunk),
     captureEvent: (sessionId, event) => void host?.worker.call('captureEvent', sessionId, event).catch(() => undefined),
+    onStatus: (sessionId, status) => host?.captureStatus(sessionId, status),
     openTabCapture: async (streamId, clock, listenAlong) => {
       const source = new TabCaptureSource({ streamId, listenAlong, clock, tap: { workletUrl: TAP_WORKLET_URL } });
       await source.start();

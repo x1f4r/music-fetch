@@ -3,7 +3,7 @@ import { createServer } from 'node:net';
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import webExt from 'web-ext';
-import { HEADLESS, OUTPUT, startPageServer, text } from './support';
+import { HEADLESS, OUTPUT, startPageServer, STEP_MS, text } from './support';
 
 const FIREFOX = process.env.FIREFOX_BIN ?? '/usr/bin/firefox';
 
@@ -36,7 +36,7 @@ async function mount(tab: Page, path: string, width: number, height: number): Pr
 }
 
 /** Text of the first match inside the frame, once it exists. */
-async function frameText(tab: Page, selector: string, timeout = 20_000): Promise<string> {
+async function frameText(tab: Page, selector: string, timeout = STEP_MS): Promise<string> {
   const handle = await tab.waitForFunction(
     (id, sel) => (document.getElementById(id) as HTMLIFrameElement | null)?.contentDocument?.querySelector(sel)?.textContent?.trim() || false,
     { timeout, polling: 100 },
@@ -111,7 +111,7 @@ describe.skipIf(!existsSync(FIREFOX) || !existsSync(OUTPUT.firefox))('Firefox', 
   });
 
   it('opens the welcome tab on install', async () => {
-    const target = await browser.waitForTarget((t) => /^moz-extension:\/\/[^/]+\/app\.html#\/welcome/.test(t.url()), { timeout: 20_000 });
+    const target = await browser.waitForTarget((t) => /^moz-extension:\/\/[^/]+\/app\.html#\/welcome/.test(t.url()), { timeout: STEP_MS });
     tab = (await target.asPage())!;
     expect(await text(tab, '.welcome h1')).toBe('Where do you listen?');
   });
@@ -121,13 +121,16 @@ describe.skipIf(!existsSync(FIREFOX) || !existsSync(OUTPUT.firefox))('Firefox', 
     expect(await frameText(tab, '.first-run h1')).toBe('Where do you listen?');
     await frameClick(tab, '.first-run .acts .btn.text'); // Skip
     expect(await frameText(tab, '#stage-state')).toBe("Identify what's playing");
+    // Held open until Stop, so "Listening" can't pass before the test looks.
+    await tab.evaluate(() => localStorage.setItem('mf.mock.next', 'hold'));
     await frameClick(tab, '.listen .disc');
     await tab.waitForFunction(
       (id) => (document.getElementById(id) as HTMLIFrameElement).contentDocument?.querySelector('#stage-state')?.textContent?.includes('Listening'),
-      { timeout: 10_000, polling: 50 },
+      { timeout: STEP_MS, polling: 100 },
       FRAME,
     );
-    expect((await frameText(tab, '.hero .ttl')).length).toBeGreaterThan(0);
+    await frameClick(tab, '.listen .disc'); // Stop
+    expect((await frameText(tab, '.hero .ttl', STEP_MS)).length).toBeGreaterThan(0);
     expect(await frameText(tab, '.split .main')).toBe('Open in Spotify');
   });
 

@@ -62,7 +62,7 @@ describe('app routes', () => {
       { name: 'session', id: 'a b/c' },
       { name: 'settings', pane: 'melody' },
       { name: 'welcome' },
-      { name: 'grant-mic' },
+      { name: 'grant-mic', state: null },
       { name: 'open', url: 'https://youtu.be/x?t=1&list=y' },
     ];
     for (const route of routes) expect(parseRoute(routeHash(route))).toEqual(route);

@@ -40,7 +40,7 @@ export default defineBackground(() => {
     'mf:host.idle': async () => ({ closed: firefox ? false : await closeOffscreenHost() }),
     'mf:host.settings': async () => {
       const [micPriority, lowPower] = await Promise.all([settings.micPriority.getValue(), settings.lowPower.getValue()]);
-      return { micPriority, lowPower };
+      return { micPriority: micPriority.map((m) => m.id), lowPower };
     },
     'mf:net.ensure': async () => ({ rules: await installHeaderRules() }),
   });

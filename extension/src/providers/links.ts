@@ -123,3 +123,8 @@ export function otherLinks(links: ProviderLink[], primary: ProviderLink | null):
     ...rest.filter((l) => l.provider.kind === 'custom'),
   ];
 }
+
+/** "Search the web": the apps' fallback, a web search for "artist title" (macOS LinkOpener). */
+export function webSearchUrl(track: Pick<Track, 'title' | 'artist'>): string {
+  return `https://www.google.com/search?${new URLSearchParams({ q: `${track.artist} ${track.title}`.trim() }).toString()}`;
+}

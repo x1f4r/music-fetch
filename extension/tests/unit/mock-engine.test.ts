@@ -43,6 +43,19 @@ describe('the mock engine', () => {
     },
   );
 
+  it('keeps a held session listening until it is stopped, then matches', async () => {
+    const mock = new MockEngine({ timeScale: 0.01, directive: () => 'hold' });
+    const id = await mock.startListening('Tab', 'Auto', { auto_stop: true });
+    // Two full capture loops (2 s each at real time) pass without an outcome.
+    await new Promise((done) => setTimeout(done, 60));
+    expect(mock.eventsOf(id).some((e) => eventName(e) === 'Finished')).toBe(false);
+    expect((await mock.activeSessions()).map((s) => s.id)).toEqual([id]);
+    await mock.finishSession(id);
+    const events = await finished(mock, id);
+    expect(checkEventContract(events)).toEqual([]);
+    expect(eventName(events.at(-1)!)).toBe('Finished');
+  });
+
   it.each([
     ['a Spotify track', 'https://open.spotify.com/track/7qiZfU4dY1lWllzX7mPBI3'],
     ['an album', 'https://music.apple.com/us/album/1989/1440935467'],

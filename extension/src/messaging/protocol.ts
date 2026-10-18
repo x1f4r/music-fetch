@@ -1,4 +1,4 @@
-import type { ActiveSession } from '../engine/client';
+import type { ActiveSession, CaptureStatus } from '../engine/client';
 import type { SessionEvent, SessionKind } from '../engine/types';
 
 /** Name of the Port UI pages open to the engine host. */
@@ -23,6 +23,8 @@ export const HOST_PORT = 'mf-host';
 export interface EngineTopics {
   session: { sessionId: string; event: SessionEvent };
   'library:changed': null;
+  /** A page capture's state next to the session's events (listen-through, ads, pauses). */
+  capture: { sessionId: string; status: CaptureStatus };
   /**
    * Firefox only, to the one page that called `startListening('Microphone', …)`: capture
    * the microphone here and stream it to the host on a `MIC_PORT` that sends `token`.
@@ -37,9 +39,10 @@ export interface MicCaptureRequest {
 }
 
 /**
- * Why the host could not start or keep a capture. Engine calls reject with an
- * `EngineError` whose `reason` is one of these (its `code` stays a core `ErrorCode`,
- * `Platform`), so surfaces can show the matching line of extension plan §5.3/§5.5.
+ * Why the host could not start or keep a capture, finer than the `CaptureErrorCode` the
+ * `EngineError` carries as its code (`client.ts`): engine calls reject with both, the
+ * code for the line of extension plan §5.3/§5.5 and this `reason` for what to offer
+ * (e.g. `NeedsInvocation`: "Click the toolbar button on this tab").
  */
 export type CaptureReason =
   /** chrome://, about:, the Web Store or an extension page: `state.tab.cantListen`. */

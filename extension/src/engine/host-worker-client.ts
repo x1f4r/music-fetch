@@ -2,7 +2,7 @@ import type { PcmChunk } from '../audio/types';
 import type { CaptureHost } from '../capture/types';
 import { RpcClient, serveRpc } from '../messaging/bus';
 import type { EngineTopics } from '../messaging/protocol';
-import { EngineError } from './client';
+import { EngineError, type CaptureStatus } from './client';
 import { isTerminal } from './events';
 import type { BackendConfig, EngineBackend } from './host-backend';
 import { channelPort, type ChannelPort } from './host-ports';
@@ -27,6 +27,8 @@ export interface WorkerEngineOptions {
   idleMs(): number;
   onSessionEvent(sessionId: string, event: SessionEvent): void;
   onLibraryChanged(): void;
+  /** The engine reported a page capture's state (the mock does for scripted mixes). */
+  onCaptureStatus?(sessionId: string, status: CaptureStatus): void;
   onState?(state: WorkerState, reason: string): void;
   /** Default 30 s (wasm init plus the database open on a slow phone). */
   startTimeoutMs?: number;
@@ -154,6 +156,7 @@ export class WorkerEngine {
     const rpc = new RpcClient<EngineBackend, EngineTopics>(enginePort, { timeoutMs: this.options.callTimeoutMs ?? 60_000 });
     rpc.on('session', ({ sessionId, event }) => this.sessionEvent(sessionId, event));
     rpc.on('library:changed', () => this.options.onLibraryChanged());
+    rpc.on('capture', ({ sessionId, status }) => this.options.onCaptureStatus?.(sessionId, status));
     serveRpc(capturePort, this.options.capture, CAPTURE_METHODS);
     const running: Running = { worker, rpc, engine: enginePort, ports: [enginePort, capturePort] };
 

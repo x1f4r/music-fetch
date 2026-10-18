@@ -54,6 +54,7 @@ export async function serveWorker(init: WorkerInit, factory: BackendFactory, rep
     const served = serveRpc<EngineBackend, EngineTopics>(engine, backend, BACKEND_METHODS);
     backend.subscribe({
       sessionEvent: (sessionId, event) => served.emit('session', { sessionId, event }),
+      captureStatus: (sessionId, status) => served.emit('capture', { sessionId, status }),
       libraryChanged: () => served.emit('library:changed', null),
     });
     reply({ type: 'mf:worker.ready' });

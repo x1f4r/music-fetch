@@ -4,6 +4,7 @@ import { TAB_CAPTURE_LAG_MS } from '../audio/tab-capture';
 import type { AudioSource, AudioSourceEvent, PcmChunk } from '../audio/types';
 import { RpcClient, type PortLike } from '../messaging/bus';
 import type { TabInfo } from '../messaging/protocol';
+import type { CaptureStatus } from '../engine/client';
 import type { PageFacts } from '../page/facts';
 import type { AgentApi, AgentTopics, PlayerInfo } from './agent-protocol';
 import { addCoverage, type CaptureEvent, type CaptureHost, type CaptureTarget, type Coverage } from './types';
@@ -26,6 +27,8 @@ export interface CoordinatorOptions {
   pushPcm(sessionId: string, chunk: PcmChunk): void;
   /** Something happened to a session's capture (to the engine). */
   captureEvent(sessionId: string, event: CaptureEvent): void;
+  /** How the capture is going, for the pages (the `capture` topic: rate, ad, paused, tab closed). */
+  onStatus?(sessionId: string, status: CaptureStatus): void;
   /** Chromium: open a tab capture of `streamId` in this context (the offscreen document). */
   openTabCapture?(streamId: string, clock: MediaClock | null, listenAlong: boolean): Promise<AudioSource>;
   /** How long to wait for an injected agent. Default 10 s. */
@@ -79,6 +82,9 @@ class AgentLink {
 
 interface Attached {
   target: CaptureTarget;
+  rate: number;
+  paused: boolean;
+  ad: boolean;
   agent: AgentLink;
   via: 'tab' | 'element';
   clock: MediaClock;
@@ -213,7 +219,7 @@ export class CaptureCoordinator implements CaptureHost {
     };
     const clock =
       target.via === 'tab' ? new MediaClock({ lagMs: TAB_CAPTURE_LAG_MS }) : new MediaClock({ lagMs: 0, anchorOnly: true });
-    const attached: Attached = { target, agent, via: target.via, clock, coverage: [], source: null, step: null, released: false, lastProgress: 0 };
+    const attached: Attached = { target, rate: 1, paused: false, ad: false, agent, via: target.via, clock, coverage: [], source: null, step: null, released: false, lastProgress: 0 };
     this.sessions.set(session, attached);
     agent.consumer = {
       pcm: (chunk) => this.pcm(session, attached, chunk),
@@ -270,6 +276,7 @@ export class CaptureCoordinator implements CaptureHost {
   /** Play `[from, to)` at `rate` and capture it. */
   private async capture(a: Attached, fromMs: number, toMs: number, rate: number): Promise<void> {
     const r = Math.max(0.25, Math.min(rate, a.target.maxRate));
+    a.rate = r;
     await a.agent.call('prepare', { rate: r, mute: a.via === 'element', lowQuality: true });
     await a.agent.call('watch', true);
     await a.agent.call('pause');
@@ -283,6 +290,7 @@ export class CaptureCoordinator implements CaptureHost {
       a.step = { toMs, done: resolve };
     });
     await a.agent.call('play');
+    this.status(a);
     await Promise.race([reached, a.agent.gone]);
     a.step = null;
     if (a.agent.alive && !a.released) await a.agent.call('pause').catch(() => undefined);
@@ -349,13 +357,25 @@ export class CaptureCoordinator implements CaptureHost {
     // Ads, stalls, user seeks: blocks wait for a fresh clock sample after the change.
     if (event.type === 'ad' || event.type === 'stall' || event.type === 'user') a.clock.restart(performance.timeOrigin + performance.now());
     if (event.type === 'navigated' || event.type === 'closed') a.step?.done();
+    if (event.type === 'ad') a.ad = event.showing;
+    if (event.type === 'user' && event.action !== 'seek') a.paused = event.action === 'pause';
+    if (event.type === 'closed' || event.type === 'navigated') this.options.onStatus?.(session, { state: 'tabClosed', rate: null, muted: false });
+    else if (event.type === 'ad' || event.type === 'user') this.status(a);
     this.options.captureEvent(session, event);
+  }
+
+  /** The page's view of a listen-through: silent for the user (tab not routed back, or the element muted). */
+  private status(a: Attached) {
+    if (a.released) return;
+    const state: CaptureStatus['state'] = a.ad ? 'ad' : a.paused ? 'paused' : 'capturing';
+    this.options.onStatus?.(a.target.session, { state, rate: a.rate, muted: true });
   }
 
   private async agentGone(session: string, a: Attached) {
     if (a.released) return;
     const tab = await this.options.tabs.resolve(a.target.tabId).catch(() => null);
     this.options.captureEvent(session, tab ? { type: 'navigated', url: tab.url } : { type: 'closed' });
+    this.options.onStatus?.(session, { state: 'tabClosed', rate: null, muted: false });
     a.step?.done();
     a.source?.stop();
     a.source = null;

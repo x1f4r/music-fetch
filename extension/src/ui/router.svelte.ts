@@ -8,10 +8,10 @@ export type Route =
   | { name: 'session'; id: string }
   | { name: 'settings'; pane: SettingsPane }
   | { name: 'welcome' }
-  | { name: 'grant-mic' }
+  | { name: 'grant-mic'; state: 'granted' | 'denied' | 'session' | null }
   | { name: 'open'; url: string };
 
-export const SETTINGS_PANES = ['general', 'listening', 'melody', 'privacy', 'about'] as const;
+export const SETTINGS_PANES = ['general', 'listening', 'melody', 'storage', 'privacy', 'shortcuts', 'about'] as const;
 export type SettingsPane = (typeof SETTINGS_PANES)[number];
 
 export function parseRoute(hash: string): Route {
@@ -29,8 +29,10 @@ export function parseRoute(hash: string): Route {
     }
     case 'welcome':
       return { name: 'welcome' };
-    case 'grant-mic':
-      return { name: 'grant-mic' };
+    case 'grant-mic': {
+      const state = new URLSearchParams(query).get('state');
+      return { name: 'grant-mic', state: state === 'granted' || state === 'denied' || state === 'session' ? state : null };
+    }
     case 'open': {
       const url = new URLSearchParams(query).get('url');
       return url ? { name: 'open', url } : { name: 'listen' };
@@ -50,6 +52,8 @@ export function routeHash(route: Route): string {
       return `#/settings/${route.pane}`;
     case 'open':
       return `#/open?${new URLSearchParams({ url: route.url }).toString()}`;
+    case 'grant-mic':
+      return route.state ? `#/grant-mic?state=${route.state}` : '#/grant-mic';
     default:
       return `#/${route.name}`;
   }

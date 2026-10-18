@@ -142,7 +142,7 @@ describe('the engine host', () => {
       .startListening('Tab', 'Auto', { auto_stop: true })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(EngineError);
-    expect(error).toMatchObject({ code: 'Platform', reason: 'CantCapture' });
+    expect(error).toMatchObject({ code: 'CaptureNotAllowed', reason: 'CantCapture' });
   });
 
   it('identifies what was heard when the capture ends by itself', async () => {
