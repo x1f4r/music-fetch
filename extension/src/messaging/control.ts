@@ -1,13 +1,24 @@
 import { browser } from 'wxt/browser';
 import type { ControlRequest, ControlResponse, ControlType } from './protocol';
 
-type ControlReply<K extends ControlType> = { ok: true; value: ControlResponse<K> } | { ok: false; message: string };
+type ControlReply<K extends ControlType> = { ok: true; value: ControlResponse<K> } | { ok: false; message: string; reason?: string };
+
+/** A control message the background answered with an error; `reason` as the handler threw it (e.g. a `CaptureReason`). */
+export class ControlError extends Error {
+  constructor(
+    message: string,
+    readonly reason?: string,
+  ) {
+    super(message);
+    this.name = 'ControlError';
+  }
+}
 
 /** Send a control message to the background and wait for its answer. */
 export async function sendControl<K extends ControlType>(request: ControlRequest<K>): Promise<ControlResponse<K>> {
   const reply = (await browser.runtime.sendMessage(request)) as ControlReply<K> | undefined;
   if (!reply) throw new Error(`Nobody answered ${request.type}.`);
-  if (!reply.ok) throw new Error(reply.message);
+  if (!reply.ok) throw new ControlError(reply.message, reply.reason);
   return reply.value;
 }
 
@@ -28,7 +39,10 @@ export function onControl(handlers: ControlHandlers): () => void {
     if (!handler) return undefined;
     handler(message).then(
       (value) => sendResponse({ ok: true, value }),
-      (error: unknown) => sendResponse({ ok: false, message: error instanceof Error ? error.message : String(error) }),
+      (error: unknown) => {
+        const reason = (error as { reason?: unknown } | null)?.reason;
+        sendResponse({ ok: false, message: error instanceof Error ? error.message : String(error), ...(typeof reason === 'string' ? { reason } : {}) });
+      },
     );
     // Keep the channel open for the async answer (works in Chromium and Firefox).
     return true;

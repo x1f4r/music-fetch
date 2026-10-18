@@ -11,6 +11,7 @@ import {
   type ListenOptions,
   type Lyrics,
   type MelodyIndexStatus,
+  type NoMatchReason,
   type PageContext,
   type Segment,
   type Service,
@@ -57,6 +58,24 @@ export interface MockEngineOptions {
   /** Fill an empty library with a few finished sessions. */
   seed?: boolean;
   now?: () => number;
+  /**
+   * Live listening (not Hum) whose outcome depends on the audio the engine host feeds in
+   * (`host-mock-backend.ts`). Called when the capture script ends or the UI finishes the
+   * session; resolve with what was heard, or null for the scripted outcome. The session
+   * keeps capturing until it resolves.
+   */
+  liveOutcome?: (sessionId: string, reason: 'script' | 'finish') => Promise<MockLiveOutcome | null>;
+}
+
+/** What the engine host's audio probe heard in a live session. */
+export type MockLiveOutcome = { matched: Track } | { noMatch: NoMatchReason };
+
+/** A session the mock stores and broadcasts, driven from outside (`MockEngine.startExternal`). */
+export interface ExternalSession {
+  readonly id: string;
+  /** False once a terminal event was emitted (by the driver, or `Canceled` by the UI). */
+  readonly running: boolean;
+  emit(event: SessionEvent): void;
 }
 
 export const MOCK_MELODY_INDEX = { version: '2026.10.1', songs: 58_006, bytes: 55_200_000 } as const;
@@ -79,6 +98,10 @@ interface Running {
 
 function emptyMelody(): MelodyIndexStatus {
   return { installed: false, version: null, song_count: 0, size_bytes: 0, available_version: null, download_bytes: null };
+}
+
+function eventIsStarted(event: SessionEvent): boolean {
+  return typeof event === 'object' && 'Started' in event;
 }
 
 function asDirective(value: string | null | undefined): MockDirective | null {
@@ -227,7 +250,7 @@ export class MockEngine implements EngineClient {
 
   async finishSession(sessionId: string): Promise<void> {
     const run = this.running.get(sessionId);
-    if (run?.state === 'capture') this.playOutcome(run);
+    if (run?.state === 'capture') this.playOutcome(run, 'finish');
   }
 
   async cancelSession(sessionId: string): Promise<void> {
@@ -279,7 +302,36 @@ export class MockEngine implements EngineClient {
     return this.begin('Lyrics', null, `“${query.slice(0, 80)}”`, null, lyricsScript(query, found));
   }
 
-  private begin(kind: SessionKind, source: CaptureSource | null, title: string, sourceUrl: string | null, script: MockScript, stored = true) {
+  /**
+   * A session whose events come from `emit` instead of a script: the engine host's
+   * capture-driven analyses in the mock era. Stored and broadcast like any session, with
+   * the same guarantees (`Started` is emitted here; a terminal event ends it).
+   */
+  startExternal(kind: SessionKind, title: string, sourceUrl: string | null, onEnd?: (event: SessionEvent) => void): ExternalSession {
+    const id = this.begin(kind, null, title, sourceUrl, { capture: [], outcome: [] }, true, true);
+    const run = this.running.get(id)!;
+    run.onDone = onEnd;
+    return {
+      id,
+      get running() {
+        return run.state !== 'done';
+      },
+      emit: (event) => {
+        if (eventIsStarted(event)) return;
+        this.emit(run, event);
+      },
+    };
+  }
+
+  private begin(
+    kind: SessionKind,
+    source: CaptureSource | null,
+    title: string,
+    sourceUrl: string | null,
+    script: MockScript,
+    stored = true,
+    external = false,
+  ) {
     const id = crypto.randomUUID();
     const startedAt = this.now();
     const run: Running = { id, kind, source, startedAt, script, state: 'capture', timers: new Set(), stored, events: [] };
@@ -309,7 +361,8 @@ export class MockEngine implements EngineClient {
     }
     this.emit(run, { Started: { session_id: id, kind } });
     if (stored) this.libraryChanged();
-    this.playCapture(run);
+    if (external) run.state = 'outcome';
+    else this.playCapture(run);
     return id;
   }
 
@@ -349,8 +402,22 @@ export class MockEngine implements EngineClient {
     this.playEvents(run, run.script.capture, () => this.playOutcome(run));
   }
 
-  private playOutcome(run: Running) {
+  private playOutcome(run: Running, reason: 'script' | 'finish' = 'script') {
     if (run.state !== 'capture') return;
+    const hook = this.options.liveOutcome;
+    if (hook && run.stored && (run.kind === 'Listen' || run.kind === 'SystemAudio')) {
+      // Keep capturing until the host's probe has decided; the UI stopping decides now.
+      if (reason === 'finish') this.clearTimers(run);
+      const settle = (outcome: MockLiveOutcome | null) => {
+        if (run.state !== 'capture') return;
+        run.state = 'outcome';
+        this.clearTimers(run);
+        const script = !outcome ? run.script : 'matched' in outcome ? matchScript(outcome.matched) : noMatchScript(outcome.noMatch);
+        this.playEvents(run, script.outcome);
+      };
+      hook(run.id, reason).then(settle, () => settle(null));
+      return;
+    }
     run.state = 'outcome';
     this.clearTimers(run);
     this.playEvents(run, run.script.outcome);

@@ -1,12 +1,10 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
-import { PAGE_FACTS_MESSAGE, readPageFacts, type PageFactsMessage } from '@/src/page/facts';
+import { startPageScript } from '@/src/page/main-world';
 
 /**
- * MAIN-world page script (extension plan §3.3): reads what only the page can see
- * (`navigator.mediaSession`, player globals) and hands it to the isolated capture script.
- * Never in the manifest: the capture coordinator injects it on demand with
- * `scripting.executeScript` after the user asks, so no site is touched otherwise.
- * Site adapters and player control arrive with task X4.
+ * The page script (MAIN world, extension plan §3.3): site adapters that read the
+ * page's own objects and control its player. Never in the manifest: the host injects it
+ * right after the capture agent, whose nonce it takes from the document.
  */
 export default defineContentScript({
   matches: [],
@@ -16,7 +14,6 @@ export default defineContentScript({
     const nonce = document.documentElement.dataset.mfNonce;
     if (!nonce) return;
     delete document.documentElement.dataset.mfNonce;
-    const message: PageFactsMessage = { type: PAGE_FACTS_MESSAGE, nonce, facts: readPageFacts(document, navigator.mediaSession) };
-    window.postMessage(message, window.location.origin);
+    startPageScript(window, document, nonce);
   },
 });

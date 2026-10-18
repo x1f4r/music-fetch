@@ -1,7 +1,9 @@
+import type { SiteFacts } from './site';
+
 /**
- * What a page says about its music, read in the page (extension plan §3.3). The site
- * adapters (YouTube, SoundCloud, Mixcloud, Twitch, Bandcamp, streaming now-playing) are
- * task X4; this is the generic reader they build on and the message shape they share.
+ * What a page says about its music, read in the page (extension plan §3.3): the generic
+ * reader here, plus the site adapter's facts (`site`, from `src/page/adapters/`) when
+ * the page script ran.
  */
 
 export type AdapterId = 'youtube' | 'soundcloud' | 'mixcloud' | 'twitch' | 'bandcamp' | 'streaming' | 'generic';
@@ -31,6 +33,8 @@ export interface PageFacts {
   /** `navigator.mediaSession.metadata`: an exact answer on streaming sites (DRM-proof). */
   nowPlaying: NowPlaying | null;
   media: MediaFact[];
+  /** The site adapter's facts (MAIN world); absent when only the DOM was read. */
+  site?: SiteFacts | null;
 }
 
 const STREAMING = /(^|\.)(open\.spotify\.com|music\.apple\.com|deezer\.com|tidal\.com|music\.amazon\.[a-z.]+)$/;

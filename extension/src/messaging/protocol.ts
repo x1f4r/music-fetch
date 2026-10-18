@@ -82,6 +82,15 @@ export interface ControlMessages {
   'mf:host.idle': { request: Record<never, never>; response: { closed: boolean } };
   /** Install the header rules for the engine's requests (idempotent; also done on startup). */
   'mf:net.ensure': { request: Record<never, never>; response: { rules: number } };
+  /** Chromium: the settings the host needs (offscreen documents have no `storage` API). */
+  'mf:host.settings': { request: Record<never, never>; response: HostSettings };
+}
+
+/** Settings the engine host reads (extension plan §3.5). */
+export interface HostSettings {
+  /** Microphone device ids, most preferred first. */
+  micPriority: string[];
+  lowPower: 'auto' | 'on' | 'off';
 }
 
 export type EngineHostKind = 'offscreen' | 'background';

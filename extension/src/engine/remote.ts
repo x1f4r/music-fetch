@@ -1,5 +1,5 @@
 import { RpcClient, RpcError, type PortLike } from '../messaging/bus';
-import type { CaptureReason, EngineTopics } from '../messaging/protocol';
+import type { CaptureReason, EngineTopics, MicCaptureRequest } from '../messaging/protocol';
 import { ENGINE_METHODS, EngineError, type EngineApi, type EngineClient, type EngineListener } from './client';
 
 export interface RemoteEngineOptions {
@@ -13,6 +13,11 @@ export interface RemoteEngineOptions {
   retryDelayMs?: number;
   /** Per-call timeout. Default 15 s. */
   timeoutMs?: number;
+  /**
+   * Firefox: the host asks the page that started a microphone session to capture it
+   * here (the background can't). Unset where the host captures itself (Chromium).
+   */
+  onMicRequest?(request: MicCaptureRequest): void;
 }
 
 function toEngineError(error: unknown): EngineError {
@@ -109,6 +114,7 @@ export class RemoteEngineClient implements EngineClient {
     rpc.on('library:changed', () => {
       for (const listener of this.listeners) listener.libraryChanged?.();
     });
+    rpc.on('capture:mic', (request) => this.options.onMicRequest?.(request));
     rpc.onDisconnect(() => {
       if (this.rpc === rpc) this.rpc = null;
       for (const listener of this.listeners) listener.connectionChanged?.(false);

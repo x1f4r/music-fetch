@@ -28,6 +28,12 @@ export const CHROMIUM_PERMISSIONS = [
   'alarms',
 ] as const;
 
+/**
+ * Header rules are declarativeNetRequest session rules in Firefox too (S4: one
+ * implementation for both browsers; blocking webRequest is not needed). `webRequest`
+ * stays, non-blocking: the engine's own requests reaching the event page as
+ * `onCompleted` events keep it alive during a job (S2).
+ */
 export const FIREFOX_PERMISSIONS = [
   'storage',
   'unlimitedStorage',
@@ -35,8 +41,8 @@ export const FIREFOX_PERMISSIONS = [
   'scripting',
   'menus',
   'notifications',
+  'declarativeNetRequestWithHostAccess',
   'webRequest',
-  'webRequestBlocking',
   'alarms',
 ] as const;
 
@@ -65,14 +71,21 @@ export interface ManifestInput {
 // `message_serialization` and `data_collection_permissions` are newer than its types.
 export type ManifestFields = Record<string, unknown>;
 
+/**
+ * `wxt build --mode e2e` only: the local test pages and echo server on the loopback
+ * interface, so the end-to-end tests can inject into fixture pages without a click.
+ * Release builds never carry these (scripts/privacy-check.sh can assert it).
+ */
+export const E2E_HOST_PERMISSIONS = ['http://127.0.0.1/*', 'http://localhost/*'];
+
 /** WXT fills `version` from package.json, the entrypoints and the icons. */
-export function buildManifest({ browser }: ManifestInput): ManifestFields {
+export function buildManifest({ browser, mode }: ManifestInput): ManifestFields {
   const firefox = browser === 'firefox';
   const common: ManifestFields = {
     name: 'Music Fetch',
     short_name: 'Music Fetch',
     description: 'Identify music playing in a tab, from a link or the microphone, or by humming.',
-    host_permissions: requiredHostPermissions(),
+    host_permissions: [...requiredHostPermissions(), ...(mode === 'e2e' ? E2E_HOST_PERMISSIONS : [])],
     optional_host_permissions: OPTIONAL_HOST_PERMISSIONS,
     content_security_policy: { extension_pages: EXTENSION_PAGES_CSP },
     action: { default_title: 'Music Fetch' },

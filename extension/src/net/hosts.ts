@@ -1,10 +1,12 @@
 /**
  * Hosts the engine talks to, by purpose (extension plan §2.6). They become the required
  * `host_permissions`; everything else is requested per site through
- * `optional_host_permissions`.
+ * `optional_host_permissions`. Every hop of a redirect needs its host too: a redirect to
+ * a host without permission fails (S4: spotify.link → spotify.app.link, the GitHub
+ * release → release-assets.githubusercontent.com).
  *
- * Kept by hand for now. The network task (X5, with E8) generates this table from the
- * core's Rust host lists so the two cannot drift.
+ * Kept by hand until the core exports its host lists (E8); `tests/unit/net-hosts.test.ts`
+ * checks it against every host the core's Rust sources name, so the two cannot drift.
  */
 export const ENGINE_HOSTS = {
   recognition: ['amp.shazam.com'],
@@ -45,6 +47,10 @@ export const ENGINE_HOSTS = {
     'dzr.page.link',
     'lis.tn',
     'apple.co',
+    'link.tidal.com',
+    'tidal.link',
+    'amzn.to',
+    'amzn.eu',
   ],
   lyrics: ['lrclib.net', 'genius.com'],
   melodyIndex: ['github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'],
