@@ -198,6 +198,8 @@ class CaptureAnalysis {
 
   event(event: CaptureEvent) {
     if (!this.session.running) return;
+    // The engine says so too: a capture that plays but hears nothing (CORS-tainted media).
+    if (event.type === 'silent') this.session.emit({ Notice: { notice: 'CaptureSilent' } });
     if (event.type === 'closed' || event.type === 'navigated') {
       this.session.emit({ Failed: { code: 'MediaUnavailable', message: event.type === 'closed' ? 'The tab was closed.' : 'The page changed.' } });
     }

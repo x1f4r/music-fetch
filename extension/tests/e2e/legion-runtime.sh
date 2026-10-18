@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the runtime end-to-end tests on the Legion: a private Xvfb display and a private
 # PipeWire null sink (nothing reaches the laptop's screen or speakers), the e2e builds,
-# then Chromium and Firefox. Usage (from the extension dir): tests/e2e/legion-runtime.sh [vitest filter]
+# then Chromium and Firefox. Usage (from the extension dir): tests/e2e/legion-runtime.sh [file filter] [test name filter]
 set -uo pipefail
 source ~/mf/env.sh
 export PATH="$HOME/mf/tools/node-24/bin:$PATH"
@@ -27,7 +27,8 @@ trap cleanup EXIT
 unset WAYLAND_DISPLAY WAYLAND_SOCKET
 export DISPLAY="$DISPLAY_NUM" XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 MOZ_ENABLE_WAYLAND=0 PULSE_SINK="$SINK" MF_RUNTIME_E2E=1
 npm run build:e2e >/dev/null || { echo "build failed"; exit 1; }
-nice -n 10 npx vitest run --config vitest.e2e.config.ts "${1:-tests/e2e/runtime-}"
+# $2: an optional test name filter (vitest -t)
+nice -n 10 npx vitest run --config vitest.e2e.config.ts "${1:-tests/e2e/runtime-}" ${2:+-t "$2"}
 code=$?
 echo "E2E-DONE $code"
 exit $code
