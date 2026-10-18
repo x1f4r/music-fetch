@@ -88,7 +88,9 @@ export function syntheticTrack(song: SyntheticSong): Track {
 
 /**
  * Render `durationMs` of `song` starting at `offsetMs` of its loop: mono float samples,
- * a 5 ms ramp at every note edge so the edges don't splatter.
+ * a 5 ms ramp at every note edge so the edges don't splatter. (Pure tones: the real
+ * engine's Auto mode hears them as whistling, so tests of recorded music listen in
+ * Recording mode or through a tab.)
  */
 export function renderSong(song: SyntheticSong, sampleRate: number, durationMs: number, offsetMs = 0, amplitude = 0.3): Float32Array {
   const n = Math.round((durationMs / 1000) * sampleRate);

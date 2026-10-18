@@ -215,7 +215,24 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const popup = (await (await micBrowser.waitForTarget((t) => t.url() === `chrome-extension://${micId}/popup.html`, { timeout: 15_000 })).asPage())!;
     await popup.waitForSelector('.listen .disc', { timeout: 20_000 });
     await listenFrom(popup, 'Microphone');
-    await popup.waitForFunction(() => document.querySelector('.hero .ttl')?.textContent?.includes('Bravo Signal'), { timeout: 45_000 });
+    if (engine === 'mock') {
+      await popup.waitForFunction(() => document.querySelector('.hero .ttl')?.textContent?.includes('Bravo Signal'), { timeout: 45_000 });
+    } else {
+      // The real engine hears the fake microphone's pure tones as whistling (Auto mode):
+      // an impression, and without a melody index no answer. The capture path is what
+      // this test is about: the session heard the microphone and ended.
+      const pageWithApi = popup;
+      const deadline = Date.now() + 60_000;
+      let newest: { id: string; status: string } | undefined;
+      while (Date.now() < deadline) {
+        [newest] = await rpc<{ id: string; status: string }[]>(pageWithApi, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
+        if (newest && newest.status !== 'Running') break;
+        await sleep(1000);
+      }
+      expect(newest?.status).toMatch(/^(NoMatch|Matched|Candidates)$/);
+      const detail = await rpc<{ entry: { kind: string } }>(pageWithApi, 'mf-engine', 'session', [newest!.id]);
+      expect(['Hum', 'Listen']).toContain(detail.entry.kind);
+    }
     await micBrowser.close();
   });
 

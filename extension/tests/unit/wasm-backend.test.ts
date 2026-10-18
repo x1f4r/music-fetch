@@ -121,6 +121,23 @@ describe.skipIf(!built)('the wasm engine behind the backend', () => {
     expect(await backend.activeSessions()).toEqual([]);
   }, 90_000);
 
+  it('hears the pure test tones from a microphone in Auto mode as whistling', async () => {
+    // What the real engine does with the fake microphone of the e2e tests: an impression,
+    // and with no melody index installed, no answer.
+    const id = await backend.startLive('Microphone', 'Auto', { auto_stop: true }, { kind: 'mic', sampleRate: RATE, label: 'test', directive: null });
+    const audio = renderSong(B!, RATE, 14_000, 1_000);
+    for (let i = 0, seq = 0; i < audio.length; i += 960, seq++) {
+      backend.pushPcm(id, { samples: audio.subarray(i, i + 960), sampleRate: RATE, speed: 1, mediaMs: null, wallMs: 0, continuous: true, seq });
+      if (seq % 10 === 0) await new Promise((r) => setTimeout(r, 0));
+    }
+    await backend.finishSession(id);
+    const stream = await ended(id);
+    expect(checkEventContract(stream)).toEqual([]);
+    const notices = stream.flatMap((e) => (typeof e === 'object' && 'Notice' in e ? [e.Notice.notice] : []));
+    expect(notices).toContain('ImpressionDetected');
+    expect(notices).toContain('MelodyIndexMissing');
+  }, 90_000);
+
   it('analyzes a page it captures at 4× as a mix of three songs, with its tracklist', async () => {
     // Like the e2e tests' fake YouTube mix: three songs of 90 s and a tracklist.
     const SONG_MS = 90_000;
