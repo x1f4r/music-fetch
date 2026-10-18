@@ -674,8 +674,12 @@ private fun stateLine(
             is Notice.CaptureSilent -> stringResource(R.string.state_capture_silent)
             is Notice.MoveCloser -> stringResource(R.string.state_move_closer)
             is Notice.RateLimited -> rateLimitedLine(notice.retryInMs.toLong())
-            is Notice.ImpressionDetected, is Notice.KeepGoing -> stringResource(R.string.state_keep_going)
-            else -> if (state.mode == ListenMode.HUM) {
+            is Notice.ImpressionDetected, is Notice.KeepGoing ->
+                if (notSureYet(state)) stringResource(R.string.state_not_sure_yet) else stringResource(R.string.state_keep_going)
+            else -> if (notSureYet(state)) {
+                // The progressive search ran but only has long shots: honest, and a reason to go on.
+                stringResource(R.string.state_not_sure_yet)
+            } else if (state.mode == ListenMode.HUM) {
                 stringResource(R.string.state_hum_start)
             } else if (state.impression) {
                 stringResource(R.string.state_keep_going)
@@ -693,6 +697,8 @@ private fun stateLine(
         }
     }
 }
+
+private fun notSureYet(state: ListenState): Boolean = onlyLongShots(state.preview)
 
 @Composable
 private fun rateLimitedLine(retryMs: Long): String {

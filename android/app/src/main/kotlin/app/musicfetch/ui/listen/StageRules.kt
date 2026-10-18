@@ -58,6 +58,9 @@ fun sourceOf(source: CaptureSource, mode: ListenMode, impression: Boolean = fals
 fun humPreview(candidates: List<Candidate>): Candidate? =
     candidates.firstOrNull()?.takeIf { it.tier == CandidateTier.STRONG || it.tier == CandidateTier.POSSIBLE }
 
+/** The progressive search answered while humming, but with nothing better than a long shot. */
+fun onlyLongShots(candidates: List<Candidate>): Boolean = candidates.isNotEmpty() && humPreview(candidates) == null
+
 /** Google's song search is offered as a second opinion when a hum's best answer is not Strong. */
 fun offersGoogle(candidates: List<Candidate>): Boolean = candidates.firstOrNull()?.tier != CandidateTier.STRONG
 

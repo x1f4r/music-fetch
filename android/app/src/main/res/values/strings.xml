@@ -21,6 +21,7 @@
     <string name="state_move_closer">Move closer to the sound</string>
     <string name="state_hum_start">Hum, whistle or sing</string>
     <string name="state_keep_going">Keep going</string>
+    <string name="state_not_sure_yet">Not sure yet, keep going</string>
     <string name="state_matching">Matching</string>
     <string name="state_resolving">Resolving link</string>
     <string name="state_downloading">Downloading</string>

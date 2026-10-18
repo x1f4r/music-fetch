@@ -650,6 +650,7 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | state.moveCloser | Move closer to the sound |
 | state.humStart | Hum, whistle or sing |
 | state.keepGoing | Keep going |
+| state.notSureYet.android | Not sure yet, keep going (while humming, when the progressive search has only long shots) |
 | state.matching | Matching |
 | state.resolving | Resolving link |
 | state.downloading | Downloading |
