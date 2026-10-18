@@ -7,7 +7,8 @@
 #   tests/ci/legion-flake.sh [runs] [stage ...]      default stages: e2e runtime
 #
 # MF_FLAKE_FIRST=<n> continues a measurement at run n (the summary keeps earlier runs);
-# MF_FLAKE_MAX_LOAD (default 20) is the 1-minute load above which a run waits (up to 30 min).
+# MF_FLAKE_MAX_LOAD (default 20) is the 1-minute load above which a run waits (up to 30 min);
+# MF_FLAKE_LOGS puts the logs and the summary somewhere else (a separate check).
 #
 # Logs: ~/mf/logs/ext-ui-flake/run-<n>.log; one line per run in summary.tsv
 # (run, exit code, seconds, load at start, failed tests). Run it as a user unit:
@@ -24,7 +25,7 @@ max_load="${MF_FLAKE_MAX_LOAD:-20}"
 shift || true
 stages=("$@")
 [[ ${#stages[@]} -gt 0 ]] || stages=(e2e runtime)
-logs="$HOME/mf/logs/ext-ui-flake"
+logs="${MF_FLAKE_LOGS:-$HOME/mf/logs/ext-ui-flake}"
 mkdir -p "$logs"
 DISPLAY_NUM="${MF_FLAKE_DISPLAY:-:94}"
 SINK="mf_ui_null"
