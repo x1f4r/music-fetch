@@ -68,7 +68,7 @@ pub struct MatchOptions {
 
 impl Default for MatchOptions {
     fn default() -> Self {
-        Self { popularity_weight: 0.0, probe: 24, shortlist: 2000, pool: 1500, rerank: 150 }
+        Self { popularity_weight: 0.0, probe: 24, shortlist: 2000, pool: 3000, rerank: 150 }
     }
 }
 
