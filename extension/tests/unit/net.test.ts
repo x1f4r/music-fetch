@@ -136,6 +136,7 @@ describe('host permissions', () => {
       'music.amazon': 'header-rule prefix',
       'music.amazon.de': 'optional',
       'music.amazon.co.uk': 'optional',
+      'consent.youtube.com': 'the consent wall, recognized in a final URL, never fetched',
       // Tests and docs.
       'schema.org': 'JSON-LD vocabulary',
     };

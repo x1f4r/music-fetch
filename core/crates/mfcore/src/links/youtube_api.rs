@@ -439,9 +439,10 @@ pub(crate) fn comments_token(initial: &Value) -> Option<String> {
         .find_map(|s| s.get("contents")?.as_array()?.iter().find_map(continuation_token))
 }
 
-/// `continuationItemRenderer`'s token, however it is wrapped.
+/// The token of a `continuationItemRenderer` (or, in playlists since 2025, a
+/// `continuationItemViewModel`), however it is wrapped.
 fn continuation_token(item: &Value) -> Option<String> {
-    let renderer = item.get("continuationItemRenderer")?;
+    let renderer = item.get("continuationItemRenderer").or_else(|| item.get("continuationItemViewModel"))?;
     ["/continuationEndpoint/continuationCommand/token", "/button/buttonRenderer/command/continuationCommand/token"]
         .iter()
         .find_map(|p| str_at(renderer, p))
@@ -625,8 +626,13 @@ pub(crate) fn playlist_page(initial: &Value) -> PlaylistPage {
             .and_then(|t| largest_thumbnail(&json!({"thumbnail": t}))),
         ..PlaylistPage::default()
     };
+    // Entries sit in a playlistVideoListRenderer, or (lockups) right in the item section.
     let tabs = initial.pointer("/contents/twoColumnBrowseResultsRenderer/tabs").and_then(Value::as_array);
-    let list = tabs.into_iter().flatten().find_map(|t| super::youtube::find_key(t, "playlistVideoListRenderer"));
+    let list = tabs
+        .into_iter()
+        .flatten()
+        .find_map(|t| super::youtube::find_key(t, "playlistVideoListRenderer"))
+        .or_else(|| tabs.into_iter().flatten().find_map(|t| super::youtube::find_key(t, "itemSectionRenderer")));
     if let Some(items) = list.and_then(|l| l.get("contents")).and_then(Value::as_array) {
         let (entries, next) = entries_of(items);
         page.entries = entries;

@@ -141,6 +141,10 @@ fn is_loopback(url: &Url) -> bool {
 
 static INSTALLED: RwLock<Option<Arc<TestEndpoints>>> = RwLock::new(None);
 
+/// Serializes the unit tests that install process-wide endpoints.
+#[cfg(test)]
+pub(crate) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Install (or with `None` remove) the process-wide test endpoints.
 pub fn install(endpoints: Option<TestEndpoints>) {
     *INSTALLED.write().unwrap_or_else(|e| e.into_inner()) = endpoints.map(Arc::new);

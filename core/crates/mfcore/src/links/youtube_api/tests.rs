@@ -227,3 +227,215 @@ fn lockup_playlist_entries() {
     assert_eq!(entries[0].uploader.as_deref(), Some("Daft Punk"));
     assert_eq!(entries[0].duration_ms, Some(284_000));
 }
+
+// ------------------------------------------------------------------ recorded answers
+//
+// Recorded from the Legion with `mf dev youtube-probe --record` (9 requests in
+// total, 75 s apart, while the hum-refs crawl reported YouTube unpaused) and
+// scrubbed with tools/fixtures/scrub_youtube.py: no session data, commenters
+// renamed, their texts replaced except the uploader's pinned tracklist,
+// continuation tokens and entity keys replaced by placeholders.
+
+const WATCH_PINNED: &str = include_str!("../testdata/youtube_watch_pinned.html");
+const NEXT_PINNED_1: &str = include_str!("../testdata/youtube_next_pinned_1.json");
+const NEXT_PINNED_2: &str = include_str!("../testdata/youtube_next_pinned_2.json");
+const WATCH_TRACKLIST: &str = include_str!("../testdata/youtube_watch_tracklist.html");
+const PLAYLIST_ALBUM: &str = include_str!("../testdata/youtube_playlist_album.html");
+const PLAYLIST_UPLOADS: &str = include_str!("../testdata/youtube_playlist_uploads.html");
+
+#[test]
+fn recorded_mix_with_the_tracklist_in_the_pinned_comment() {
+    let page = WatchData::parse(WATCH_PINNED);
+    let info = video_info("JL-YFJTxftU", &page).unwrap();
+    assert!(info.title.as_deref().unwrap().starts_with("summer mix - dj snake, avicii"), "{:?}", info.title);
+    assert_eq!(info.uploader.as_deref(), Some("Rammor"));
+    assert_eq!(info.duration_ms, Some(4_026_000));
+    assert!(info.description.as_deref().unwrap().contains("Tracklist in the pin"));
+    assert!(info.chapters.is_empty(), "the description has no timestamps");
+    assert!(info.thumbnail.as_deref().unwrap().starts_with("https://i.ytimg.com/"));
+    assert_eq!(page.client.as_ref().unwrap().version, "2.20261016.01.00");
+
+    let token = comments_token(page.initial.as_ref().unwrap()).expect("comments token");
+    assert!(token.starts_with("CONTINUATION-"), "{token}");
+    let (first, next) = comments_page(&serde_json::from_str(NEXT_PINNED_1).unwrap());
+    assert_eq!(first.len(), 20);
+    assert!(next.is_some());
+    let (second, _) = comments_page(&serde_json::from_str(NEXT_PINNED_2).unwrap());
+    assert!(second.len() >= 10, "{}", second.len());
+    let all = sort_comments(first.into_iter().chain(second).collect());
+    let pinned = &all[0];
+    assert!(pinned.is_pinned && pinned.author_is_uploader, "{pinned:?}");
+    assert_eq!(pinned.author.as_deref(), Some("@rammor"));
+    assert!(pinned.text.starts_with("Hope you enjoy this summer mix"));
+    assert_eq!(pinned.like_count, 731);
+    // The tracklist in it is what the pipeline reads (timestamps or not, one line per song).
+    assert!(pinned.text.lines().count() > 15, "{}", pinned.text);
+    assert!(all[1..].iter().all(|c| !c.is_pinned && !c.author_is_uploader));
+    assert!(all[1..].windows(2).all(|w| w[0].like_count >= w[1].like_count), "then by likes");
+    assert_eq!(all.len(), MAX_COMMENTS);
+}
+
+#[test]
+fn recorded_album_stream_with_chapters_in_the_description() {
+    let info = video_info("VrJUZI-U2lg", &WatchData::parse(WATCH_TRACKLIST)).unwrap();
+    assert_eq!(info.uploader.as_deref(), Some("K-POP undercover"));
+    assert_eq!(info.duration_ms, Some(1_168_000));
+    let starts: Vec<u64> = info.chapters.iter().map(|c| c.start_ms / 1000).collect();
+    assert_eq!(starts, [0, 212, 407, 593, 784, 969]);
+    assert_eq!(info.chapters[1].title, "Track 02  -  Dune");
+    assert_eq!(info.chapters[5].end_ms, Some(1_168_000));
+}
+
+#[test]
+fn recorded_playlists() {
+    let album = playlist_page(WatchData::parse(PLAYLIST_ALBUM).initial.as_ref().unwrap());
+    assert_eq!(album.title.as_deref(), Some("Random Access Memories"));
+    assert_eq!(album.uploader.as_deref(), Some("Daft Punk"));
+    assert_eq!(album.entries.len(), 13);
+    let first = &album.entries[0];
+    assert_eq!(first.id.as_deref(), Some("IluRBvnYMoY"));
+    assert_eq!(first.title.as_deref(), Some("Daft Punk - Give Life Back to Music (Official Audio)"));
+    assert_eq!(first.uploader.as_deref(), Some("Daft Punk"));
+    assert_eq!(first.duration_ms, Some(284_000));
+    assert_eq!(album.continuation, None);
+    assert!(
+        album.entries.iter().all(|e| e.duration_ms.is_some() && e.url.starts_with("https://www.youtube.com/watch?v="))
+    );
+
+    let uploads = playlist_page(WatchData::parse(PLAYLIST_UPLOADS).initial.as_ref().unwrap());
+    assert_eq!(uploads.title.as_deref(), Some("Uploads from Rammor"));
+    assert_eq!(uploads.uploader.as_deref(), Some("Rammor"));
+    assert_eq!(uploads.entries.len(), 100);
+    assert!(
+        uploads.continuation.as_deref().is_some_and(|t| t.starts_with("CONTINUATION-")),
+        "a continuation for the next 100"
+    );
+}
+
+const BROWSE_UPLOADS_1: &str = include_str!("../testdata/youtube_browse_uploads_1.json");
+const BROWSE_UPLOADS_2: &str = include_str!("../testdata/youtube_browse_uploads_2.json");
+
+#[test]
+fn recorded_browse_continuations() {
+    let (second, next) = playlist_continuation(&serde_json::from_str(BROWSE_UPLOADS_1).unwrap());
+    assert_eq!(second.len(), 100);
+    assert!(next.is_some());
+    let (third, _) = playlist_continuation(&serde_json::from_str(BROWSE_UPLOADS_2).unwrap());
+    assert_eq!(third.len(), 100);
+    assert!(second.iter().chain(&third).all(|e| e.id.is_some() && e.title.is_some()));
+}
+
+/// The whole probe against a local server standing in for www.youtube.com:
+/// the requests it makes, their headers and bodies, and what it reports.
+mod flow {
+    use super::*;
+    use crate::shazam::test_server::{Reply, TestServer};
+    use crate::util::endpoints::{self, TestEndpoints};
+
+    fn serve(replies: Vec<Reply>) -> TestServer {
+        let server = TestServer::start(replies);
+        endpoints::install(Some(
+            TestEndpoints::new(vec![("https://www.youtube.com".into(), server.url())], None).unwrap(),
+        ));
+        server
+    }
+
+    fn html(body: &str) -> Reply {
+        Reply::new(200, body).header("Content-Type", "text/html; charset=utf-8")
+    }
+
+    #[tokio::test]
+    async fn a_video_with_its_comments() {
+        let _guard = endpoints::TEST_LOCK.lock().await;
+        let server = serve(vec![html(WATCH_PINNED), Reply::json(200, NEXT_PINNED_1), Reply::json(200, NEXT_PINNED_2)]);
+        let http = crate::links::fetch::test_client();
+        let info = probe(&http, "https://youtu.be/JL-YFJTxftU?si=x", true, &CancelToken::new()).await;
+        endpoints::install(None);
+        let info = info.unwrap();
+        assert_eq!(info.id.as_deref(), Some("JL-YFJTxftU"));
+        assert_eq!(info.comments.len(), MAX_COMMENTS);
+        assert!(info.comments[0].is_pinned);
+
+        let requests = server.requests();
+        assert_eq!(requests.len(), 3, "the page and two comment pages");
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(requests[0].target, "/watch?v=JL-YFJTxftU&hl=en&persist_hl=1");
+        assert_eq!(requests[0].header("cookie"), Some("SOCS=CAI; CONSENT=YES+1"));
+        let token = comments_token(WatchData::parse(WATCH_PINNED).initial.as_ref().unwrap()).unwrap();
+        let (_, second_token) = comments_page(&serde_json::from_str(NEXT_PINNED_1).unwrap());
+        for (request, expected) in requests[1..].iter().zip([token, second_token.unwrap()]) {
+            assert_eq!(request.method, "POST");
+            assert_eq!(request.target, "/youtubei/v1/next?prettyPrint=false");
+            assert_eq!(request.header("origin"), Some("https://www.youtube.com"));
+            assert_eq!(request.header("cookie"), Some("SOCS=CAI; CONSENT=YES+1"));
+            assert_eq!(request.header("x-youtube-client-version"), Some("2.20261016.01.00"));
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(body["continuation"], expected);
+            assert_eq!(body["context"]["client"]["clientName"], "WEB");
+            assert_eq!(body["context"]["client"]["hl"], "en");
+        }
+        assert!(requests[1].at - requests[0].at >= Duration::from_millis(900), "requests are spaced");
+    }
+
+    #[tokio::test]
+    async fn a_playlist_with_continuations_up_to_the_cap() {
+        let _guard = endpoints::TEST_LOCK.lock().await;
+        let server =
+            serve(vec![html(PLAYLIST_UPLOADS), Reply::json(200, BROWSE_UPLOADS_1), Reply::json(200, BROWSE_UPLOADS_2)]);
+        let http = crate::links::fetch::test_client();
+        let url = "https://www.youtube.com/playlist?list=UUeOuY27OfgZ5n3F581yV8uQ";
+        let info = probe(&http, url, false, &CancelToken::new()).await;
+        endpoints::install(None);
+        let info = info.unwrap();
+        assert!(info.is_playlist);
+        assert_eq!(info.title.as_deref(), Some("Uploads from Rammor"));
+        assert_eq!(info.extractor.as_deref(), Some("YoutubeTab"));
+        assert_eq!(info.entries.len(), MAX_ENTRIES);
+        assert!(info.entries.iter().enumerate().all(|(i, e)| e.index as usize == i));
+        let requests = server.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[1].target, "/youtubei/v1/browse?prettyPrint=false");
+        let body: Value = serde_json::from_slice(&requests[1].body).unwrap();
+        assert_eq!(
+            Some(body["continuation"].as_str().unwrap()),
+            playlist_page(WatchData::parse(PLAYLIST_UPLOADS).initial.as_ref().unwrap()).continuation.as_deref()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bot_check_stops_further_requests() {
+        let _guard = endpoints::TEST_LOCK.lock().await;
+        let wall = r#"<script>var ytInitialPlayerResponse = {"playabilityStatus":{"status":"LOGIN_REQUIRED","reason":"Sign in to confirm you’re not a bot"}};</script>"#;
+        let server = serve(vec![html(wall)]);
+        let http = crate::links::fetch::test_client();
+        let first = probe(&http, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", false, &CancelToken::new()).await;
+        let second = probe(&http, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", false, &CancelToken::new()).await;
+        endpoints::install(None);
+        assert!(matches!(first, Err(MfError::RateLimited { .. })), "{first:?}");
+        assert!(matches!(second, Err(MfError::RateLimited { .. })), "{second:?}");
+        assert_eq!(server.requests().len(), 1, "no request while paused");
+        LIMITER.success();
+    }
+}
+
+/// Against the real site: two requests, a minute apart. Run it only where
+/// YouTube may be contacted (not from a machine whose address must stay clean):
+/// `MF_YOUTUBE_LIVE=1 cargo test -p mfcore --lib youtube_api::live -- --ignored --nocapture`
+#[tokio::test]
+#[ignore = "live YouTube; needs MF_YOUTUBE_LIVE=1"]
+async fn live() {
+    if std::env::var("MF_YOUTUBE_LIVE").as_deref() != Ok("1") {
+        eprintln!("skipped: set MF_YOUTUBE_LIVE=1 to contact YouTube");
+        return;
+    }
+    let http = crate::links::fetch::test_client();
+    let cancel = CancelToken::new();
+    let video = probe(&http, "https://www.youtube.com/watch?v=VrJUZI-U2lg", false, &cancel).await.unwrap();
+    assert_eq!(video.chapters.len(), 6, "{:?}", video.chapters);
+    assert!(video.duration_ms.is_some_and(|d| d > 1_000_000));
+    crate::util::rt::sleep(Duration::from_secs(60)).await;
+    let list = "https://www.youtube.com/playlist?list=PLSbDLF8wQ3oKcstd9ybCSv2lNm_8NTYkI";
+    let album = probe(&http, list, false, &cancel).await.unwrap();
+    assert!(album.entries.len() >= 13, "{}", album.entries.len());
+    assert!(album.entries.iter().all(|e| e.duration_ms.is_some()));
+}

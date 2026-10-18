@@ -700,14 +700,11 @@ mod tests {
         assert!(got.is_html());
     }
 
-    /// Serializes the tests that install process-wide test endpoints.
-    pub(crate) static ENDPOINTS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
     #[tokio::test]
     async fn header_rules_set_the_native_headers() {
         use crate::shazam::test_server::{Reply, TestServer};
         use crate::util::endpoints::{self, TestEndpoints};
-        let _guard = ENDPOINTS_LOCK.lock().await;
+        let _guard = endpoints::TEST_LOCK.lock().await;
         let server = TestServer::start(vec![Reply::new(200, "<html></html>").header("Content-Type", "text/html")]);
         let routes = ["https://www.youtube.com", "https://open.spotify.com", "https://music.amazon.de"]
             .iter()
