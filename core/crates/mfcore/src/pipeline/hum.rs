@@ -381,6 +381,12 @@ pub(crate) async fn final_transcript(
     transcripts.borrow().clone()
 }
 
+/// The hypotheses of a transcript that a session searches as lyrics: those with
+/// enough real words, best first (empty: humming, "la la", too few words).
+pub fn sung_hypotheses(t: &SpeechTranscript) -> Vec<String> {
+    transcript_hypotheses(t).into_iter().filter(|h| real_words(h) >= MIN_REAL_WORDS).collect()
+}
+
 /// A pushed transcript's hypotheses, best first: trimmed, at most five, no repeats.
 pub(crate) fn transcript_hypotheses(t: &SpeechTranscript) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -396,7 +402,7 @@ pub(crate) fn transcript_hypotheses(t: &SpeechTranscript) -> Vec<String> {
 
 /// How much a transcript's lyric matches count: recognizers that report a low
 /// confidence often misheard the words, which then match the wrong song.
-pub(crate) fn transcript_weight(confidence: Option<f32>) -> f32 {
+pub fn transcript_weight(confidence: Option<f32>) -> f32 {
     match confidence {
         Some(c) if c.is_finite() && c > 0.0 => 0.4 + 0.6 * c.min(1.0),
         _ => 1.0,

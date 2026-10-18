@@ -195,6 +195,13 @@ pub enum EvalCommand {
         /// Price of 1,000 requests, for the cost line.
         #[arg(long)]
         cloud_price_per_1000: Option<f64>,
+        /// With --cloud (acrcloud or none): transcripts of the takes (JSONL: wav, text,
+        /// alternatives, confidence), searched as sung lyrics (iTunes, Genius, Deezer).
+        #[arg(long)]
+        transcripts: Option<PathBuf>,
+        /// Keep lyric-search responses here.
+        #[arg(long)]
+        lyrics_cache: Option<PathBuf>,
     },
     /// Run the impression detector over labelled clips (TSV: wav, impression|music,
     /// start s, duration s) as a live session would, and report its verdicts.
@@ -283,6 +290,8 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             cloud_offline,
             cloud_sample,
             cloud_price_per_1000,
+            transcripts,
+            lyrics_cache,
         }) => {
             let mut options = MatchOptions { popularity_weight: popularity, ..MatchOptions::default() };
             if let Some(spec) = encoder_model {
@@ -324,6 +333,8 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
                     offline: cloud_offline,
                     sample: cloud_sample,
                     price_per_1000: cloud_price_per_1000,
+                    transcripts,
+                    lyrics_cache,
                 };
                 let mut items = read_queries(&queries)?;
                 if let Some(n) = limit {
