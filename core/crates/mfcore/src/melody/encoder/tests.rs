@@ -55,7 +55,7 @@ fn windows_match_the_python_spec() {
     let want = f32s(QUERY_WINDOWS);
     let got = query_windows(&query, 160, 40, 300, usize::MAX);
     assert_eq!(got.len(), meta["query_windows"].as_u64().unwrap_or(0) as usize);
-    for (g, w) in got.iter().zip(want.chunks_exact(160)) {
+    for (g, w) in got.iter().zip(want.as_chunks::<160>().0) {
         assert!(same_bits(&g.frames, w), "query window at {} differs", g.start);
         assert_eq!(g.span, 160);
     }
@@ -286,7 +286,7 @@ fn an_encoder_hit_reaches_the_rerank() {
     let blind = MatchOptions { probe: 0, shortlist: 0, ..MatchOptions::default() };
     assert!(matcher::search_with(&index, &query, 5, &blind).is_empty());
     let hints: Vec<_> = hits.iter().map(EncoderHit::hint).collect();
-    let found = matcher::search_with_hints(&index, &query, 5, &blind, &hints, &budget.offsets);
+    let found = matcher::search_with_hints(&index, &query, 5, &blind, &hints, &budget.hints);
     assert_eq!(found.first().map(|m| m.song.id), Some(target.id), "{found:?}");
     assert!((found[0].key_shift - 7.0).abs() < 0.5);
 }

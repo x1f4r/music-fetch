@@ -138,6 +138,9 @@ pub enum EvalCommand {
         /// Encoder song score: sum or max (overrides the budget).
         #[arg(long)]
         encoder_pooling: Option<String>,
+        /// Also pool the index's votes for the encoder's tracks (a second, restricted retrieval).
+        #[arg(long)]
+        encoder_votes: bool,
         /// Measure the encoder's recall without giving its hits to the rerank.
         #[arg(long)]
         encoder_recall_only: bool,
@@ -198,6 +201,7 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             encoder_songs,
             encoder_offsets,
             encoder_pooling,
+            encoder_votes,
             encoder_recall_only,
         }) => {
             let mut options = MatchOptions { popularity_weight: popularity, ..MatchOptions::default() };
@@ -213,8 +217,14 @@ pub fn run(cmd: MelodyCommand) -> anyhow::Result<()> {
             if let Some(r) = rerank {
                 options.rerank = r;
             }
-            let encoder = encoder.map(|path| {
-                (path, encoder_budget, encoder_songs, encoder_offsets, encoder_pooling, encoder_recall_only)
+            let encoder = encoder.map(|path| crate::encoder::EncoderArgs {
+                path,
+                budget: encoder_budget,
+                songs: encoder_songs,
+                offsets: encoder_offsets,
+                pooling: encoder_pooling,
+                votes: encoder_votes,
+                recall_only: encoder_recall_only,
             });
             eval_qbsh(&index, &queries, out.as_deref(), threads, limit, &options, !no_trace, encoder)
         }
@@ -562,9 +572,6 @@ struct EvalRow {
     json: String,
 }
 
-/// `--encoder` and its options: path, budget, songs, offsets, pooling, recall only.
-type EncoderArgs = (PathBuf, String, Option<usize>, Option<String>, Option<String>, bool);
-
 #[allow(clippy::too_many_arguments)]
 fn eval_qbsh(
     index: &Path,
@@ -574,19 +581,11 @@ fn eval_qbsh(
     limit: Option<usize>,
     options: &MatchOptions,
     trace: bool,
-    encoder: Option<EncoderArgs>,
+    encoder: Option<crate::encoder::EncoderArgs>,
 ) -> anyhow::Result<()> {
     let index = MelodyIndex::open(index)?;
     let encoder = match encoder {
-        Some((path, budget, songs, offsets, pooling, recall_only)) => Some(crate::encoder::EncoderEval::open(
-            &path,
-            &index,
-            &budget,
-            songs,
-            offsets.as_deref(),
-            pooling.as_deref(),
-            recall_only,
-        )?),
+        Some(args) => Some(crate::encoder::EncoderEval::open(&args, &index)?),
         None => None,
     };
     let list = std::fs::read_to_string(queries)?;

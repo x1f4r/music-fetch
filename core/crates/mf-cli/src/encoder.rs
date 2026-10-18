@@ -1,7 +1,7 @@
 //! Learned-encoder companion files: `mf index encoder build|info` and the
 //! encoder side of `mf eval qbsh --encoder`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context, bail};
@@ -123,29 +123,35 @@ pub struct EncoderRow {
     pub hits: Vec<EncoderHit>,
 }
 
+/// `mf eval qbsh --encoder …` options.
+pub struct EncoderArgs {
+    pub path: PathBuf,
+    /// android, mac or low-power.
+    pub budget: String,
+    pub songs: Option<usize>,
+    /// "tempo:shift,…"
+    pub offsets: Option<String>,
+    /// sum or max.
+    pub pooling: Option<String>,
+    pub votes: bool,
+    pub recall_only: bool,
+}
+
 impl EncoderEval {
-    /// Parse the CLI's encoder options.
-    pub fn open(
-        path: &Path,
-        index: &MelodyIndex,
-        budget: &str,
-        songs: Option<usize>,
-        offsets: Option<&str>,
-        pooling: Option<&str>,
-        recall_only: bool,
-    ) -> anyhow::Result<Self> {
-        let encoder = EncoderIndex::open(path, index)?;
-        let mut budget = match budget {
+    /// Open the encoder file and apply the CLI's budget overrides.
+    pub fn open(args: &EncoderArgs, index: &MelodyIndex) -> anyhow::Result<Self> {
+        let encoder = EncoderIndex::open(&args.path, index)?;
+        let mut budget = match args.budget.as_str() {
             "android" => EncoderBudget::android(),
             "mac" => EncoderBudget::mac(),
             "low-power" => EncoderBudget::low_power(),
             other => bail!("unknown encoder budget {other} (android, mac or low-power)"),
         };
-        if let Some(n) = songs {
+        if let Some(n) = args.songs {
             budget.songs = n;
         }
-        if let Some(list) = offsets {
-            budget.offsets = list
+        if let Some(list) = &args.offsets {
+            budget.hints.offsets = list
                 .split(',')
                 .map(|p| {
                     let (t, s) = p.split_once(':').context("offsets are tempo:shift")?;
@@ -153,13 +159,14 @@ impl EncoderEval {
                 })
                 .collect::<anyhow::Result<_>>()?;
         }
-        match pooling {
+        budget.hints.votes |= args.votes;
+        match args.pooling.as_deref() {
             None => {}
             Some("sum") => budget.pooling = Pooling::Sum,
             Some("max") => budget.pooling = Pooling::Max,
             Some(other) => bail!("unknown pooling {other} (sum or max)"),
         }
-        Ok(Self { encoder, budget, recall_only })
+        Ok(Self { encoder, budget, recall_only: args.recall_only })
     }
 
     /// Candidates for one query with the encoder's hits as hints.
@@ -176,7 +183,7 @@ impl EncoderEval {
             matcher::candidates(index, query, options)
         } else {
             let hints: Vec<_> = hits.iter().map(EncoderHit::hint).collect();
-            matcher::candidates_with_hints(index, query, options, &hints, &self.budget.offsets)
+            matcher::candidates_with_hints(index, query, options, &hints, &self.budget.hints)
         };
         (candidates, EncoderRow { rank, timing, hits })
     }

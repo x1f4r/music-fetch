@@ -46,7 +46,7 @@ use tract_onnx::tract_core::internal::ensure;
 
 use crate::error::{MfError, Result};
 use crate::melody::index::{MelodyIndex, le_u16, le_u32, le_u64};
-use crate::melody::matcher::Hint;
+use crate::melody::matcher::{Hint, HintOptions};
 use crate::melody::notes::MelodyQuery;
 
 use scan::{BLOCK, KSUB, Kernel};
@@ -80,8 +80,8 @@ pub struct EncoderBudget {
     /// Song score: the sum over query windows of each one's best similarity
     /// (default), or the single best.
     pub pooling: Pooling,
-    /// Matcher placements per hit: (query tempo over reference tempo, shift in frames).
-    pub offsets: Vec<(f32, f32)>,
+    /// How hits become matcher placements.
+    pub hints: HintOptions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +98,7 @@ impl EncoderBudget {
             window_neighbours: 1000,
             songs: 200,
             pooling: Pooling::Sum,
-            offsets: vec![(1.0, -20.0), (1.0, 0.0), (1.0, 20.0)],
+            hints: HintOptions { offsets: vec![(1.0, -20.0), (1.0, 0.0), (1.0, 20.0)], votes: false },
         }
     }
 
@@ -109,7 +109,10 @@ impl EncoderBudget {
             window_neighbours: 1000,
             songs: 500,
             pooling: Pooling::Sum,
-            offsets: vec![(0.8, 0.0), (1.0, -20.0), (1.0, 0.0), (1.0, 20.0), (1.25, 0.0)],
+            hints: HintOptions {
+                offsets: vec![(0.8, 0.0), (1.0, -20.0), (1.0, 0.0), (1.0, 20.0), (1.25, 0.0)],
+                votes: false,
+            },
         }
     }
 
@@ -120,7 +123,7 @@ impl EncoderBudget {
             window_neighbours: 500,
             songs: 100,
             pooling: Pooling::Sum,
-            offsets: vec![(1.0, 0.0)],
+            hints: HintOptions { offsets: vec![(1.0, 0.0)], votes: false },
         }
     }
 }

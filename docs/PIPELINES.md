@@ -425,6 +425,81 @@ atomic rename to `melody-index.mfi` + `manifest.json` → open → swap into the
 `Finished(Completed { 1, 1 })`. Cancel deletes the partial file. `check_melody_index`
 fetches the manifest and fills `available_version` / `download_bytes`.
 
+## Melody encoder (`melody/encoder.rs`)
+
+An optional recall stage for humming search: a small network (tools/melody-encoder, about
+820k parameters) maps 8 s of the 20 fps query contour to a 64-d unit vector, and the songs
+whose reference windows lie closest join the matcher's rerank. It finds songs the
+matcher's own retrieval misses; the rerank and the score model still decide the answer.
+
+**Companion file.** `melody-encoder-<tier>.mfe` (format 1) belongs to one melody index:
+its header names the index by FNV-1a 64 over the index's TRCK section and its track count,
+and `EncoderIndex::open` refuses any other index ("belongs to another melody index"). A
+missing, damaged or foreign file disables the stage; the matcher runs as without it.
+Sections (offset, length) in a 192-byte header, each 64-byte aligned:
+
+| section | content |
+|---|---|
+| MODL | the encoder as ONNX: `features` (batch, 3, 160) → (batch, 64) unit vectors |
+| PQCB | sub-quantizers × 16 × (64 / sub-quantizers) f32 centroids |
+| TWIN | (tracks + 1) × u32: first window of each track (windows ordered by track, start) |
+| WSTA | windows × u16: start in reference hops |
+| CODE | ⌈windows / 32⌉ blocks of sub-quantizers × 16 B: byte j of sub-quantizer s holds window j's code (low nibble) and window j + 16's (high) |
+| META | version string |
+
+The header also carries the window length (160), the reference and query hops (40 frames),
+the least voiced share (300 ‰) and the most query windows (8). Only the tier's most
+popular songs get windows; the others keep an empty TWIN range and are left to the
+matcher, which still searches every song.
+
+**Query path** (`EncoderIndex::search`):
+
+1. Windows: the contour trimmed to its voiced span, 160 frames every 40 with the last one
+   aligned to the end, kept when ≥ 30 % voiced; a shorter query is one window padded with
+   rests. More than the budget's windows are thinned evenly.
+2. Features per frame (spec: `melenc.latency.featurize_np`, reproduced bit for bit): pitch
+   minus the window's voiced median (lower middle value), rests holding the previous pitch
+   and leading rests the median, ÷ 6 clipped to ±2; the voicing flag; the held pitch
+   change ÷ 3 clipped to ±2.
+3. Embedding with tract; plans for batches of 1, 2, 4 and 8 with concrete shapes, built
+   on first use (the model is parsed on the first search).
+4. Fast scan per query window: the 64-d query against each sub-quantizer's 16 centroids
+   gives a table, quantized to bytes with one scale (as faiss does); every block of 32
+   coded windows is summed with `tbl` (NEON: Apple Silicon, Android arm64) or `pshufb`
+   (SSSE3: Intel Macs, Android x86_64), or a scalar loop elsewhere. The nearest
+   `window_neighbours` windows are rescored exactly from the float table.
+5. Songs: each query window's best similarity per song, summed over query windows (or
+   the best one, `Pooling::Max`); the top `songs` become `EncoderHit`s with their best
+   window pair.
+6. `EncoderHit::hint` → `matcher::search_with_hints` / `candidates_with_hints`: one
+   placement per (tempo, shift) of the budget, where the two windows' centres meet, unless
+   retrieval already placed the track there. Hinted placements skip the pool cut, carry
+   no votes and compete in the quick stage like any other placement.
+
+Budgets (`EncoderBudget`):
+
+| | Android | Mac | low power |
+|---|---|---|---|
+| query windows | 6 | 8 | 4 |
+| windows kept per query window | 1000 | 1000 | 500 |
+| songs | 200 | 500 | 100 |
+| placements per hit (tempo, shift frames) | (1, −20), (1, 0), (1, +20) | the same plus (0.8, 0), (1.25, 0) | (1, 0) |
+
+**Build.** `mf index encoder build --index <tier>.mfi --model encoder.onnx --top 30000
+--sub-quantizers 32 --out melody-encoder-android.mfe` embeds every window with the
+app's featurizer and tract plan (threads `--threads`), trains the 4-bit quantizer by
+k-means on 300k sampled windows and writes the file atomically. `--sub-quantizers 64`
+gives 32 B per window (the Mac file). `mf index encoder info <file> --index <tier>.mfi`
+checks a file against its index. The file must be rebuilt whenever its index is rebuilt
+(the digest changes); a new model only needs a new encoder file.
+
+**Release.** The encoder file is published in the same release as its index (tag
+`melody-index-2`) and named in that index's manifest under `encoder` (`url`, `sha256`,
+`bytes`, `format`, `min_core`); `scripts/package-melody-index.sh <mfi> <version> <base>
+<file.mfe>` checks it against the index and writes the entry. Cores that do not know the
+field ignore it (`Manifest` has no `deny_unknown_fields`); `Manifest::usable_encoder`
+skips entries of another format or for a newer core.
+
 ## Library operations
 
 - `correct_segment` sets the track, confidence 1.0, tier Confirmed, adds `User` evidence,

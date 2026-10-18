@@ -47,11 +47,31 @@ pub struct Manifest {
     /// format 2 have none and point at format 1.
     #[serde(default = "first_format")]
     pub format: u32,
+    /// The index's learned-encoder file (`melody-encoder-<tier>.mfe`, see
+    /// `melody/encoder.rs`). Optional: cores before 1.2 ignore it, and the index
+    /// works without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoder: Option<CompanionFile>,
+}
+
+/// A file published next to the index that belongs to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompanionFile {
+    pub url: String,
+    pub sha256: String,
+    pub bytes: u64,
+    /// The file's own format number.
+    pub format: u32,
+    #[serde(default)]
+    pub min_core: Option<String>,
 }
 
 fn first_format() -> u32 {
     1
 }
+
+/// Upper bound for an encoder file (sanity check of the manifest).
+const MAX_ENCODER_BYTES: u64 = 512 * 1024 * 1024;
 
 impl Manifest {
     fn validate(&self) -> Result<()> {
@@ -78,6 +98,20 @@ impl Manifest {
             return Err(MfError::IndexUnavailable);
         }
         Ok(())
+    }
+
+    /// The encoder file, when this core can use it. A bad or unusable entry is
+    /// skipped (the index installs without it), never an error.
+    pub fn usable_encoder(&self) -> Option<&CompanionFile> {
+        let e = self.encoder.as_ref()?;
+        let ok = (e.url.starts_with("https://") || e.url.starts_with("http://"))
+            && e.sha256.len() == 64
+            && e.sha256.chars().all(|c| c.is_ascii_hexdigit())
+            && e.bytes > 0
+            && e.bytes <= MAX_ENCODER_BYTES
+            && e.format == crate::melody::encoder::FORMAT
+            && e.min_core.as_deref().is_none_or(|min| compare_versions(env!("CARGO_PKG_VERSION"), min).is_ge());
+        ok.then_some(e)
     }
 }
 
@@ -370,6 +404,7 @@ mod tests {
             songs: 3,
             min_core: Some("1.1.0".into()),
             format: index::FORMAT,
+            encoder: None,
         };
         assert!(good.validate().is_ok());
         // A manifest of another index format, or one from before formats were named (format 1).
@@ -388,6 +423,33 @@ mod tests {
         assert_eq!(parsed.min_core, None);
         assert_eq!(parsed.format, 1);
         assert_eq!(Manifest { sha256: "a".repeat(64), ..parsed }.validate(), Err(MfError::IndexUnavailable));
+    }
+
+    #[test]
+    fn the_encoder_entry_is_optional() {
+        let text = r#"{"version": "2026.10.1", "url": "https://x/melody-index.mfi", "sha256": "SHA", "bytes": 10,
+            "songs": 3, "min_core": "1.1.0", "format": 2,
+            "encoder": {"url": "https://x/melody-encoder-android.mfe", "sha256": "SHA", "bytes": 13000000,
+                        "format": 1, "min_core": "1.1.0"}}"#
+            .replace("SHA", &"b".repeat(64));
+        let m: Manifest = serde_json::from_str(&text).unwrap();
+        assert!(m.validate().is_ok());
+        let e = m.usable_encoder().expect("encoder");
+        assert_eq!((e.bytes, e.format), (13_000_000, 1));
+        // A newer encoder format, a newer core or a bad checksum: the index alone.
+        let with = |f: &dyn Fn(&mut CompanionFile)| {
+            let mut m = m.clone();
+            f(m.encoder.as_mut().unwrap());
+            m
+        };
+        assert!(with(&|e| e.format = 2).usable_encoder().is_none());
+        assert!(with(&|e| e.min_core = Some("99.0".into())).usable_encoder().is_none());
+        assert!(with(&|e| e.sha256 = "00".into()).usable_encoder().is_none());
+        assert!(with(&|e| e.format = 2).validate().is_ok());
+        // Without one, and written back without one.
+        let plain = Manifest { encoder: None, ..m };
+        assert!(plain.usable_encoder().is_none());
+        assert!(!serde_json::to_string(&plain).unwrap().contains("encoder"));
     }
 
     #[tokio::test]
