@@ -55,8 +55,8 @@ This document describes the behaviour the types cannot express.
 
 ### Humming, whistling, singing
 
-- `start_listening_with(source, mode, ListenOptions { auto_stop, live_candidates })`;
-  `start_listening` uses the defaults (`auto_stop` on, `live_candidates` off).
+- `start_listening_with(source, mode, ListenOptions { auto_stop, live_candidates, transcripts })`;
+  `start_listening` uses the defaults (`auto_stop` on, `live_candidates` and `transcripts` off).
 - While the user hums (`ListenMode::Hum`, or `Auto` after `Notice::ImpressionDetected`)
   the core searches the melody index every 2 s (4 s in low-power mode) once 4 s are
   voiced. With `auto_stop` the session stops by itself as soon as an answer is clear (a
@@ -92,6 +92,67 @@ early confident stop already shortens their sessions):
 5. Stop capture (and the microphone indicator) on the terminal event as today; with
    `auto_stop` the core may finish well before the user stops humming.
 
+### Sung words
+
+Takes sung with words are also found by their lyrics: the engine runs its lyric search
+on what the speech recognizer heard (when it holds at least 3 real words, not "la la"
+or "hmm") and fuses those candidates with the melody (and ACRCloud) candidates on one
+calibrated scale; a song both find gets a bonus. There are two ways to hand over the
+words; the first is preferred because it costs no time after capture:
+
+1. **Push transcripts while the user sings.** Start the session with
+   `ListenOptions { transcripts: true, .. }`, feed the same microphone audio to the
+   on-device recognizer, and send each result with `LiveSession::push_transcript`. Each
+   call replaces the previous one; send partial results as they arrive (`is_final:
+   false`) and the recognizer's last result with `is_final: true`, also when it arrives
+   after capture stopped (`finish()` or an auto-stop). When capture ends the engine
+   waits up to 2 s for the final transcript, then uses the newest one. It does not call
+   `SpeechToText` for such a session. Transcripts pushed without `transcripts: true`
+   are used too, but nothing is waited for.
+2. **Let the engine ask.** Without pushed transcripts the engine calls the
+   `SpeechToText` service (if the app supplied one) with a WAV of the capture after
+   capture ends.
+
+`SpeechTranscript { text, alternatives, language, confidence, is_final }`: `alternatives` are
+further hypotheses, best first (up to 4 are used); `language` is the recognizer's BCP-47
+tag (None: `EngineConfig.language`); `confidence` in 0..=1 when the recognizer reports
+one (None, 0 or negative mean unknown; a low confidence lowers the lyric candidates'
+scores, to 0.4× at 0). The best hypothesis is stored as the session's `transcript`.
+
+Swift (macOS: SFSpeechRecognizer with `SFSpeechAudioBufferRecognitionRequest`, or
+SpeechAnalyzer on macOS 26, fed the buffers that go to `pushPcm`):
+
+```swift
+let options = ListenOptions(autoStop: true, liveCandidates: true, transcripts: true)
+let session = try engine.startListeningWith(source: .microphone, mode: .hum, options: options, observer: observer)
+// For every recognizer result (partial ones too):
+session.pushTranscript(transcript: SpeechTranscript(
+    text: result.bestTranscription.formattedString,
+    alternatives: result.transcriptions.dropFirst().map(\.formattedString),
+    language: "en-US",
+    confidence: nil,            // or the mean segment confidence of a final result
+    isFinal: result.isFinal))
+```
+
+Kotlin (Android 13+: `SpeechRecognizer` with `EXTRA_PARTIAL_RESULTS` and the capture fed
+through `EXTRA_AUDIO_SOURCE`, so it does not compete for the microphone; below Android 13
+there is no shared-audio recognizer and hum sessions run on melody alone):
+
+```kotlin
+val options = ListenOptions(autoStop = true, liveCandidates = true, transcripts = true)
+val session = engine.startListeningWith(CaptureSource.MICROPHONE, ListenMode.HUM, options, observer)
+// onPartialResults / onResults:
+val texts = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+val scores = bundle.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
+session.pushTranscript(SpeechTranscript(
+    text = texts.firstOrNull().orEmpty(),
+    alternatives = texts.drop(1),
+    language = "en-US",
+    confidence = scores?.firstOrNull()?.takeIf { it > 0f },
+    isFinal = isFinalResult,
+))
+```
+
 ## Analysis sessions
 
 - `analyze(input, mode, observer)`: `input` is a URL or an absolute file path.
@@ -108,7 +169,7 @@ early confident stop already shortens their sessions):
 |---|---|---|---|
 | `MediaBackend` | not supplied: the core runs the bundled yt-dlp via `EngineConfig.media_tools` | Chaquopy wrapper | links that are not streaming metadata |
 | `PlatformDecoder` | AVFoundation | MediaExtractor + MediaCodec | symphonia fails on a file |
-| `SpeechToText` | SpeechTranscriber (macOS 26), SFSpeechRecognizer (macOS 15) | on-device SpeechRecognizer | impression sessions where speech is detected |
+| `SpeechToText` | SpeechTranscriber (macOS 26), SFSpeechRecognizer (macOS 15) | on-device SpeechRecognizer | impression sessions without pushed transcripts ("Sung words") |
 
 All three are called from engine worker threads, may block, must honour
 `TaskHandle.is_canceled()` and must return `PlatformError::Canceled` when canceled.
@@ -123,7 +184,12 @@ English sentences without stack traces or URLs containing secrets.
 
 - Manifest (`EngineConfig.melody_index_manifest_url`), JSON:
   `{"version": "2026.11.1", "url": "https://…/melody-index.mfi", "sha256": "…", "bytes": 12345678, "songs": 41234, "min_core": "1.1.0", "format": 2}`
-- Installed under `data_dir/melody/` as `melody-index.mfi` + `manifest.json`.
+- One manifest per tier in the format's release: Android apps read
+  `…/melody-index-2/manifest-android.json` (the phone tier), Mac apps
+  `…/melody-index-2/manifest-mac.json` (the large tier); `scripts/package-melody-index.sh`
+  writes them with `TIER=android|mac`.
+- Installed under `data_dir/melody/` as `melody-index.mfi` + `manifest.json`, plus
+  `melody-encoder.mfe` when the index has an encoder file.
 - File format 2 (one continuous contour per song and source, window and note indexes; see
   `melody/index.rs`). Each format is published under its own release tag,
   `melody-index-<format>`, with `min_core` set to the first core that reads it (format 2:
@@ -135,9 +201,22 @@ English sentences without stack traces or URLs containing secrets.
   `Notice::MelodyIndexMissing`.
 - Optional `encoder` object: the index's learned-encoder file (`melody/encoder.rs`,
   docs/PIPELINES.md "Melody encoder"), e.g.
-  `"encoder": {"url": "https://…/melody-encoder-android.mfe", "sha256": "…", "bytes": 13000000, "format": 1, "min_core": "1.2.0"}`.
-  It belongs to exactly that index file. Cores ignore entries they cannot use
-  (`Manifest::usable_encoder`), and the index works without it.
+  `"encoder": {"url": "https://…/melody-encoder-android.mfe", "sha256": "…", "bytes": 13000000, "format": 1, "min_core": "1.1.0"}`.
+  It belongs to exactly that index file (it names the index by a digest of its track
+  table). Cores ignore entries they cannot use (`Manifest::usable_encoder`), and the
+  index works without it.
+- `install_melody_index` downloads the encoder file after the index, in the same session
+  (one progress bar over both files), checks its SHA-256 and that it belongs to the new
+  index, and swaps it in; searches use it from then on. If only the encoder fails, the
+  index is still installed and the session finishes normally. An index that is already
+  current but lacks its encoder (or has an older one) gets just the encoder file. A new
+  index replaces the old encoder, `remove_melody_index` deletes both, and a file that
+  does not belong to the installed index is deleted at startup.
+- `MelodyIndexStatus`: `encoder_installed` says the encoder is in use; `size_bytes`
+  covers both files; `download_bytes` is what `install_melody_index` would fetch (index
+  and encoder). When only the encoder is missing, `available_version` is the installed
+  version and `download_bytes` the encoder's size, so the app's usual "Download" offer
+  covers it with no new UI. `storage_usage().melody_index_bytes` includes it.
 
 ## Melody builder input (JSONL)
 

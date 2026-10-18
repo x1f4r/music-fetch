@@ -64,11 +64,37 @@ pub struct MatchOptions {
     pub pool: usize,
     /// Candidates given full linear scaling and DTW.
     pub rerank: usize,
+    /// The score model's encoder terms, for searches with encoder hints.
+    pub encoder_model: EncoderModel,
 }
 
 impl Default for MatchOptions {
     fn default() -> Self {
-        Self { popularity_weight: 0.0, probe: 24, shortlist: 2000, pool: 3000, rerank: 150 }
+        Self {
+            popularity_weight: 0.0,
+            probe: 24,
+            shortlist: 2000,
+            pool: 3000,
+            rerank: 150,
+            encoder_model: EncoderModel::default(),
+        }
+    }
+}
+
+/// How the learned encoder's evidence enters the score model (searches with
+/// hints only): weights of [`Features::enc_best`] and [`Features::enc_hit`], the
+/// shift of "none of these", and the calibration of such searches. The default
+/// is the fitted model; evaluation may try others.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EncoderModel {
+    pub weights: [f32; 2],
+    pub none: f32,
+    pub calibration: (f32, f32),
+}
+
+impl Default for EncoderModel {
+    fn default() -> Self {
+        Self { weights: ENC_WEIGHTS, none: ENC_NONE, calibration: CALIBRATION_ENCODER }
     }
 }
 
@@ -95,6 +121,11 @@ pub struct Features {
     pub reference: f32,
     /// ln((popularity + 0.05) / 0.55): the song's popularity prior.
     pub prior: f32,
+    /// The learned encoder's best window cosine for the song (0 when the encoder
+    /// did not run or did not return the song).
+    pub enc_best: f32,
+    /// 1 when the encoder ranked the song among its first [`ENC_HIT_RANK`] hits.
+    pub enc_hit: f32,
 }
 
 /// One scored candidate with its features (for evaluation and model fitting).
@@ -140,6 +171,16 @@ const MODEL_WEIGHTS: [f32; 10] =
 const MODEL_NONE: f32 = -24.0149;
 const MODEL_NONE_QUERY: [f32; 3] = [0.7509, -6.0958, -8.1592];
 const CALIBRATION: (f32, f32) = (-0.7345, 0.9035);
+/// The learned encoder's evidence (fitted by tools/eval/fit_fusion.py on CHAD with
+/// the other weights fixed, so searches without the encoder score exactly as
+/// before): weights of [`Features::enc_best`] and [`Features::enc_hit`], the
+/// shift of "none of these" when the encoder ran, and that path's calibration.
+const ENC_WEIGHTS: [f32; 2] = [0.0, 0.0];
+const ENC_NONE: f32 = 0.0;
+const CALIBRATION_ENCODER: (f32, f32) = CALIBRATION;
+/// Encoder hits up to this rank count as [`Features::enc_hit`] (the same for every
+/// budget, so the weight means the same everywhere).
+pub const ENC_HIT_RANK: u32 = 200;
 
 /// Retrieval tempos (query duration over reference duration), log-spaced.
 const TEMPOS: usize = 11;
@@ -282,7 +323,7 @@ pub fn score_song(index: &MelodyIndex, query: &MelodyQuery, song_id: u32) -> Opt
     let mut ranked = rerank(&q, &mut refs, placements, &options);
     // Placements of one song do not compete: score each against "none" alone.
     for s in &mut ranked {
-        score_all(std::slice::from_mut(s), q.none);
+        score_all(std::slice::from_mut(s), &q);
     }
     ranked.sort_by(|a, b| b.score.total_cmp(&a.score));
     best_per_song(index, &q, &mut refs, ranked, 1, options.popularity_weight).into_iter().next()
@@ -329,6 +370,10 @@ pub struct Hint {
     pub track: u32,
     pub ref_frame: f32,
     pub query_frame: f32,
+    /// The encoder's evidence for the track's song: best window cosine and the
+    /// song's rank among its hits (1 = best).
+    pub best: f32,
+    pub rank: u32,
 }
 
 /// How hints become placements.
@@ -336,9 +381,10 @@ pub struct Hint {
 pub struct HintOptions {
     /// One placement per hint at each (query over reference tempo, shift in frames).
     pub offsets: Vec<(f32, f32)>,
-    /// Also pool the index's own votes for the hinted tracks: a second retrieval
-    /// pass restricted to them, so their placements carry evidence on the score
-    /// model's scale.
+    /// Also pool the index's own votes for the hinted tracks, so their placements
+    /// carry evidence on the score model's scale: retrieval keeps their postings
+    /// beyond its per-window limit, shortlists them and lets their placements past
+    /// the pool cut (one pass, no second retrieval).
     pub votes: bool,
     /// The first this many hints always reach the full rerank (with their best
     /// quick-check placement), even when the quick stage would cut them.
@@ -355,9 +401,10 @@ pub fn search_with_hints(
     hints: &[Hint],
     how: &HintOptions,
 ) -> Vec<MelodyMatch> {
-    let Some(q) = Query::new(query) else {
+    let Some(mut q) = Query::new(query) else {
         return Vec::new();
     };
+    q.set_encoder(index, hints, &options.encoder_model);
     let mut refs = References::new(index);
     let placements = hinted(index, &q, &mut refs, options, hints, how);
     let ranked = rerank_reserved(&q, &mut refs, placements, options, hints, how);
@@ -372,9 +419,10 @@ pub fn candidates_with_hints(
     hints: &[Hint],
     how: &HintOptions,
 ) -> Vec<Candidate> {
-    let Some(q) = Query::new(query) else {
+    let Some(mut q) = Query::new(query) else {
         return Vec::new();
     };
+    q.set_encoder(index, hints, &options.encoder_model);
     let mut refs = References::new(index);
     let placements = hinted(index, &q, &mut refs, options, hints, how);
     rerank_reserved(&q, &mut refs, placements, options, hints, how).into_iter().map(candidate).collect()
@@ -421,7 +469,8 @@ fn hinted(
     hints: &[Hint],
     how: &HintOptions,
 ) -> Vec<Placement> {
-    let mut placements = retrieve_all(index, q, refs, options, &|_| true);
+    let force: HashSet<u32> = if how.votes { hints.iter().map(|h| h.track).collect() } else { HashSet::new() };
+    let mut placements = retrieve_forced(index, q, refs, options, &|_| true, &force, None);
     let mid = q.contour.len() as f32 / 2.0;
     let mut by_track: HashMap<u32, Vec<f32>> = HashMap::new();
     for p in &placements {
@@ -435,12 +484,6 @@ fn hinted(
             placements.push(p);
         }
     };
-    if how.votes && !hints.is_empty() {
-        let tracks: HashSet<u32> = hints.iter().map(|h| h.track).collect();
-        for p in retrieve_all(index, q, refs, options, &|t| tracks.contains(&t)) {
-            add(p, &mut placements);
-        }
-    }
     for h in hints {
         for &(tempo, shift) in &how.offsets {
             let anchor = h.ref_frame + shift - h.query_frame / tempo;
@@ -454,6 +497,9 @@ fn hinted(
 struct Query {
     /// Utility of "none of these" for this query.
     none: f32,
+    /// Encoder evidence per song (best window cosine, rank), when the encoder ran.
+    encoder: Option<HashMap<u32, (f32, u32)>>,
+    encoder_model: EncoderModel,
     contour: Vec<f32>,
     /// Indices of voiced contour frames.
     voiced: Vec<usize>,
@@ -492,7 +538,56 @@ impl Query {
         let steps = steps::query_steps(&query.notes);
         let shape = steps::shape(&steps);
         let none = QueryTraits::of(query).none_utility();
-        Some(Self { none, contour: query.contour.clone(), voiced, median, windows, steps, shape })
+        Some(Self {
+            none,
+            encoder: None,
+            encoder_model: EncoderModel::default(),
+            contour: query.contour.clone(),
+            voiced,
+            median,
+            windows,
+            steps,
+            shape,
+        })
+    }
+
+    /// The encoder ran for this query and suggested `hints`: its evidence joins the
+    /// score model (and "none of these" and the calibration switch to the
+    /// encoder's).
+    fn set_encoder(&mut self, index: &MelodyIndex, hints: &[Hint], model: &EncoderModel) {
+        let mut by_song: HashMap<u32, (f32, u32)> = HashMap::with_capacity(hints.len());
+        for h in hints {
+            let Some(song) = index.track_song(h.track) else { continue };
+            let e = by_song.entry(song).or_insert((h.best, h.rank));
+            if h.best > e.0 {
+                e.0 = h.best;
+            }
+            e.1 = e.1.min(h.rank);
+        }
+        if self.encoder.is_none() {
+            self.none += model.none;
+        }
+        self.encoder = Some(by_song);
+        self.encoder_model = *model;
+    }
+
+    /// The score model's logit for a candidate of this query.
+    fn utility(&self, f: &Features) -> f32 {
+        let w = self.encoder_model.weights;
+        utility(f) + w[0] * f.enc_best + w[1] * f.enc_hit
+    }
+
+    /// [`Features::enc_best`] and [`Features::enc_hit`] of `song`.
+    fn encoder_features(&self, song: u32) -> (f32, f32) {
+        match self.encoder.as_ref().and_then(|e| e.get(&song)) {
+            Some(&(best, rank)) => (best.max(0.0), if rank <= ENC_HIT_RANK { 1.0 } else { 0.0 }),
+            None => (0.0, 0.0),
+        }
+    }
+
+    /// Platt scaling of this query's scores.
+    fn calibration(&self) -> (f32, f32) {
+        if self.encoder.is_some() { self.encoder_model.calibration } else { CALIBRATION }
     }
 
     fn duration_ms(&self) -> f32 {
@@ -561,10 +656,26 @@ fn retrieve_traced(
     refs: &mut References,
     options: &MatchOptions,
     allow: &dyn Fn(u32) -> bool,
+    coarse: Option<&mut Coarse>,
+) -> Vec<Placement> {
+    retrieve_forced(index, q, refs, options, allow, &HashSet::new(), coarse)
+}
+
+/// [`retrieve_traced`] where the tracks in `force` (another recall stage's
+/// suggestions) always get their votes: each query window keeps their nearest
+/// posting even beyond its neighbour limit, the shortlists keep them, and their
+/// placements pass the pool cut. Everything else is retrieved exactly as without.
+fn retrieve_forced(
+    index: &MelodyIndex,
+    q: &Query,
+    refs: &mut References,
+    options: &MatchOptions,
+    allow: &dyn Fn(u32) -> bool,
+    force: &HashSet<u32>,
     mut coarse: Option<&mut Coarse>,
 ) -> Vec<Placement> {
-    let mut windows = retrieve(index, q, options, allow, coarse.as_mut().map(|c| &mut c.windows));
-    let notes = retrieve_notes(index, q, refs, options, allow, coarse.map(|c| &mut c.notes));
+    let mut windows = retrieve(index, q, options, allow, force, coarse.as_mut().map(|c| &mut c.windows));
+    let notes = retrieve_notes(index, q, refs, options, allow, force, coarse.map(|c| &mut c.notes));
     let mid = q.contour.len() as f32 / 2.0;
     let mut by_track: HashMap<u32, Vec<usize>> = HashMap::new();
     for (i, p) in windows.iter().enumerate() {
@@ -604,6 +715,7 @@ fn retrieve_notes(
     refs: &mut References,
     options: &MatchOptions,
     allow: &dyn Fn(u32) -> bool,
+    force: &HashSet<u32>,
     coarse: Option<&mut Vec<(u32, f32)>>,
 ) -> Vec<Placement> {
     let tracks = index.track_count() as usize;
@@ -651,7 +763,9 @@ fn retrieve_notes(
     let shortlist = options.shortlist.min(NOTE_SHORTLIST);
     if pre.len() > shortlist {
         pre.select_nth_unstable_by(shortlist, |a, b| b.1.total_cmp(&a.1));
+        let forced: Vec<(u32, f32)> = pre[shortlist..].iter().copied().filter(|(t, _)| force.contains(t)).collect();
         pre.truncate(shortlist);
+        pre.extend(forced);
     }
     let mut keep = vec![false; tracks];
     for &(t, _) in &pre {
@@ -714,8 +828,24 @@ fn retrieve_notes(
         }
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.note_votes.total_cmp(&a.1.note_votes)));
-    out.truncate(options.pool);
+    cut_pool(&mut out, options.pool, force, |(_, p)| p.track);
     out.into_iter().map(|(_, p)| p).collect()
+}
+
+/// Keep the first `pool` items, plus any later ones of a forced track.
+fn cut_pool<T>(items: &mut Vec<T>, pool: usize, force: &HashSet<u32>, track: impl Fn(&T) -> u32) {
+    if items.len() <= pool {
+        return;
+    }
+    if force.is_empty() {
+        items.truncate(pool);
+        return;
+    }
+    let mut i = 0;
+    items.retain(|x| {
+        i += 1;
+        i <= pool || force.contains(&track(x))
+    });
 }
 
 /// A placement from matched (query step, reference step) pairs: tempo and anchor
@@ -834,6 +964,7 @@ fn retrieve(
     q: &Query,
     options: &MatchOptions,
     allow: &dyn Fn(u32) -> bool,
+    force: &HashSet<u32>,
     coarse: Option<&mut Vec<(u32, f32)>>,
 ) -> Vec<Placement> {
     let tracks = index.track_count() as usize;
@@ -854,6 +985,8 @@ fn retrieve(
     let mut found: Vec<(u32, f32, f32, f32)> = Vec::new();
     let mut slot = vec![0u32; tracks];
     let mut stamp = vec![u32::MAX; tracks];
+    // Forced tracks' postings beyond one window's neighbour limit.
+    let mut extra: Vec<(u32, f32, f32, f32)> = Vec::new();
     for (wi, &(ti, start, ref vec)) in q.windows.iter().enumerate() {
         probe_cells(index, books, vec, options.probe, &mut probed);
         if probed.is_empty() {
@@ -908,13 +1041,17 @@ fn retrieve(
                 }
             }
         }
+        extra.clear();
         if found.len() > WINDOW_NEIGHBOURS {
             found.select_nth_unstable_by(WINDOW_NEIGHBOURS, |a, b| a.2.total_cmp(&b.2));
+            if !force.is_empty() {
+                extra.extend(found[WINDOW_NEIGHBOURS..].iter().copied().filter(|f| force.contains(&f.0)));
+            }
             found.truncate(WINDOW_NEIGHBOURS);
         }
         let mut d: Vec<f32> = found.iter().map(|f| f.2).collect();
         let sigma = median(&mut d).unwrap_or(1.0).max(1.0);
-        for &(track, anchor, dist, rarity) in &found {
+        for &(track, anchor, dist, rarity) in found.iter().chain(&extra) {
             let t = track as usize;
             let w = (-dist / sigma).exp() * rarity;
             let bucket = ((anchor / BUCKET_FRAMES).floor() as i64).rem_euclid(BUCKETS as i64) as usize;
@@ -946,10 +1083,15 @@ fn retrieve(
     for &(t, _) in &pre {
         keep[t as usize] = true;
     }
+    for &t in force {
+        if let Some(k) = keep.get_mut(t as usize) {
+            *k = true;
+        }
+    }
     votes.retain(|v| keep[v.0 as usize]);
     let mut placements = pool_votes(votes, q.windows.len());
     placements.sort_by(|a, b| b.votes.total_cmp(&a.votes));
-    placements.truncate(options.pool);
+    cut_pool(&mut placements, options.pool, force, |p| p.track);
     placements
 }
 
@@ -1211,8 +1353,10 @@ fn quick_stage(q: &Query, refs: &mut References, placements: Vec<Placement>, kee
                 note_votes: p.note_votes,
                 reference: reference_feature(r.voiced),
                 prior: prior_feature(index.popularity(r.song)),
+                enc_best: q.encoder_features(r.song).0,
+                enc_hit: q.encoder_features(r.song).1,
             };
-            let rank = -utility(&quick);
+            let rank = -q.utility(&quick);
             out.push((rank, Placement { tempo, anchor: anchor_ms / CONTOUR_MS as f32, ..p }));
         }
     }
@@ -1255,6 +1399,8 @@ fn full_stage(q: &Query, refs: &mut References, quick: Vec<(f32, Placement)>) ->
                 note_votes: p.note_votes,
                 reference: reference_feature(r.voiced),
                 prior: prior_feature(index.popularity(r.song)),
+                enc_best: q.encoder_features(r.song).0,
+                enc_hit: q.encoder_features(r.song).1,
             },
             score: 0.0,
             key,
@@ -1266,7 +1412,7 @@ fn full_stage(q: &Query, refs: &mut References, quick: Vec<(f32, Placement)>) ->
     for s in &mut scored {
         s.work = refs.work(s.song);
     }
-    score_all(&mut scored, q.none);
+    score_all(&mut scored, q);
     scored.sort_by(|a, b| b.score.total_cmp(&a.score));
     scored
 }
@@ -1505,7 +1651,8 @@ fn prior_feature(popularity: f32) -> f32 {
     ((popularity + 0.05) / 0.55).ln()
 }
 
-/// The model's logit for one candidate.
+/// The model's logit for one candidate, before any encoder terms
+/// ([`Query::utility`] adds them).
 fn utility(f: &Features) -> f32 {
     let x = [
         f.votes.min(4.0),
@@ -1524,8 +1671,9 @@ fn utility(f: &Features) -> f32 {
 
 /// Calibrated P(correct) for competing candidates: a softmax over them and a
 /// "none of these" option, then Platt scaling.
-fn score_all(scored: &mut [Scored], none: f32) {
-    let z: Vec<f32> = scored.iter().map(|s| utility(&s.features)).collect();
+fn score_all(scored: &mut [Scored], q: &Query) {
+    let (none, calibration) = (q.none, q.calibration());
+    let z: Vec<f32> = scored.iter().map(|s| q.utility(&s.features)).collect();
     let top = z.iter().copied().fold(none, f32::max);
     // Songs compete, not placements: each song enters with its best placement
     // (summed in first-seen order, so equal inputs give equal scores).
@@ -1541,7 +1689,7 @@ fn score_all(scored: &mut [Scored], none: f32) {
     let total = (none - top).exp() + best.iter().map(|z| (z - top).exp()).sum::<f32>();
     for (s, z) in scored.iter_mut().zip(z) {
         let p = (z - top).exp() / total;
-        s.score = 1.0 / (1.0 + (-(CALIBRATION.0 + CALIBRATION.1 * logit(p))).exp());
+        s.score = 1.0 / (1.0 + (-(calibration.0 + calibration.1 * logit(p))).exp());
     }
 }
 

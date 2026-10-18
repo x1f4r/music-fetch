@@ -19,14 +19,14 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use regex::Regex;
-use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, COOKIE, LOCATION, RETRY_AFTER, USER_AGENT};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, LOCATION, RETRY_AFTER, USER_AGENT};
 use reqwest::{RequestBuilder, Response, StatusCode};
 use url::Url;
 
 use super::ssrf;
 use crate::error::{MfError, Result};
 use crate::util::cancel::CancelToken;
-use crate::util::http::{BROWSER_UA, CRAWLER_UA, is_connect, prepare, user_agent};
+use crate::util::http::{BROWSER_UA, HeaderRule, HeaderRuleId, is_connect, prepare, user_agent};
 
 /// Largest HTML page read (YouTube watch pages are about 1.5 MB).
 pub(crate) const MAX_PAGE_BYTES: usize = 6 * 1024 * 1024;
@@ -38,23 +38,23 @@ pub(crate) const PAGE_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const API_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const SHORTENER_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// User agent to present.
+/// User agent to present when no header rule sets one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Agent {
     /// The client's neutral `MusicFetch/<version>` agent.
     Neutral,
-    /// A desktop browser, for sites that refuse unknown clients.
+    /// A desktop browser, for generic pages that refuse unknown clients (in the
+    /// browser extension the browser's own agent is used).
     Browser,
-    /// A link-preview crawler, for sites that only serve Open Graph tags to crawlers.
-    Crawler,
 }
 
 /// How to fetch a page.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PageRequest<'a> {
     pub agent: Agent,
-    pub cookies: Option<&'a str>,
-    pub accept_language: Option<&'a str>,
+    /// Headers the site needs, from the header policy table
+    /// ([`crate::util::http::HeaderRule`]); the browser extension installs the same rule.
+    pub rule: Option<HeaderRuleId>,
     pub max_bytes: usize,
     pub timeout: Duration,
     /// Site name for error messages ("Spotify", "the website").
@@ -63,14 +63,7 @@ pub(crate) struct PageRequest<'a> {
 
 impl<'a> PageRequest<'a> {
     pub(crate) fn new(site: &'a str) -> Self {
-        Self {
-            agent: Agent::Neutral,
-            cookies: None,
-            accept_language: None,
-            max_bytes: MAX_PAGE_BYTES,
-            timeout: PAGE_TIMEOUT,
-            site,
-        }
+        Self { agent: Agent::Neutral, rule: None, max_bytes: MAX_PAGE_BYTES, timeout: PAGE_TIMEOUT, site }
     }
 
     pub(crate) fn agent(mut self, agent: Agent) -> Self {
@@ -78,13 +71,8 @@ impl<'a> PageRequest<'a> {
         self
     }
 
-    pub(crate) fn cookies(mut self, cookies: &'a str) -> Self {
-        self.cookies = Some(cookies);
-        self
-    }
-
-    pub(crate) fn language(mut self, accept_language: &'a str) -> Self {
-        self.accept_language = Some(accept_language);
+    pub(crate) fn rule(mut self, rule: HeaderRuleId) -> Self {
+        self.rule = Some(rule);
         self
     }
 
@@ -98,20 +86,18 @@ impl<'a> PageRequest<'a> {
         self
     }
 
-    fn apply(&self, builder: RequestBuilder) -> RequestBuilder {
+    fn apply(&self, builder: RequestBuilder, url: &str) -> RequestBuilder {
         let mut builder = builder
             .timeout(self.timeout)
             .header(ACCEPT, "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8");
         builder = match self.agent {
             Agent::Neutral => builder,
             Agent::Browser => builder.header(USER_AGENT, BROWSER_UA),
-            Agent::Crawler => builder.header(USER_AGENT, CRAWLER_UA),
         };
-        if let Some(cookies) = self.cookies {
-            builder = builder.header(COOKIE, cookies);
-        }
-        if let Some(language) = self.accept_language {
-            builder = builder.header(ACCEPT_LANGUAGE, language);
+        if let Some(rule) = self.rule {
+            // The rule's values do not depend on the version (the neutral rule is
+            // browser-only: natively the client's default agent is that one).
+            builder = HeaderRule::new(rule, env!("CARGO_PKG_VERSION"), 0).apply(builder, url);
         }
         builder
     }
@@ -247,7 +233,7 @@ pub(crate) async fn get_page(
     req: &PageRequest<'_>,
     cancel: &CancelToken,
 ) -> Result<Page> {
-    let response = send(req.apply(http.get(url)), cancel, req.site).await?;
+    let response = send(req.apply(http.get(url), url), cancel, req.site).await?;
     into_page(response, req.max_bytes, cancel, req.site).await
 }
 
@@ -272,6 +258,30 @@ pub(crate) async fn fetch_json(
     cancel: &CancelToken,
 ) -> Result<JsonResponse> {
     let request = http.get(url).timeout(API_TIMEOUT).header(ACCEPT, "application/json");
+    let response = send(request, cancel, site).await?;
+    let status = response.status();
+    let retry_after = retry_after(&response);
+    let body = read_body(response, MAX_JSON_BYTES, cancel, site).await?;
+    Ok(JsonResponse { status, retry_after, value: serde_json::from_slice(&body).ok() })
+}
+
+/// POST a JSON body to a fixed public host with the shared client (InnerTube),
+/// with the header rule `rule` and `headers`; the answer whatever the status.
+#[cfg(feature = "engine")]
+pub(crate) async fn post_json(
+    http: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+    rule: HeaderRuleId,
+    headers: &[(&str, &str)],
+    site: &str,
+    cancel: &CancelToken,
+) -> Result<JsonResponse> {
+    let mut request = http.post(url).timeout(API_TIMEOUT).header(ACCEPT, "application/json").json(body);
+    request = HeaderRule::new(rule, env!("CARGO_PKG_VERSION"), 0).apply(request, url);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
     let response = send(request, cancel, site).await?;
     let status = response.status();
     let retry_after = retry_after(&response);
@@ -389,7 +399,7 @@ pub(crate) async fn guarded_get(start: &Url, req: &PageRequest<'_>, cancel: &Can
     let mut current = start.clone();
     for _ in 0..=MAX_REDIRECTS {
         cancellable(cancel, ssrf::ensure_public(&current)).await??;
-        let request = req.apply(client.get(current.as_str()));
+        let request = req.apply(client.get(current.as_str()), current.as_str());
         let response = send_hop(request, &mut current, cancel, req.site).await?;
         if let Some(next) = redirect_target(&current, &response)? {
             current = next;
@@ -407,7 +417,7 @@ pub(crate) async fn guarded_head(start: &Url, cancel: &CancelToken) -> Result<Pr
     let mut current = start.clone();
     for _ in 0..=MAX_REDIRECTS {
         cancellable(cancel, ssrf::ensure_public(&current)).await??;
-        let request = req.apply(client.head(current.as_str()));
+        let request = req.apply(client.head(current.as_str()), current.as_str());
         let response = send_hop(request, &mut current, cancel, req.site).await?;
         if let Some(next) = redirect_target(&current, &response)? {
             current = next;
@@ -479,7 +489,7 @@ pub(crate) async fn expand_short_url(start: &Url, cancel: &CancelToken) -> Resul
             host.ends_with("app.link") || host.ends_with("page.link")
         };
         if !landing {
-            let request = req.apply(client.head(current.as_str()));
+            let request = req.apply(client.head(current.as_str()), current.as_str());
             match send_hop(request, &mut current, cancel, req.site).await {
                 Ok(response) => {
                     if let Some(next) = redirect_target(&current, &response)? {
@@ -495,7 +505,7 @@ pub(crate) async fn expand_short_url(start: &Url, cancel: &CancelToken) -> Resul
                 Err(_) => {}
             }
         }
-        let request = req.apply(client.get(current.as_str()));
+        let request = req.apply(client.get(current.as_str()), current.as_str());
         let response = match send_hop(request, &mut current, cancel, req.site).await {
             Ok(response) => response,
             Err(e @ (MfError::Canceled | MfError::InvalidInput { .. })) => return Err(e),
@@ -689,6 +699,44 @@ mod tests {
         let got = guarded_get(&fine, &PageRequest::new("the website").max_bytes(5), &cancel).await.unwrap();
         assert_eq!(got.body, "<titl");
         assert!(got.is_html());
+    }
+
+    #[tokio::test]
+    async fn header_rules_set_the_native_headers() {
+        use crate::shazam::test_server::{Reply, TestServer};
+        use crate::util::endpoints::{self, TestEndpoints};
+        let _guard = endpoints::TEST_LOCK.lock().await;
+        let server = TestServer::start(vec![Reply::new(200, "<html></html>").header("Content-Type", "text/html")]);
+        let routes = ["https://www.youtube.com", "https://open.spotify.com", "https://music.amazon.de"]
+            .iter()
+            .map(|o| (o.to_string(), server.url()))
+            .collect();
+        endpoints::install(Some(TestEndpoints::new(routes, None).unwrap()));
+        let http = test_client();
+        let cancel = CancelToken::new();
+        let get = |url: &'static str, req: PageRequest<'static>| {
+            let http = http.clone();
+            let cancel = cancel.clone();
+            async move { get_page(&http, url, &req, &cancel).await.unwrap() }
+        };
+        get("https://www.youtube.com/watch?v=abc&hl=en", PageRequest::new("YouTube").rule(HeaderRuleId::Youtube)).await;
+        get("https://open.spotify.com/track/abc", PageRequest::new("Spotify").rule(HeaderRuleId::Crawler)).await;
+        get("https://music.amazon.de/albums/B000TDBNDG", PageRequest::new("Amazon").rule(HeaderRuleId::Crawler)).await;
+        get("https://open.spotify.com/embed/track/abc", PageRequest::new("Spotify")).await;
+        endpoints::install(None);
+
+        let requests = server.requests();
+        assert_eq!(requests.len(), 4);
+        // Exactly what the resolvers sent before the table existed.
+        assert_eq!(requests[0].target, "/watch?v=abc&hl=en");
+        assert_eq!(requests[0].header("cookie"), Some("SOCS=CAI; CONSENT=YES+1"));
+        assert_eq!(requests[0].header("accept-language"), Some("en-US,en;q=0.9"));
+        assert!(requests[0].header("user-agent").unwrap().starts_with("MusicFetch/"));
+        for r in &requests[1..3] {
+            assert_eq!(r.header("user-agent"), Some(crate::util::http::CRAWLER_UA));
+            assert_eq!(r.header("cookie"), None);
+        }
+        assert!(requests[3].header("user-agent").unwrap().starts_with("MusicFetch/"), "embeds keep the neutral agent");
     }
 
     #[tokio::test]

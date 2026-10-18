@@ -90,7 +90,7 @@ describe('the capture coordinator', () => {
     const id = await client.analyze('http://127.0.0.1:8000/mix.html', 'Mix', { tab_id: 42, url: TAB.url, title: 'Fake mix', facts: null });
     await vi.waitFor(async () => expect((await client.session(id))?.entry.status).toBe('Completed'), { timeout: 10_000 });
     const detail = (await client.session(id))!;
-    expect(detail.segments.map((s) => s.track?.title)).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
+    expect(detail.segments.map((s) => s.track?.title)).toEqual(['Alpha Signal', 'Bravo Signal', 'Charlie Signal']);
     const ends = detail.segments.map((s) => s.end_ms);
     expect(Math.abs(ends[0]! - 20_000)).toBeLessThanOrEqual(2000);
     expect(Math.abs(ends[1]! - 40_000)).toBeLessThanOrEqual(2000);
@@ -115,7 +115,7 @@ describe('the capture coordinator', () => {
     const detail = (await client.session(id))!;
     const stats = ((globalThis as unknown as { __tabStats?: { chunks: number; starts: number[]; clock: MediaClock }[] }).__tabStats ?? []).map((t) => ({ chunks: t.chunks, starts: t.starts.slice(0, 12), dropped: t.clock.dropped, runs: t.clock.runs }));
     const where = `${JSON.stringify(detail.segments.map((s) => [s.track?.title, s.start_ms, s.end_ms]))} ${JSON.stringify(stats)}`;
-    expect(detail.segments.map((s) => s.track?.title), where).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
+    expect(detail.segments.map((s) => s.track?.title), where).toEqual(['Alpha Signal', 'Bravo Signal', 'Charlie Signal']);
     expect(Math.abs(detail.segments[0]!.end_ms - 20_000), where).toBeLessThanOrEqual(2000);
     expect(Math.abs(detail.segments[1]!.end_ms - 40_000), where).toBeLessThanOrEqual(2000);
     // Tab capture keeps the element unmuted: the capture follows its volume (S1).
@@ -132,7 +132,7 @@ describe('the capture coordinator', () => {
     });
     const id = await client.analyze('http://127.0.0.1:8000/song.html', 'Auto', { tab_id: 42, url: TAB.url, title: 'A video', facts: null });
     await vi.waitFor(async () => expect((await client.session(id))?.entry.status).toBe('Completed'), { timeout: 10_000 });
-    expect((await client.session(id))!.segments.map((s) => s.track?.title)).toEqual(['Test Signal D']);
+    expect((await client.session(id))!.segments.map((s) => s.track?.title)).toEqual(['Delta Signal']);
   });
 
   it('fails the analysis when the tab goes away mid-capture', async () => {

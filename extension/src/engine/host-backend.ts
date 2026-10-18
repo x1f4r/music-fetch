@@ -10,8 +10,8 @@ import type { CaptureSource, ListenMode, ListenOptions } from './types';
  * get their audio pushed in, and analyses of media pages call back into the host's
  * `CaptureHost`.
  *
- * `host-backend-factory.ts` picks the implementation. Today that is the mock
- * (`host-mock-backend.ts`); the wasm engine replaces it there and nowhere else.
+ * `host-backend-factory.ts` picks the implementation: the wasm engine
+ * (`host-wasm-backend.ts`), or the mock (`host-mock-backend.ts`) in builds without it.
  */
 export interface EngineBackend extends EngineClient {
   /** `startListening` with the input the host opened for it. */
@@ -68,6 +68,8 @@ export interface BackendConfig {
   lowPower: boolean;
   /** `hardwareConcurrency` of the host context. */
   cpus: number;
+  /** e2e builds only: the test's stub recognizer (`HostSettings.e2eRecognizer`). */
+  recognizerUrl?: string | null;
 }
 
 export interface BackendEnv extends BackendConfig {
