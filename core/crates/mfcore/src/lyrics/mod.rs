@@ -406,7 +406,7 @@ async fn check_lyrics(
     if queries.is_empty() {
         return Ok(evidence);
     }
-    let deadline = tokio::time::Instant::now() + VERIFY_DEADLINE;
+    let deadline = crate::util::rt::Instant::now() + VERIFY_DEADLINE;
     // A manual pool instead of stream adapters with closures: those make the
     // search future fail the `Send` check when it is spawned on a runtime.
     let items: Vec<(usize, &Candidate)> = selected.iter().filter_map(|&i| candidates.get(i).map(|c| (i, c))).collect();
@@ -416,7 +416,7 @@ async fn check_lyrics(
         lookups.push(check_indexed(fetcher, index, candidate, queries));
     }
     loop {
-        match tokio::time::timeout_at(deadline, lookups.next()).await {
+        match crate::util::rt::timeout_at(deadline, lookups.next()).await {
             Ok(Some((_, Err(FetchError::Canceled)))) => return Err(MfError::Canceled),
             Ok(Some((index, result))) => {
                 match result {

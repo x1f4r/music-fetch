@@ -35,6 +35,31 @@ jobs:
         working-directory: core
         run: cargo test --workspace
 
+  wasm:
+    name: Engine (wasm32 and feature subsets)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        working-directory: core
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: wasm
+      - name: Check (wasm32, net)
+        working-directory: core
+        run: cargo check -p mfcore --target wasm32-unknown-unknown --no-default-features --features net
+      - name: Clippy (wasm32, net; std clocks banned)
+        working-directory: core
+        run: cargo clippy -p mfcore --target wasm32-unknown-unknown --no-default-features --features net -- -D warnings
+      - name: Tests (pure core, no default features)
+        working-directory: core
+        run: cargo test -p mfcore --no-default-features
+      - name: Check (engine without UniFFI)
+        working-directory: core
+        run: cargo check -p mfcore --all-targets --no-default-features --features engine
+
   android:
     name: Android app
     runs-on: ubuntu-24.04

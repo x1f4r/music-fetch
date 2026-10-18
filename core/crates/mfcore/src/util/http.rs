@@ -7,7 +7,11 @@
 //! TLS is a preconfigured rustls `ClientConfig` (ring provider, Mozilla roots
 //! from `webpki-roots`), so reqwest never touches `rustls-platform-verifier` or
 //! a process-wide crypto provider.
+//!
+//! On wasm32 reqwest runs on the browser's fetch(), which owns TLS, connection
+//! reuse and redirects (up to 20 hops); timeouts are per request there.
 
+#[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,6 +34,7 @@ pub const CRAWLER_UA: &str = "facebookexternalhit/1.1 (+http://www.facebook.com/
 
 /// rustls configuration shared by every client: ring, TLS 1.2 + 1.3, webpki roots,
 /// ALPN for HTTP/2 and HTTP/1.1.
+#[cfg(not(target_family = "wasm"))]
 pub fn tls_config() -> Result<rustls::ClientConfig> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
@@ -43,6 +48,7 @@ pub fn tls_config() -> Result<rustls::ClientConfig> {
     Ok(config)
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub fn build_client(app_version: &str) -> Result<reqwest::Client> {
     let client = reqwest::Client::builder()
         .tls_backend_preconfigured(tls_config()?)
@@ -56,13 +62,49 @@ pub fn build_client(app_version: &str) -> Result<reqwest::Client> {
     Ok(client)
 }
 
+/// The browser sets TLS, redirects and connection reuse itself. Chrome ignores
+/// the user agent; Firefox sends it.
+#[cfg(target_family = "wasm")]
+pub fn build_client(app_version: &str) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(user_agent(app_version))
+        .build()
+        .map_err(|e| MfError::internal(format!("http client: {e}")))
+}
+
+/// Settings every engine request gets. In the browser no request carries the
+/// user's cookies or HTTP credentials (`credentials: 'omit'`).
+pub fn prepare(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    #[cfg(target_family = "wasm")]
+    {
+        request.fetch_credentials_omit()
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        request
+    }
+}
+
+/// True for connection failures. fetch() reports every transport failure (DNS,
+/// refused connection, TLS, offline) as one opaque network error, which counts.
+pub fn is_connect(err: &reqwest::Error) -> bool {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        err.is_connect()
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        err.is_request()
+    }
+}
+
 /// Whether `url` can be reached at all: one bodiless HEAD request, any HTTP
 /// answer counts. False only for transport failures (no network, DNS failure,
 /// refused or timed-out connection, TLS failure such as a captive portal).
 pub async fn reachable(http: &reqwest::Client, url: &str, timeout: Duration) -> bool {
-    match http.head(url).timeout(timeout).send().await {
+    match prepare(http.head(url).timeout(timeout)).send().await {
         Ok(_) => true,
-        Err(e) if e.is_connect() || e.is_timeout() || e.is_request() => {
+        Err(e) if is_connect(&e) || e.is_timeout() || e.is_request() => {
             tracing::debug!("{url} is unreachable: {e}");
             false
         }

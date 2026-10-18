@@ -8,8 +8,32 @@ rust-version.workspace = true
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 
+[features]
+# The apps (UniFFI on macOS and Android) and mf-cli build everything. Browser
+# builds (wasm32-unknown-unknown) use `default-features = false` plus the parts
+# they need; without features the crate is the pure core: Shazam signatures and
+# response parsing, fingerprints, pitch tracking, the melody index and matcher,
+# resampling, frame features, identity, link canonicalization, models.
+default = ["native"]
+native = ["ffi", "engine", "mmap"]
+# Engine, pipelines, providers and the media backend. Native only for now: the
+# portable runtime that lets them build for wasm32 comes later.
+engine = ["net", "decode", "store"]
+# UniFFI scaffolding and derives.
+ffi = ["dep:uniffi"]
+# HTTP: Shazam client, link resolvers, catalog enrichment, lyrics. Natively
+# reqwest on hyper with rustls; on wasm32 reqwest's fetch() backend (the TLS
+# pieces are native-only target dependencies).
+net = ["dep:reqwest", "dep:rustls", "dep:webpki-roots"]
+# symphonia and Opus decoding.
+decode = ["dep:symphonia", "dep:opus-decoder"]
+# SQLite store: bundled SQLite natively, sqlite-wasm-rs on wasm32.
+store = ["dep:rusqlite"]
+# Memory-mapped melody index (`MelodyIndex::open` reads the file without it).
+mmap = ["dep:memmap2"]
+
 [dependencies]
-uniffi = { workspace = true, features = ["tokio"] }
+uniffi = { workspace = true, features = ["tokio"], optional = true }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -18,17 +42,13 @@ tracing.workspace = true
 parking_lot = "0.12"
 fastrand = "2"
 uuid = { version = "1", features = ["v4"] }
-rusqlite = { version = "0.40", features = ["bundled"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "gzip", "brotli", "multipart", "http2", "charset", "query", "form"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-webpki-roots = "1"
+rusqlite = { version = "0.40", features = ["bundled"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "gzip", "brotli", "multipart", "http2", "charset", "query", "form"], optional = true }
 # audio
-symphonia = { version = "0.6.1", default-features = false, features = ["isomp4", "aac", "mp3", "flac", "vorbis", "ogg", "wav", "mkv", "alac", "pcm", "caf", "aiff", "adpcm"] }
+symphonia = { version = "0.6.1", default-features = false, features = ["isomp4", "aac", "mp3", "flac", "vorbis", "ogg", "wav", "mkv", "alac", "pcm", "caf", "aiff", "adpcm"], optional = true }
 rubato = "5.0.1"
 realfft = "3.5"
-opus-decoder = "0.1.1"
-# media
-libc = "0.2"
+opus-decoder = { version = "0.1.1", optional = true }
 # shazam, providers
 crc32fast = "1.5"
 base64 = "0.23"
@@ -47,6 +67,36 @@ strsim = "0.11"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # melody
 tract-onnx = "0.23.8"
-memmap2 = "0.9.11"
+memmap2 = { version = "0.9.11", optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# The tokio runtime, timers, processes and files exist natively only.
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "process", "io-util", "fs", "net"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+webpki-roots = { version = "1", optional = true }
+# media, system info
+libc = "0.2"
+
+# wasm32-unknown-unknown: std's clocks panic, entropy and timers come from the browser.
+[target.'cfg(target_family = "wasm")'.dependencies]
+web-time = "1.1"
+getrandom = { version = "0.4", features = ["wasm_js"] }
+fastrand = { version = "2", features = ["js"] }
+uuid = { version = "1", features = ["v4", "rng-getrandom"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+send_wrapper = { version = "0.6", features = ["futures"] }
+
+[[test]]
+name = "engine"
+required-features = ["engine"]
+
+[[test]]
+name = "links_live"
+required-features = ["net"]
+
+# clippy.toml bans std's clocks, which panic on wasm32-unknown-unknown. The lint is
+# switched on for wasm32 builds only (src/lib.rs); natively `util::rt` is std.
+[lints.clippy]
+disallowed_methods = "allow"
 
 [dev-dependencies]

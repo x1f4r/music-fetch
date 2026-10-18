@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 mfcore = { path = "../mfcore" }
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "process", "io-util", "fs", "net"] }
 serde_json.workspace = true
 serde.workspace = true
 parking_lot = "0.12"

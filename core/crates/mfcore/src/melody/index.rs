@@ -120,6 +120,7 @@ pub struct Track {
 }
 
 enum Bytes {
+    #[cfg(feature = "mmap")]
     Mapped(memmap2::Mmap),
     Owned(Vec<u8>),
 }
@@ -128,6 +129,7 @@ impl std::ops::Deref for Bytes {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
+            #[cfg(feature = "mmap")]
             Bytes::Mapped(m) => m,
             Bytes::Owned(v) => v,
         }
@@ -164,9 +166,16 @@ impl MelodyIndex {
         let file = File::open(path).map_err(|_| MfError::IndexUnavailable)?;
         // Safety: the index is written once to a temp file and renamed into place;
         // nothing modifies it while mapped.
+        #[cfg(feature = "mmap")]
         let bytes = match unsafe { memmap2::Mmap::map(&file) } {
             Ok(map) => Bytes::Mapped(map),
             Err(_) => Bytes::Owned(std::fs::read(path).map_err(|_| MfError::IndexUnavailable)?),
+        };
+        #[cfg(not(feature = "mmap"))]
+        let bytes = {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut &file, &mut bytes).map_err(|_| MfError::IndexUnavailable)?;
+            Bytes::Owned(bytes)
         };
         Self::parse(bytes)
     }

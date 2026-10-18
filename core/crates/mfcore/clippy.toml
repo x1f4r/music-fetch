@@ -1,0 +1,12 @@
+# Code that builds for wasm32-unknown-unknown must take clocks and timers from
+# `crate::util::rt`: std's clocks compile there but panic when called. The ban is
+# enforced on wasm32 builds (`#![cfg_attr(target_family = "wasm", ...)]` in
+# src/lib.rs), e.g.
+#   cargo clippy -p mfcore --target wasm32-unknown-unknown --no-default-features --features net -- -D warnings
+disallowed-methods = [
+  { path = "std::time::Instant::now", reason = "panics on wasm32-unknown-unknown; use crate::util::rt::Instant" },
+  { path = "std::time::Instant::elapsed", reason = "panics on wasm32-unknown-unknown; use crate::util::rt::Instant" },
+  { path = "std::time::SystemTime::now", reason = "panics on wasm32-unknown-unknown; use crate::util::rt::SystemTime" },
+  { path = "std::time::SystemTime::elapsed", reason = "panics on wasm32-unknown-unknown; use crate::util::rt::SystemTime" },
+  { path = "std::thread::sleep", reason = "blocks the browser's event loop; use crate::util::rt::sleep" },
+]

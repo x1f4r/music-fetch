@@ -258,7 +258,12 @@ impl Model {
                 *slots[i].lock() = Some(run(a, &mut scratch));
             }
         };
-        let threads = threads.clamp(1, 16).min(starts.len());
+        // wasm32 without the atomics target feature has no threads (spawning panics).
+        let threads = if cfg!(all(target_family = "wasm", not(target_feature = "atomics"))) {
+            1
+        } else {
+            threads.clamp(1, 16).min(starts.len())
+        };
         if threads <= 1 {
             work();
         } else {

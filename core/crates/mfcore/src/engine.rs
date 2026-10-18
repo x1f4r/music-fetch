@@ -135,7 +135,7 @@ impl Drop for InstallGuard {
 }
 
 /// The Music Fetch engine: one per app, shared by every session.
-#[derive(uniffi::Object)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct Engine {
     ctx: Arc<EngineCtx>,
     runtime: Mutex<Option<tokio::runtime::Runtime>>,
@@ -143,11 +143,11 @@ pub struct Engine {
     index: Arc<IndexState>,
 }
 
-#[uniffi::export]
+#[cfg_attr(feature = "ffi", uniffi::export)]
 impl Engine {
     /// Create the engine. `media` overrides the built-in yt-dlp subprocess backend
     /// (`config.media_tools`); `decoder` and `speech` are optional.
-    #[uniffi::constructor]
+    #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(
         config: EngineConfig,
         media: Option<Arc<dyn MediaBackend>>,
@@ -749,7 +749,7 @@ impl Drop for Engine {
 }
 
 /// A running live session (microphone or system audio).
-#[derive(uniffi::Object)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct LiveSession {
     id: String,
     input: Arc<LiveInput>,
@@ -758,7 +758,7 @@ pub struct LiveSession {
     runtime: tokio::runtime::Handle,
 }
 
-#[uniffi::export]
+#[cfg_attr(feature = "ffi", uniffi::export)]
 impl LiveSession {
     /// The session id (also the library entry id).
     pub fn id(&self) -> String {
@@ -806,7 +806,7 @@ impl LiveSession {
 }
 
 /// A running analysis (link, file, lyric search, index download).
-#[derive(uniffi::Object)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct AnalysisSession {
     id: String,
     cancel: CancelToken,
@@ -814,7 +814,7 @@ pub struct AnalysisSession {
     runtime: tokio::runtime::Handle,
 }
 
-#[uniffi::export]
+#[cfg_attr(feature = "ffi", uniffi::export)]
 impl AnalysisSession {
     /// The session id (the library entry id, except for melody index downloads).
     pub fn id(&self) -> String {
