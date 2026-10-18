@@ -255,9 +255,9 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const started = Date.now();
     const session = await rpc<string>(app, 'mf-engine', 'analyze', [url, 'Mix', { tab_id: tabId, url, title: 'Fake Mix', facts: null }]);
     const result = await waitForSession(app, session, (s) => s !== 'Running', 120_000);
-    expect(result.status, await eventsOf(app, session)).toBe('Completed');
-    expect(result.segments.map((s) => s.title), JSON.stringify(result.segments)).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
     const where = `${JSON.stringify(result.segments)} ${await eventsOf(app, session)}`;
+    expect(result.status, where).toBe('Completed');
+    expect(result.segments.map((s) => s.title), where).toEqual(['Test Signal A', 'Test Signal B', 'Test Signal C']);
     expect(Math.abs(result.segments[0]!.end_ms - 20_000), where).toBeLessThanOrEqual(2000);
     expect(Math.abs(result.segments[1]!.end_ms - 40_000), where).toBeLessThanOrEqual(2000);
     // 60 s of media at 4×: well under a minute, ad included.
