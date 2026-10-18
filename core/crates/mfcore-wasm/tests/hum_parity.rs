@@ -14,6 +14,10 @@
 //!
 //! The queries file is TSV: WAV path (relative to the queries file), expected title,
 //! expected artist. Lines: `PARITY\t<wav>\t<expected>\t<top title>\t[[song, score], …]`.
+//!
+//! The browser build also installs the index through the engine from `<url>/manifest.json`
+//! (as the extension does: streamed into the work-file database with SHA-256 on the
+//! way), reads it back in pieces, and hums the first query through a live session.
 
 use mfcore::audio::decode::decode_bytes;
 use mfcore::audio::resample::i16_to_f32;
@@ -117,6 +121,131 @@ mod browser {
 
     fn log(line: &str) {
         web_sys::console::log_1(&line.into());
+    }
+
+    fn object(pairs: &[(&str, wasm_bindgen::JsValue)]) -> wasm_bindgen::JsValue {
+        let o = js_sys::Object::new();
+        for (k, v) in pairs {
+            js_sys::Reflect::set(&o, &(*k).into(), v).unwrap();
+        }
+        o.into()
+    }
+
+    async fn sleep(ms: i32) {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            let global = js_sys::global();
+            let set_timeout: js_sys::Function =
+                js_sys::Reflect::get(&global, &"setTimeout".into()).unwrap().unchecked_into();
+            set_timeout.call2(&global, &resolve, &ms.into()).unwrap();
+        });
+        JsFuture::from(promise).await.unwrap();
+    }
+
+    fn field(value: &wasm_bindgen::JsValue, name: &str) -> wasm_bindgen::JsValue {
+        js_sys::Reflect::get(value, &name.into()).unwrap()
+    }
+
+    /// The index installed through the engine (manifest, streamed download, SHA-256),
+    /// loaded back in pieces, then one query hummed through a live session.
+    #[wasm_bindgen_test]
+    async fn index_install_browser() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        use mfcore::model::{Outcome, SessionEvent};
+        use wasm_bindgen::prelude::*;
+
+        let Some(base) = option_env!("MF_PARITY_URL") else { return };
+        let events: Rc<RefCell<Vec<(String, SessionEvent)>>> = Rc::default();
+        let sink = events.clone();
+        let on_event = Closure::<dyn Fn(String, JsValue)>::new(move |id: String, event: JsValue| {
+            sink.borrow_mut().push((id, serde_wasm_bindgen::from_value(event).expect("event")));
+        });
+        let host = object(&[("onEvent", on_event.as_ref().clone())]);
+        on_event.forget();
+        let config = object(&[
+            ("storage", "memory".into()),
+            ("melody_index_manifest_url", format!("{base}/manifest.json").into()),
+            ("shazam_base_url", "http://127.0.0.1:9".into()),
+            ("offline_catalog", true.into()),
+        ]);
+        let engine = mfcore_wasm::WasmEngine::open_with(config, host).await.expect("engine");
+        let status = JsFuture::from(engine.check_melody_index().unwrap()).await.expect("check");
+        assert!(field(&status, "available_version").is_string(), "a version to install");
+        let started = Clock::now();
+        let id = engine.install_melody_index().expect("install");
+        let ended = loop {
+            if let Some(e) = events.borrow().iter().rev().find(|(i, e)| {
+                i == &id
+                    && matches!(e, SessionEvent::Finished { .. } | SessionEvent::Failed { .. } | SessionEvent::Canceled)
+            }) {
+                break e.1.clone();
+            }
+            sleep(50).await;
+        };
+        let install_ms = started.elapsed().as_millis();
+        assert!(matches!(ended, SessionEvent::Finished { .. }), "{ended:?}");
+        let phases =
+            events.borrow().iter().filter(|(i, e)| i == &id && matches!(e, SessionEvent::Phase { .. })).count();
+        let status = engine.melody_index_status().unwrap();
+        assert_eq!(field(&status, "installed"), JsValue::TRUE);
+        assert!(engine.melody_index_loaded().unwrap(), "the download is the loaded index");
+        let memory_installed = core::arch::wasm32::memory_size(0) * 64 / 1024;
+        engine.unload_melody_index().unwrap();
+        assert_eq!(field(&engine.melody_index_status().unwrap(), "installed"), JsValue::TRUE, "still installed");
+        let started = Clock::now();
+        assert_eq!(JsFuture::from(engine.load_melody_index().unwrap()).await.unwrap(), JsValue::TRUE);
+        let load_ms = started.elapsed().as_millis();
+        log(&format!(
+            "PARITY-INSTALL\tinstall {install_ms} ms ({phases} progress events)\tload {load_ms} ms\tmemory {memory_installed} MB, {} MB after reload\tsize {} bytes",
+            core::arch::wasm32::memory_size(0) * 64 / 1024,
+            field(&status, "size_bytes").as_f64().unwrap_or(0.0)
+        ));
+
+        // The first query hummed live, 20 ms at a time.
+        let tsv = String::from_utf8(fetch(&format!("{base}/queries.tsv")).await).expect("tsv");
+        let (wav, expected) = queries(&tsv).into_iter().next().expect("a query");
+        let samples = i16_to_f32(
+            &decode_bytes(&fetch(&format!("{base}/{wav}")).await, Some("wav"), &CancelToken::new()).unwrap(),
+        );
+        let options = object(&[("auto_stop", true.into())]);
+        let live = engine.start_listening("Microphone".into(), "Hum".into(), options).expect("hum");
+        let hum = live.id();
+        for piece in samples.chunks(320) {
+            if !live.is_capturing() {
+                break;
+            }
+            live.push_pcm(piece, 16_000, 1);
+            if live.backlog_ms() > 1000.0 {
+                sleep(0).await;
+            }
+        }
+        live.finish();
+        let outcome =
+            loop {
+                if let Some((_, e)) = events.borrow().iter().rev().find(|(i, e)| {
+                    i == &hum && matches!(e, SessionEvent::Finished { .. } | SessionEvent::Failed { .. })
+                }) {
+                    break e.clone();
+                }
+                sleep(50).await;
+            };
+        let top = events.borrow().iter().rev().find_map(|(i, e)| match e {
+            SessionEvent::Candidates { candidates, is_final: true } if i == &hum => {
+                candidates.first().map(|c| format!("{} – {}", c.track.artist, c.track.title))
+            }
+            _ => None,
+        });
+        log(&format!("PARITY-HUM\t{wav}\t{expected}\t{}\t{outcome:?}", top.unwrap_or_else(|| "-".into())));
+        assert!(matches!(
+            outcome,
+            SessionEvent::Finished { outcome: Outcome::Candidates { .. } | Outcome::NoMatch { .. } }
+        ));
+        engine.remove_melody_index().unwrap();
+            .await
+            .unwrap();
+        assert_eq!(field(&engine.melody_index_status().unwrap(), "installed"), JsValue::FALSE);
+        JsFuture::from(engine.close()).await.unwrap();
     }
 
     #[wasm_bindgen_test]
