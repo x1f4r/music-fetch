@@ -227,6 +227,8 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
       while (Date.now() < deadline) {
         [newest] = await rpc<{ id: string; status: string }[]>(pageWithApi, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
         if (newest && newest.status !== 'Running') break;
+        // Stop it as a user would once it has listened a while.
+        if (newest && deadline - Date.now() < 40_000) await rpc(pageWithApi, 'mf-engine', 'finishSession', [newest.id]).catch(() => undefined);
         await sleep(1000);
       }
       expect(newest?.status).toMatch(/^(NoMatch|Matched|Candidates)$/);

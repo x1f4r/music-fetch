@@ -154,11 +154,15 @@ export function pageMedia(url: string, page: PageContext | null): PageMedia {
   };
 }
 
+/** Windows end this far before the media does (players stop short of their end). */
+const SURVEY_END_MARGIN_MS = 1_000;
+
 /** Survey windows for a song of `durationMs`, in media ms. */
 export function surveyWindows(durationMs: number): [number, number][] {
-  const len = Math.min(SURVEY_WINDOW_MS, durationMs);
+  const last = Math.max(0, durationMs - SURVEY_END_MARGIN_MS);
+  const len = Math.min(SURVEY_WINDOW_MS, last);
   return SURVEY_FRACTIONS.map((f) => {
-    const start = Math.max(0, Math.min(durationMs - len, Math.round(durationMs * f - len / 2)));
+    const start = Math.max(0, Math.min(last - len, Math.round(durationMs * f - len / 2)));
     return [start, start + len] as [number, number];
   });
 }

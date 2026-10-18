@@ -177,7 +177,8 @@ describe.skipIf(!built)('the wasm engine behind the backend', () => {
 
   it('plans survey windows and reads the page facts as hints', () => {
     expect(surveyWindows(240_000)).toEqual([[113_000, 127_000], [41_000, 55_000], [185_000, 199_000]]);
-    expect(surveyWindows(10_000)).toEqual([[0, 10_000], [0, 10_000], [0, 10_000]]);
+    expect(surveyWindows(32_000)).toEqual([[9_000, 23_000], [0, 14_000], [17_000, 31_000]]);
+    expect(surveyWindows(10_000)).toEqual([[0, 9_000], [0, 9_000], [0, 9_000]]);
     const page = pageMedia('https://example.com/v', {
       tab_id: 3,
       url: 'https://example.com/v',

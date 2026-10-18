@@ -209,10 +209,12 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
     }, FRAME);
     const log = await rpc<string[]>(tab, 'mf-host', 'log').catch((e: Error) => [e.message]);
     expect(sources.some((s) => s.via === 'mic' && s.frames > 0), `${JSON.stringify(sources)} ${why} log: ${log.join(' | ')}`).toBe(true);
-    // Firefox's fake microphone plays no test song (sometimes nothing at all): the mock then
-    // ends with its scripted match or CaptureSilent. Either way the session ends and lands.
+    // Firefox's fake microphone plays no test song (sometimes nothing at all): the mock
+    // ends with its scripted match or CaptureSilent, the real engine with no match (a
+    // tone sounds like whistling). The user stops it here, so it ends and lands either way.
     const [newest] = await rpc<{ id: string; kind: string }[]>(tab, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
-    expect(newest?.kind).toBe('Listen');
+    expect(['Listen', 'Hum']).toContain(newest?.kind);
+    await rpc(tab, 'mf-engine', 'finishSession', [newest!.id]).catch(() => undefined);
     const ended = await waitForSession(tab, newest!.id, (s) => s !== 'Running', 45_000);
     expect(['Matched', 'NoMatch'], await eventsOf(tab, newest!.id)).toContain(ended.status);
   });
