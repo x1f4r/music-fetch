@@ -148,6 +148,30 @@ fn whistles_above_the_model_ceiling() {
 }
 
 #[test]
+fn high_whistles_take_the_4x_path() {
+    // Above the 2× path's 4.19 kHz ceiling.
+    let mut audio = Vec::new();
+    for hz in [4400.0, 4800.0, 4200.0] {
+        audio.extend((0..8000).map(|i| 0.3 * (2.0 * std::f32::consts::PI * hz * i as f32 / 16_000.0).sin()));
+    }
+    let t = tracker();
+    let a = t.analyze_detailed(&audio).expect("analysis");
+    assert!(a.whistle);
+    let at = |from: usize| median(a.frames[from..from + 20].iter().filter(|f| f.voiced).map(|f| f.hz).collect());
+    assert!((at(5) - 4400.0).abs() < 50.0, "{}", at(5));
+    assert!((at(36) - 4800.0).abs() < 50.0, "{}", at(36));
+    let mut s = StreamingPitch::new(t);
+    let mut frames = Vec::new();
+    for c in audio.chunks(320) {
+        frames.extend(s.push_detailed(c));
+    }
+    frames.extend(s.finish_detailed());
+    assert!(s.is_whistle());
+    assert_eq!(frames.len(), a.frames.len());
+    assert_eq!(frames[40..], a.frames[40..]);
+}
+
+#[test]
 fn upsampler_interpolates() {
     let x: Vec<f32> = (0..4000).map(|i| (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 16_000.0).sin()).collect();
     let y = upsample_2x(&x);

@@ -38,4 +38,4 @@ cat truth.jsonl lakh.jsonl > full.jsonl
 
 "$mf" eval qbsh --index full.mfi --queries mirqbsh.tsv --out results_mir.jsonl
 "$mf" eval qbsh --index full.mfi --queries ioacas.tsv --out results_ioa.jsonl
-"$py" -I "$here/fit_fusion.py" results_mir.jsonl results_ioa.jsonl
+"$py" -I "$here/fit_fusion.py" --calibrate mir,ioa mir=results_mir.jsonl ioa=results_ioa.jsonl

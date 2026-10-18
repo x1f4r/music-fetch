@@ -108,8 +108,10 @@ are free to evolve as long as that surface holds.
    Shazam has not matched by 10 s.
 4. In parallel, a voice-melody detector (voicing ratio, monophony, spectral flatness)
    decides whether the input is someone humming/singing/whistling. In `Auto`, once that
-   is likely, the session switches to impression rules: stop after ≥ 6 s voiced audio
-   followed by 1.5 s of silence, or at 20 s.
+   is likely, the session switches to impression rules: the melody is searched every
+   2 s while the user hums, and capture stops once that search is confident, after
+   ≥ 8 s voiced audio followed by 1.5 s of silence, or at 30 s. Less than 4 s voiced
+   asks the user to keep going instead of answering.
 5. `ListenMode::Hum` skips Shazam and only runs impression analysis.
 6. Without a recording match, impression analysis runs on the captured audio (see
    below). With too little signal the outcome is `NoMatch` with a reason code
@@ -119,11 +121,12 @@ are free to evolve as long as that surface holds.
 
 Run in parallel, then fused by identity:
 
-- **Melody:** f0 (SwiftF0; whistle path above ~1.2 kHz via half-speed trick) → median
+- **Melody:** f0 (SwiftF0; whistle path above ~1.2 kHz via the half- or quarter-speed trick) → median
   filter, octave fixing, gap handling → notes + 20 fps contour → retrieval on continuous
   per-song contours by key-invariant window vectors (inverted multi-index, alignment
   voting) and by note n-grams → quick DTW + rhythm-free note alignment → linear scaling →
-  subsequence DTW with key search → calibrated score fusion with a popularity prior.
+  subsequence DTW with key search → calibrated score fusion (stage evidence, reference
+  length, popularity, and how conclusive the hum itself is) → one answer per work.
   Requires the melody index (downloadable).
 - **Lyrics:** if speech is present, the app's `SpeechToText` transcribes the captured
   audio (macOS SpeechTranscriber, Android on-device recognizer). The core searches

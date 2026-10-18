@@ -167,3 +167,40 @@ fn votes_pool_into_the_right_placement() {
     assert!((best.anchor - 41.0).abs() < 1.0, "{}", best.anchor);
     assert!(placements.iter().filter(|p| p.track == 3).count() <= PLACEMENTS_PER_TRACK);
 }
+
+#[test]
+fn versions_of_a_work_are_one_answer() {
+    let mut rng = Rng(5);
+    let target = random_melody(&mut rng, 60);
+    let mut songs: Vec<SongInput> = (0..200).map(|i| song(&format!("Song {i}"), random_melody(&mut rng, 60))).collect();
+    // The original and a cover of it: same title, other artist, the same melody.
+    let mut original = song("Target (Remastered)", target.clone());
+    original.artist = "Original".into();
+    original.popularity = Some(0.9);
+    let mut cover = song("Target", target.clone());
+    cover.artist = "Cover Band".into();
+    cover.popularity = Some(0.2);
+    songs.push(cover);
+    songs.push(original);
+    let (bytes, _) = build_bytes(&songs, "test").expect("build");
+    let idx = MelodyIndex::from_bytes(bytes).expect("open");
+    let excerpt: Vec<[f64; 3]> = target[10..30].iter().map(|n| [n[0], n[1] - target[10][1], n[2]]).collect();
+    let query = query_from_frames(&sing(&excerpt, 2.0, 1.1, &mut rng)).expect("query");
+    let matches = search(&idx, &query, 5);
+    let best = matches.first().expect("match");
+    // One answer for the work, shown as the more popular recording.
+    assert_eq!(best.song.artist, "Original");
+    assert_eq!(matches.iter().filter(|m| m.song.title.starts_with("Target")).count(), 1);
+    let a = idx.find_song("Target", "Original").expect("original").id;
+    let b = idx.find_song("Target", "Cover Band").expect("cover").id;
+    assert_eq!(work_key(&idx, a), work_key(&idx, b));
+    let other = (0..idx.song_count()).find(|&i| i != a && i != b).expect("other");
+    assert_ne!(work_key(&idx, a), work_key(&idx, other));
+    let all = candidates(&idx, &query, &MatchOptions::default());
+    assert!(all.iter().any(|c| c.song == a || c.song == b));
+    // A cover that matches a little better gives way to the more popular original,
+    // with the work's best score; one that matches much better does not.
+    let shown = group_works(&idx, &[(b, 2.0), (other, 1.8), (a, 1.5)]);
+    assert_eq!(shown, vec![(2, 2.0), (1, 1.8)]);
+    assert_eq!(group_works(&idx, &[(b, 3.0), (a, 1.5)]), vec![(0, 3.0)]);
+}

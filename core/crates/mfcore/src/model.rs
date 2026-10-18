@@ -407,14 +407,21 @@ pub enum ListenMode {
 /// Options for `Engine::start_listening_with`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Record)]
 pub struct ListenOptions {
-    /// Stop automatically after a hummed/sung phrase ends (default true). When false
-    /// the session runs until `finish()` or the time limit.
+    /// Stop automatically after a hummed/sung phrase ends, or as soon as the melody
+    /// search is confident (default true). When false the session runs until
+    /// `finish()` or the time limit.
     pub auto_stop: bool,
+    /// While humming, emit the progressive melody search's candidates as interim
+    /// `Candidates { is_final: false }` events during `Phase::Listening` (default
+    /// false). See docs/PIPELINES.md ("Progressive melody search").
+    #[uniffi(default = false)]
+    #[serde(default)]
+    pub live_candidates: bool,
 }
 
 impl Default for ListenOptions {
     fn default() -> Self {
-        Self { auto_stop: true }
+        Self { auto_stop: true, live_candidates: false }
     }
 }
 

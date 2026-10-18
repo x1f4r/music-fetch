@@ -150,6 +150,11 @@ fn engine_with(server: &Server, manifest_path: &str) -> Fixture {
 /// `max_wait`: the longest breaker cool-down a query waits out.
 fn engine_with_wait(server: &Server, manifest_path: &str, max_wait: Duration) -> Fixture {
     let dir = std::env::temp_dir().join(format!("mf-engine-test-{}", mfcore::util::new_id()));
+    engine_in(dir, server, manifest_path, max_wait)
+}
+
+/// An engine in `dir` (which may already hold data, e.g. an installed index).
+fn engine_in(dir: PathBuf, server: &Server, manifest_path: &str, max_wait: Duration) -> Fixture {
     let config = EngineConfig {
         data_dir: dir.join("data").to_string_lossy().into_owned(),
         cache_dir: dir.join("cache").to_string_lossy().into_owned(),
@@ -514,6 +519,122 @@ fn hum_mode_keeps_the_recording_and_reports_a_missing_index() {
     fx.engine.delete_sessions(vec![session.id()]).unwrap();
     assert!(!recording.exists());
     assert!(fx.engine.session(session.id()).unwrap().is_none());
+}
+
+/// MIDI notes of [`hum`]: 400 ms each.
+const HUM_NOTES: [f32; 8] = [57.0, 59.0, 60.0, 62.0, 64.0, 62.0, 60.0, 59.0];
+
+/// An engine whose installed melody index holds the hummed tune and 40 other songs.
+fn engine_with_hum_index(server: &Server) -> Fixture {
+    let dir = std::env::temp_dir().join(format!("mf-engine-test-{}", mfcore::util::new_id()));
+    let melody = dir.join("data/melody");
+    std::fs::create_dir_all(&melody).unwrap();
+    let song = |title: &str, notes: Vec<f32>| -> String {
+        let notes: Vec<String> = notes.iter().enumerate().map(|(i, p)| format!("[{p}, {}, 400]", i * 400)).collect();
+        format!(
+            r#"{{"title": "{title}", "artist": "Band", "isrc": null, "deezer_id": null, "year": 2001, "popularity": 0.5, "phrases": [{{"source": "midi", "start_ms": 0, "notes": [{}]}}]}}"#,
+            notes.join(", ")
+        )
+    };
+    let mut lines = vec![song("Hummed Tune", (0..64).map(|i| HUM_NOTES[i % 8]).collect())];
+    let mut seed: u32 = 0x2545_f491;
+    for k in 0..40 {
+        let mut pitch = 60.0f32;
+        let notes = (0..64)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                pitch = (pitch + [-5.0, -3.0, -2.0, -1.0, 1.0, 2.0, 3.0, 4.0][(seed % 8) as usize]).clamp(50.0, 74.0);
+                pitch
+            })
+            .collect();
+        lines.push(song(&format!("Other Song {k}"), notes));
+    }
+    let jsonl = dir.join("songs.jsonl");
+    std::fs::write(&jsonl, lines.join("\n")).unwrap();
+    mfcore::melody::builder::build_index(&jsonl, &melody.join("melody-index.mfi"), "2026.10.1").expect("build index");
+    engine_in(dir, server, "/manifest.json", Duration::from_secs(5))
+}
+
+fn candidate_lists(events: &[SessionEvent], final_list: bool) -> Vec<Vec<Candidate>> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::Candidates { candidates, is_final } if *is_final == final_list => Some(candidates.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn recording_seconds(fx: &Fixture, session: &str) -> f32 {
+    let path = fx.dir.0.join("data/recordings").join(format!("{session}.wav"));
+    (path.metadata().unwrap().len() as f32 - 44.0) / 32_000.0
+}
+
+#[test]
+fn progressive_search_answers_while_humming_and_stops_when_confident() {
+    let server = shazam_server(NO_MATCH_JSON);
+    let fx = engine_with_hum_index(&server);
+    let recorder = Arc::new(Recorder::default());
+    let options = ListenOptions { auto_stop: true, live_candidates: true };
+    let session =
+        fx.engine.start_listening_with(CaptureSource::Microphone, ListenMode::Hum, options, recorder.clone()).unwrap();
+    feed(&session, &hum(25.0), 16_000, 1);
+    let events = recorder.wait_terminal();
+    assert!(matches!(check_contract(&events), SessionEvent::Finished { outcome: Outcome::Candidates { .. } }));
+    // Interim answers arrived while listening, before the final list.
+    let interim = candidate_lists(&events, false);
+    assert!(!interim.is_empty(), "{events:?}");
+    assert!(interim.iter().all(|list| list[0].track.title == "Hummed Tune"), "{interim:?}");
+    let first_interim = events.iter().position(|e| matches!(e, SessionEvent::Candidates { is_final: false, .. }));
+    let final_at = events.iter().position(|e| matches!(e, SessionEvent::Candidates { is_final: true, .. }));
+    assert!(first_interim < final_at);
+    let finals = candidate_lists(&events, true);
+    assert_eq!(finals.len(), 1);
+    assert_eq!(finals[0][0].track.title, "Hummed Tune");
+    assert_eq!(finals[0][0].tier, CandidateTier::Strong);
+    // A confident answer ends the capture long before the 25 s hum is over.
+    let seconds = recording_seconds(&fx, &session.id());
+    assert!(seconds < 12.0, "{seconds}");
+    assert!(!notices(&events).contains(&Notice::KeepGoing));
+}
+
+#[test]
+fn a_tiny_hum_asks_to_keep_going_instead_of_answering() {
+    let server = shazam_server(NO_MATCH_JSON);
+    let fx = engine_with_hum_index(&server);
+    let recorder = Arc::new(Recorder::default());
+    let session = fx.engine.start_listening(CaptureSource::Microphone, ListenMode::Hum, recorder.clone()).unwrap();
+    feed(&session, &hum(3.0), 16_000, 1);
+    session.finish();
+    let events = recorder.wait_terminal();
+    assert_eq!(
+        check_contract(&events),
+        SessionEvent::Finished { outcome: Outcome::NoMatch { reason: NoMatchReason::TooShort } }
+    );
+    assert_eq!(notices(&events).iter().filter(|n| **n == Notice::KeepGoing).count(), 1, "{events:?}");
+    assert!(candidate_lists(&events, false).is_empty() && candidate_lists(&events, true).is_empty());
+}
+
+#[test]
+fn without_auto_stop_a_hum_runs_until_finish_and_interim_lists_stay_off() {
+    let server = shazam_server(NO_MATCH_JSON);
+    let fx = engine_with_hum_index(&server);
+    let recorder = Arc::new(Recorder::default());
+    let options = ListenOptions { auto_stop: false, live_candidates: false };
+    let session =
+        fx.engine.start_listening_with(CaptureSource::Microphone, ListenMode::Hum, options, recorder.clone()).unwrap();
+    let mut audio = hum(12.0);
+    audio.extend(std::iter::repeat_n(0.0f32, 16_000 * 6));
+    feed(&session, &audio, 16_000, 1);
+    assert!(session.is_capturing(), "no auto-stop: still listening after a confident hum and a pause");
+    session.finish();
+    let events = recorder.wait_terminal();
+    assert!(matches!(check_contract(&events), SessionEvent::Finished { outcome: Outcome::Candidates { .. } }));
+    assert!(candidate_lists(&events, false).is_empty(), "interim lists are opt-in");
+    assert_eq!(candidate_lists(&events, true)[0][0].track.title, "Hummed Tune");
+    assert!((recording_seconds(&fx, &session.id()) - 18.0).abs() < 0.5);
 }
 
 #[test]

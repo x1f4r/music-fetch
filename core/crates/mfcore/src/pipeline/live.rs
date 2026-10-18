@@ -18,10 +18,11 @@ use parking_lot::{Condvar, Mutex};
 use crate::audio::SAMPLE_RATE;
 use crate::audio::resample::{StreamResampler, f32_to_i16};
 use crate::error::{MfError, Result};
+use crate::melody::pitch::FrameDetail;
 use crate::melody::{ImpressionDetector, StreamingPitch};
 use crate::model::{
-    CaptureSource, Evidence, ListenMode, NoMatchReason, Notice, Outcome, Phase, PitchFrame, Segment, SegmentKind,
-    SessionKind, Tier,
+    CaptureSource, Evidence, ListenMode, ListenOptions, NoMatchReason, Notice, Outcome, Phase, PitchFrame, Segment,
+    SegmentKind, SessionKind, Tier,
 };
 use crate::pipeline::ctx::SessionCtx;
 use crate::pipeline::hum;
@@ -54,12 +55,25 @@ const MAX_BACKLOG_MS: f64 = 5_000.0;
 const MIN_INPUT_RATE: u32 = 8_000;
 const MAX_INPUT_RATE: u32 = 192_000;
 const MAX_INPUT_CHANNELS: u32 = 32;
-/// Impression auto-stop: enough voiced audio followed by a pause, or a time limit.
-const IMPRESSION_MIN_VOICED_MS: u64 = 6_000;
+/// Impression auto-stop: a confident answer, enough voiced audio followed by a
+/// pause, a long pause, or a time limit.
+const IMPRESSION_MIN_VOICED_MS: u64 = 8_000;
 const IMPRESSION_PAUSE_MS: u64 = 1_500;
-const IMPRESSION_MAX_MS: u64 = 20_000;
-const KEEP_GOING_MS: u64 = 3_000;
-const ANALYZE_MIN_VOICED_MS: u64 = 2_500;
+/// Any pause this long ends the impression once something was hummed.
+const IMPRESSION_LONG_PAUSE_MS: u64 = 5_000;
+const IMPRESSION_LONG_PAUSE_VOICED_MS: u64 = 1_000;
+const IMPRESSION_MAX_MS: u64 = 30_000;
+/// Less voicing than this gets `KeepGoing` instead of an answer.
+const KEEP_GOING_MS: u64 = 4_000;
+/// Progressive melody search while the user hums: every 2 s of capture (4 s in
+/// low-power mode) once enough is voiced, one search at a time.
+const SEARCH_EVERY_MS: u64 = 2_000;
+const SEARCH_EVERY_LOW_POWER_MS: u64 = 4_000;
+const SEARCH_MIN_VOICED_MS: u64 = KEEP_GOING_MS;
+/// A top answer this likely, with no runner-up above `CONFIDENT_RUNNER_UP`, that
+/// two searches in a row agree on, ends the capture early.
+const CONFIDENT_SCORE: f32 = 0.8;
+const CONFIDENT_RUNNER_UP: f32 = 0.1;
 /// Finishing runs one more query when the last one is older than this.
 const FINAL_QUERY_AGE_MS: u64 = 4_000;
 const MIN_AUDIBLE_MS: u64 = 3_000;
@@ -216,6 +230,7 @@ pub fn spawn(
     ctx: Arc<SessionCtx>,
     source: CaptureSource,
     mode: ListenMode,
+    options: ListenOptions,
     input: Arc<LiveInput>,
     on_exit: impl FnOnce() + Send + 'static,
 ) -> Result<()> {
@@ -225,7 +240,8 @@ pub fn spawn(
         .spawn(move || {
             let kind = session_kind(source, mode);
             ctx.emitter.started(kind);
-            let outcome = catch_unwind(AssertUnwindSafe(|| Live::new(ctx.clone(), source, mode, input.clone()).run()));
+            let outcome =
+                catch_unwind(AssertUnwindSafe(|| Live::new(ctx.clone(), source, mode, options, input.clone()).run()));
             if let Err(panic) = outcome {
                 tracing::error!(session = %ctx.id, "live session panicked: {}", panic_message(&panic));
                 ctx.emitter.failed(&MfError::internal("the session stopped unexpectedly"));
@@ -273,17 +289,31 @@ enum Stop {
     Limit,
     /// Impression auto-stop.
     Impression,
+    /// The progressive melody search is confident.
+    Confident,
     /// The app called `finish()`.
     User,
     Canceled,
 }
 
 type QueryTask = tokio::task::JoinHandle<Result<Option<RecognitionHit>>>;
+/// A progressive melody search over the first `frames` pitch frames.
+type SearchTask = (usize, tokio::task::JoinHandle<Option<hum::MelodySearch>>);
+
+/// The newest finished progressive search.
+struct Searched {
+    /// Pitch frames it covered.
+    frames: usize,
+    /// Top song and score.
+    top: Option<(u32, f32)>,
+    result: hum::MelodySearch,
+}
 
 struct Live {
     ctx: Arc<SessionCtx>,
     input: Arc<LiveInput>,
     mode: ListenMode,
+    options: ListenOptions,
     resampler: Option<StreamResampler>,
     /// 16 kHz mono capture (≤ 30 s).
     capture: Vec<f32>,
@@ -301,6 +331,15 @@ struct Live {
     pitch: Option<StreamingPitch>,
     detector: Option<ImpressionDetector>,
     frames: Vec<PitchFrame>,
+    details: Vec<FrameDetail>,
+    // Progressive melody search.
+    search: Option<SearchTask>,
+    searched: Option<Searched>,
+    next_search_ms: u64,
+    confident: bool,
+    /// Interim candidates are on screen (`ListenOptions::live_candidates`).
+    shown_candidates: bool,
+    keep_going_noticed: bool,
     // Recording queries.
     next_query: usize,
     pending_query: bool,
@@ -314,12 +353,19 @@ struct Live {
 }
 
 impl Live {
-    fn new(ctx: Arc<SessionCtx>, source: CaptureSource, mode: ListenMode, input: Arc<LiveInput>) -> Self {
+    fn new(
+        ctx: Arc<SessionCtx>,
+        source: CaptureSource,
+        mode: ListenMode,
+        options: ListenOptions,
+        input: Arc<LiveInput>,
+    ) -> Self {
         let mode = if source == CaptureSource::SystemAudio { ListenMode::Recording } else { mode };
         Self {
             ctx,
             input,
             mode,
+            options,
             resampler: None,
             capture: Vec::with_capacity(MAX_CAPTURE_MS as usize * SAMPLE_RATE as usize / 1000),
             resampled: Vec::new(),
@@ -333,6 +379,13 @@ impl Live {
             pitch: None,
             detector: None,
             frames: Vec::new(),
+            details: Vec::new(),
+            search: None,
+            searched: None,
+            next_search_ms: 0,
+            confident: false,
+            shown_candidates: false,
+            keep_going_noticed: false,
             next_query: 0,
             pending_query: false,
             last_query_ms: None,
@@ -385,6 +438,7 @@ impl Live {
                 return Stop::Canceled;
             }
             self.poll_queries();
+            self.poll_search();
             if self.matched.is_some() {
                 return Stop::Matched;
             }
@@ -395,6 +449,7 @@ impl Live {
                 Ok(Some(chunk)) => {
                     self.process(chunk);
                     self.poll_queries();
+                    self.poll_search();
                     self.input.busy.store(false, Ordering::SeqCst);
                 }
                 Ok(None) => {}
@@ -452,8 +507,9 @@ impl Live {
             }
         }
         if let Some(pitch) = self.pitch.as_mut() {
-            match guarded("pitch tracking", || pitch.push(new)) {
-                Some(frames) => {
+            match guarded("pitch tracking", || pitch.push_detailed(new)) {
+                Some(details) => {
+                    let frames: Vec<PitchFrame> = details.iter().map(FrameDetail::to_pitch_frame).collect();
                     if !frames.is_empty() {
                         self.ctx.emitter.pitch(&frames);
                     }
@@ -463,6 +519,7 @@ impl Live {
                         self.detector = None;
                     }
                     self.frames.extend(frames);
+                    self.details.extend(details);
                 }
                 None => {
                     self.pitch = None;
@@ -516,8 +573,80 @@ impl Live {
                 self.paid_started = true;
                 self.issue_paid();
             }
+        } else {
+            self.issue_search();
+            self.keep_going_hint();
         }
         self.update_inflight();
+    }
+
+    /// Start a progressive melody search when one is due.
+    fn issue_search(&mut self) {
+        let elapsed = self.elapsed_ms();
+        if self.search.is_some() || self.confident || elapsed < self.next_search_ms {
+            return;
+        }
+        if self.voiced_ms() < SEARCH_MIN_VOICED_MS {
+            return;
+        }
+        let Some(index) = self.ctx.engine.melody_index() else { return };
+        let every = if self.ctx.engine.is_low_power() { SEARCH_EVERY_LOW_POWER_MS } else { SEARCH_EVERY_MS };
+        self.next_search_ms = elapsed + every;
+        let frames = self.details.clone();
+        let n = frames.len();
+        let task = self.ctx.engine.runtime.spawn_blocking(move || hum::search_frames(&index, &frames));
+        self.search = Some((n, task));
+    }
+
+    /// Collect a finished progressive search: interim candidates, confidence.
+    fn poll_search(&mut self) {
+        if !self.search.as_ref().is_some_and(|(_, t)| t.is_finished()) {
+            return;
+        }
+        let Some((frames, task)) = self.search.take() else { return };
+        let runtime = self.ctx.engine.runtime.clone();
+        match runtime.block_on(task) {
+            Ok(Some(result)) => self.take_search(frames, result),
+            Ok(None) => {}
+            Err(e) => tracing::error!("progressive melody search failed: {e}"),
+        }
+        self.update_inflight();
+    }
+
+    fn take_search(&mut self, frames: usize, result: hum::MelodySearch) {
+        let top = result.matches.first().map(|m| (m.song.id, m.score));
+        let runner_up = result.matches.get(1).map(|m| m.score).unwrap_or(0.0);
+        let agrees = self.searched.as_ref().and_then(|s| s.top).zip(top).is_some_and(|(a, b)| a.0 == b.0);
+        if self.options.auto_stop
+            && agrees
+            && top.is_some_and(|(_, score)| score >= CONFIDENT_SCORE)
+            && runner_up <= CONFIDENT_RUNNER_UP
+        {
+            self.confident = true;
+        }
+        if self.options.live_candidates {
+            let candidates = hum::melody_candidates(&result.matches);
+            // An empty list clears a previous one.
+            if !candidates.is_empty() || self.shown_candidates {
+                self.shown_candidates = !candidates.is_empty();
+                self.ctx.emitter.candidates(candidates, false);
+            }
+        }
+        self.searched = Some(Searched { frames, top, result });
+    }
+
+    /// A pause before there is enough to search with: ask for more, once.
+    fn keep_going_hint(&mut self) {
+        if self.keep_going_noticed {
+            return;
+        }
+        let voiced = self.voiced_ms();
+        if (IMPRESSION_LONG_PAUSE_VOICED_MS..KEEP_GOING_MS).contains(&voiced)
+            && self.pause_ms().is_some_and(|p| p >= IMPRESSION_PAUSE_MS)
+        {
+            self.keep_going_noticed = true;
+            self.ctx.emitter.notice(Notice::KeepGoing);
+        }
     }
 
     fn impression_verdict(&mut self) -> Option<bool> {
@@ -566,7 +695,18 @@ impl Live {
         if elapsed.saturating_sub(started) >= IMPRESSION_MAX_MS {
             return Some(Stop::Impression);
         }
-        if self.voiced_ms() >= IMPRESSION_MIN_VOICED_MS && self.pause_ms().is_some_and(|p| p >= IMPRESSION_PAUSE_MS) {
+        if !self.options.auto_stop {
+            return None;
+        }
+        if self.confident {
+            return Some(Stop::Confident);
+        }
+        let voiced = self.voiced_ms();
+        let pause = self.pause_ms().unwrap_or(0);
+        if voiced >= IMPRESSION_MIN_VOICED_MS && pause >= IMPRESSION_PAUSE_MS {
+            return Some(Stop::Impression);
+        }
+        if voiced >= IMPRESSION_LONG_PAUSE_VOICED_MS && pause >= IMPRESSION_LONG_PAUSE_MS {
             return Some(Stop::Impression);
         }
         None
@@ -608,7 +748,8 @@ impl Live {
     }
 
     fn update_inflight(&self) {
-        self.input.inflight.store(self.shazam.is_some() || self.paid.is_some(), Ordering::SeqCst);
+        let busy = self.shazam.is_some() || self.paid.is_some() || self.search.is_some();
+        self.input.inflight.store(busy, Ordering::SeqCst);
     }
 
     /// Collect finished recognizer calls; issue a query that was waiting.
@@ -728,21 +869,52 @@ impl Live {
     }
 
     async fn finish_impression(&mut self, stop: Stop) {
-        let voiced = self.voiced_ms();
-        if stop == Stop::User && voiced < KEEP_GOING_MS {
-            self.ctx.emitter.notice(Notice::KeepGoing);
+        if let Some(pitch) = self.pitch.as_mut()
+            && let Some(rest) = guarded("pitch tracking", || pitch.finish_detailed())
+        {
+            self.details.extend(rest);
         }
+        let voiced = self.voiced_ms();
         let kind = Some(SessionKind::Hum);
-        if voiced < ANALYZE_MIN_VOICED_MS {
+        // Too little to answer with: ask for more instead of guessing.
+        if voiced < KEEP_GOING_MS {
+            if !self.keep_going_noticed {
+                self.ctx.emitter.notice(Notice::KeepGoing);
+            }
             let reason = self.no_match_reason(true);
             self.ctx.emitter.finished(Outcome::NoMatch { reason }, SessionUpdate { kind, ..Default::default() });
             return;
         }
         self.ctx.emitter.flush_pitch();
+        // A search still running may cover the whole capture.
+        if let Some((frames, task)) = self.search.take() {
+            match task.await {
+                Ok(Some(result)) => self.take_search(frames, result),
+                Ok(None) => {}
+                Err(e) => tracing::error!("progressive melody search failed: {e}"),
+            }
+        }
+        tracing::debug!(?stop, voiced, "impression finished");
+        // The streaming frames are the batch analysis's unless the stream took the
+        // whistle path, which it cannot revise: a hissy onset, sibilants or whistles
+        // near 1.2 kHz can switch it where the batch analysis, voting on the whole
+        // clip, would not. Then (or when the tracker failed) the whole capture is
+        // tracked again. Otherwise the last progressive search is the answer when
+        // nothing was voiced after it, and the final search runs on the streaming
+        // frames. After a confident stop the last search is the answer either way.
+        let direct = self.pitch.as_ref().is_some_and(|p| !p.is_whistle());
+        let melody = match self.searched.take() {
+            Some(s)
+                if (stop == Stop::Confident || direct)
+                    && !self.details[s.frames.min(self.details.len())..].iter().any(|f| f.voiced) =>
+            {
+                hum::MelodyInput::Searched(s.result)
+            }
+            _ if direct && !self.details.is_empty() => hum::MelodyInput::Frames(std::mem::take(&mut self.details)),
+            _ => hum::MelodyInput::Track,
+        };
         let capture = std::mem::take(&mut self.capture);
-        // The live frames drive the trace and the detector; matching re-tracks the
-        // whole capture offline, which measured a few points better on MIR-QBSH.
-        match hum::run_impression_detailed(&self.ctx, &capture, None, false).await {
+        match hum::run_impression_detailed(&self.ctx, &capture, melody, true, self.shown_candidates).await {
             Ok((outcome, candidates)) => {
                 let top = candidates.first().map(|c| &c.track);
                 let update = SessionUpdate {
