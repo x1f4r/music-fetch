@@ -324,5 +324,6 @@ export interface WebEngineConfig {
   shazam_base_url?: string | null;
   offline_catalog?: boolean;
   test_pacing_ms?: number | null;
+  test_stub?: string | null;
   log_level?: string;
 }

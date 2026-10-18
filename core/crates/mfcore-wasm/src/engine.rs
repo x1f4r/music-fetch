@@ -117,8 +117,12 @@ impl WasmEngine {
             media_tools: None,
             melody_index_manifest_url: config.melody_index_manifest_url,
         };
+        if let Some(stub) = config.test_stub.as_deref() {
+            mfcore::util::endpoints::install(Some(js(mfcore::util::endpoints::TestEndpoints::stub(stub))?));
+        }
         // A local stub recognizer in tests answers at once: no need to pace.
-        let fast = config.test_pacing_ms.filter(|_| config.shazam_base_url.is_some()).map(Duration::from_millis);
+        let stubbed = config.shazam_base_url.is_some() || config.test_stub.is_some();
+        let fast = config.test_pacing_ms.filter(|_| stubbed).map(Duration::from_millis);
         let options = EngineOptions {
             shazam_base_url: config.shazam_base_url,
             offline_catalog: config.offline_catalog,

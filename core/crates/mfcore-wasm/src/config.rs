@@ -25,8 +25,11 @@ pub struct WebEngineConfig {
     /// Tests only: no catalog enrichment.
     pub offline_catalog: bool,
     /// Tests only: pace recognizer requests this many ms apart instead of the
-    /// product's spacing (only with `shazam_base_url`).
+    /// product's spacing (only with `shazam_base_url` or `test_stub`).
     pub test_pacing_ms: Option<u64>,
+    /// Tests only: send every engine request to this stub recognizer (`mf dev
+    /// stub-recognizer`, loopback only): Shazam, the catalogs, lyrics, the melody index.
+    pub test_stub: Option<String>,
     /// Console log level: "error", "warn" (default), "info", "debug".
     pub log_level: String,
 }
@@ -44,6 +47,7 @@ impl Default for WebEngineConfig {
             shazam_base_url: None,
             offline_catalog: false,
             test_pacing_ms: None,
+            test_stub: None,
             log_level: "warn".into(),
         }
     }

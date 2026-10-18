@@ -6,8 +6,10 @@
 //   --pkg   the JS glue (default: extension/src/engine/wasm, see build.sh)
 //   --wasm  the module (default: extension/public/engine/mfcore.wasm)
 //   --wav   16-bit PCM WAV to listen to (default: 12 s of synthetic music)
-//   --stub  a running stub recognizer (e.g. `mf dev stub-recognizer`); without it a
-//           built-in one answers every query with the canned "Get Lucky" match
+//   --stub  a running stub recognizer that answers Shazam's discovery path at its root
+//   --mf-stub  a running `mf dev stub-recognizer` (all services routed to it)
+//           without either, a built-in stub answers every query with the canned
+//           "Get Lucky" match
 //
 // Exit code 0 when the session ends matched, 1 otherwise.
 import fs from 'node:fs';
@@ -35,7 +37,7 @@ const tInit = performance.now();
 let stubUrl = args.stub;
 let server = null;
 let queries = 0;
-if (!stubUrl) {
+if (!stubUrl && !args['mf-stub']) {
   const match = fs.readFileSync(path.join(repo, 'core/crates/mfcore/src/shazam/testdata/match_get_lucky.json'));
   server = http.createServer((req, res) => {
     const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
@@ -106,7 +108,9 @@ const audio = readWav(wavFile);
 // ---- the session
 const events = [];
 const engine = await wasm.Engine.create(
-  { storage: 'memory', shazam_base_url: stubUrl, offline_catalog: true, log_level: 'warn' },
+  args['mf-stub']
+    ? { storage: 'memory', test_stub: args['mf-stub'], test_pacing_ms: 200, log_level: 'warn' }
+    : { storage: 'memory', shazam_base_url: stubUrl, offline_catalog: true, log_level: 'warn' },
   { onEvent: (id, event) => events.push({ id, event, at: performance.now() }) },
 );
 const tEngine = performance.now();
