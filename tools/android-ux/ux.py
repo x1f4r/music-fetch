@@ -309,12 +309,17 @@ def pinned_filter(d):
     d.launch(ready="nav.library")
     to_library_root(d)
     d.wait("library.pinned", 30)
-    d.swipe(*_mid(d, 0.9, 0.17), *_mid(d, 0.1, 0.17))
+    # Tap the Pinned chip where it peeks out at the end of the row: the row brings it into view.
+    if not d.exists("library.filter.pinned"):
+        _, row_y = d.center(d.wait("library.filter.all"))
+        width, _ = d.size()
+        d.swipe(int(width * 0.9), row_y, int(width * 0.5), row_y)
     d.tap("library.filter.pinned")
     d.shot("filter-pinned")
-    d.tap("library.filter.all", timeout=5) if d.exists("library.filter.all") else d.swipe(*_mid(d, 0.1, 0.17), *_mid(d, 0.9, 0.17))
-    if d.exists("library.filter.all"):
-        d.tap("library.filter.all")
+    _, row_y = d.center(d.wait("library.filter.pinned"))
+    width, _ = d.size()
+    d.swipe(int(width * 0.1), row_y, int(width * 0.9), row_y)
+    d.tap("library.filter.all")
     d.tap("library.search")
     d.text("zzzz")
     d.sh("input keyevent KEYCODE_BACK")  # keyboard

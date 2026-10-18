@@ -30,7 +30,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -64,6 +66,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -111,6 +114,7 @@ import app.musicfetch.ui.session.share
 import app.musicfetch.ui.theme.StandardMotion
 import app.musicfetch.ui.theme.TabularNumbers
 import java.time.LocalDate
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** The library (docs/design/DESIGN.md §6.8, Android). */
@@ -222,7 +226,12 @@ fun LibraryScreen(viewModel: LibraryViewModel = viewModel()) {
                     )
                 }
             }
+            // The selected filter stays in view, also when it was chosen from its visible edge or
+            // restored after a configuration change.
+            val chipRow = rememberLazyListState()
+            LaunchedEffect(filter) { chipRow.reveal(LibraryFilter.entries.indexOf(filter)) }
             LazyRow(
+                state = chipRow,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 modifier = Modifier.padding(bottom = 4.dp),
@@ -338,6 +347,21 @@ fun LibraryScreen(viewModel: LibraryViewModel = viewModel()) {
 
 /** More pinned sessions than this make the section collapsible. */
 private const val PINNED_COLLAPSE_AT = 5
+
+/** Scrolls the least needed to show item [index] whole, inside the content padding. */
+private suspend fun LazyListState.reveal(index: Int) {
+    if (index < 0) return
+    // Measure first (a filter restored with the screen).
+    snapshotFlow { layoutInfo.visibleItemsInfo.isNotEmpty() }.first { it }
+    val info = layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.index == index }
+    val end = info.viewportEndOffset - info.afterContentPadding
+    when {
+        item == null -> animateScrollToItem(index)
+        item.offset < 0 -> animateScrollBy(item.offset.toFloat())
+        item.offset + item.size > end -> animateScrollBy((item.offset + item.size - end).toFloat())
+    }
+}
 
 private fun filterLabel(filter: LibraryFilter): Int = when (filter) {
     LibraryFilter.All -> R.string.library_filter_all
