@@ -60,9 +60,9 @@ This document describes the behaviour the types cannot express.
 - While the user hums (`ListenMode::Hum`, or `Auto` after `Notice::ImpressionDetected`)
   the core searches the melody index every 2 s (4 s in low-power mode) once 4 s are
   voiced. With `auto_stop` the session stops by itself as soon as an answer is clear (a
-  top score ≥ 0.8 that two searches in a row agree on), after a phrase (≥ 8 s voiced, then a
-  1.5 s pause), after a 5 s pause, or at 30 s. Without it, only `finish()` and the 30 s
-  limit stop it.
+  top answer scoring ≥ 0.8 that the previous search also had on top), after a phrase
+  (≥ 8 s voiced, then a 1.5 s pause), after a 5 s pause, or at 30 s. Without it, only
+  `finish()` and the 30 s limit stop it.
 - `live_candidates: true` makes each search's melody candidates arrive as
   `Candidates { is_final: false }` while the phase is still `Listening`. They are
   provisional: melody only, not enriched (no artwork yet), and each list replaces the
