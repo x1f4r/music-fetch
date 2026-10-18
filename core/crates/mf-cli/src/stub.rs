@@ -130,14 +130,14 @@ const PLAYLIST_ID: u64 = 700_000_001;
 const MAX_BODY: usize = 4 * 1024 * 1024;
 
 /// What the recognizer accepts as a match; below it the stub answers "no match",
-/// as Shazam would. A true match aligns several hashes per query peak (150–2500
-/// for a 3–12 s query); songs with similar drums and tempos align a few dozen
-/// by chance, which the per-peak rate and the lead keep out.
+/// as Shazam would. A true match aligns hashes at 0.25–5 per query peak (the low
+/// end under a speed change); songs with similar tempos align a few by chance
+/// (under 0.15 per peak), which the rate and the lead keep out.
 fn confident(m: &Match, query_peaks: usize) -> bool {
     m.score >= 40
-        && m.score as f32 >= 2.0 * m.other as f32
+        && m.score as f32 >= 1.5 * m.other as f32
         && m.score as f32 >= 8.0 * m.noise.max(1.0)
-        && m.score as f32 >= 0.6 * query_peaks as f32
+        && m.score as f32 >= 0.25 * query_peaks as f32
 }
 
 struct Logged {
