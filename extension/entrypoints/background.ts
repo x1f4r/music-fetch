@@ -10,6 +10,7 @@ import { HOST_PORT } from '@/src/messaging/protocol';
 import { installHeaderRules } from '@/src/net/rules';
 import { closeOffscreenHost, ensureOffscreenHost } from '@/src/platform/offscreen';
 import { needsProviderPanel, settings } from '@/src/settings/settings';
+import { startTriggers } from '@/src/triggers/background';
 
 /**
  * Chromium: the service worker routes. It starts and closes the offscreen engine host,
@@ -42,6 +43,8 @@ export default defineBackground(() => {
   });
   notifications.listenToClicks();
   host?.onActivity((activity) => notifications.report(activity));
+  // Shortcuts and context menus: identify without opening a surface (X7).
+  startTriggers({ host, notifier: notifications.notifier });
 
   onControl({
     'mf:host.ensure': async () => {

@@ -4,12 +4,15 @@ import type { LibraryEntry, PageContext, Track } from '../engine/types';
 import { t } from '../i18n';
 import { isRunning, promptStage } from '../models/stage';
 import { nativeListenUrl } from '../platform/native-app';
+import { isMediaPageLink } from '../platform/media-links';
 import { isAnalyzablePage, type ActiveTab } from '../platform/surfaces';
 import { primaryLink, providerLinks } from '../providers/links';
 import { serviceName } from '../providers/services';
 import { loadProviderSettings, settings, watchProviderSettings, type AnalyzeChoice, type ListenChoice, type ProviderSettings } from '../settings/settings';
 import type { Platform } from './context';
 import { ListenController } from './listen.svelte';
+
+export { isMediaPageLink };
 
 /** Long media gets the "Analyze the whole video?" sheet (plan §5.4). */
 export const ASK_MIN_SECONDS = 10 * 60;
@@ -22,22 +25,6 @@ export interface AskRequest {
   site: string;
   durationMs: number;
   page: PageContext;
-}
-
-const MEDIA_HOSTS = /(^|\.)(youtube\.com|youtu\.be|soundcloud\.com|mixcloud\.com|twitch\.tv|vimeo\.com|tiktok\.com)$/;
-
-/** A link to a video or audio page (not a streaming catalog): its sound only plays on the page. */
-export function isMediaPageLink(text: string): boolean {
-  try {
-    const url = new URL(text.trim());
-    const host = url.hostname.replace(/^(www|m)\./, '');
-    if (host === 'music.youtube.com') return false;
-    if (host === 'soundcloud.com' && url.pathname.includes('/sets/')) return false;
-    if ((host === 'youtube.com' || host === 'youtu.be') && url.searchParams.has('list') && !url.searchParams.has('v')) return false;
-    return MEDIA_HOSTS.test(host);
-  } catch {
-    return false;
-  }
 }
 
 /**

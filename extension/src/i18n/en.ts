@@ -463,6 +463,7 @@ export const en = {
   'notify.needsInvocation': 'Click the Music Fetch button on this tab, then try again.',
   'notify.micUnavailable': 'Open Music Fetch to use the microphone.',
   'notify.playFirst': 'Play it, then try again.',
+  'notify.hostRefused': "Music Fetch can't read %@ without your permission.",
 
   'menu.identifyTab': 'Identify music in this tab',
   'menu.identifyLink': 'Identify this link',

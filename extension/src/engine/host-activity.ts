@@ -37,6 +37,7 @@ export class BackgroundNotifications {
       openSession: (id) => void browser.tabs.create({ url: appUrl(`/session/${id}`) }),
       openUrl: (url) => void browser.tabs.create({ url }),
       tryAgain: () => void openApp('/listen'),
+      openListen: () => void openApp('/listen'),
     });
   }
 

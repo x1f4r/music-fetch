@@ -3,6 +3,7 @@ import { isTerminal } from '../engine/events';
 import type { Outcome, SessionEvent } from '../engine/types';
 import { tm, type Message } from '../i18n';
 import { badgeFor, resultNotification } from '../models/notifications';
+import { errorLine } from '../models/stage';
 import { primaryLink, providerLinks } from '../providers/links';
 import { serviceName } from '../providers/services';
 import { loadProviderSettings, settings } from '../settings/settings';
@@ -27,6 +28,8 @@ export interface NotifierHooks {
   openSession(sessionId: string): void;
   openUrl(url: string): void;
   tryAgain(sessionId: string): void;
+  /** A problem notification was clicked: open Music Fetch. */
+  openListen?(): void;
 }
 
 interface Running {
@@ -37,12 +40,27 @@ interface Running {
 export interface Notifier {
   /** A click on the notification or one of its buttons (index), from the browser's events. */
   clicked(notificationId: string, button?: number): Promise<void>;
+  /**
+   * A session a shortcut or context menu started (X7): its answer is a notification even
+   * when a surface is open somewhere, because the user asked without one. It may already
+   * have ended (a link resolves in under a second), then it is shown now.
+   */
+  expect(sessionId: string): void;
+  /** A shortcut or menu that couldn't start: say why. A click opens Music Fetch. */
+  problem(message: string): void;
   stop(): void;
 }
+
+/** Sessions that ended unannounced, kept briefly in case a trigger claims them (`expect`). */
+const RECENT_MS = 30_000;
 
 export function startNotifier(engine: EngineClient, api: NotifierApi, hooks: NotifierHooks): Notifier {
   const running = new Map<string, Running>();
   const shown = new Map<string, { sessionId: string; outcome: Outcome }>();
+  const expected = new Set<string>();
+  const recent = new Map<string, { event: SessionEvent; at: number; shown: boolean }>();
+  const problems = new Set<string>();
+  let problemCount = 0;
 
   const badge = () => {
     const states = [...running.values()];
@@ -52,8 +70,34 @@ export function startNotifier(engine: EngineClient, api: NotifierApi, hooks: Not
   };
 
   async function finished(sessionId: string, event: SessionEvent) {
+    if (expected.delete(sessionId)) {
+      await announce(sessionId, event);
+      return;
+    }
+    // A trigger may still claim it (its `expect` can arrive after the end).
+    const now = Date.now();
+    for (const [id, entry] of recent) if (now - entry.at > RECENT_MS) recent.delete(id);
+    recent.set(sessionId, { event, at: now, shown: false });
     if (typeof event !== 'object' || !('Finished' in event)) return;
     if (hooks.hasUi() || !(await settings.notifyInBackground.getValue())) return;
+    recent.get(sessionId)!.shown = true;
+    await show(sessionId, event);
+  }
+
+  /** The answer to a trigger: the result, or why the session failed. */
+  async function announce(sessionId: string, event: SessionEvent) {
+    if (typeof event !== 'object') return;
+    if ('Failed' in event) problem(tm({ key: errorLine(event.Failed.code) }));
+    else if ('Finished' in event) await show(sessionId, event);
+  }
+
+  function problem(message: string) {
+    const id = `mf-problem-${++problemCount}`;
+    problems.add(id);
+    api.notify(id, { title: tm({ key: 'app.name' }), message, buttons: [] });
+  }
+
+  async function show(sessionId: string, event: Extract<SessionEvent, { Finished: unknown }>) {
     const detail = await engine.session(sessionId).catch(() => null);
     if (!detail) return;
     const providers = await loadProviderSettings();
@@ -86,7 +130,22 @@ export function startNotifier(engine: EngineClient, api: NotifierApi, hooks: Not
   });
 
   return {
+    expect(sessionId) {
+      const ended = recent.get(sessionId);
+      if (!ended) {
+        expected.add(sessionId);
+        return;
+      }
+      recent.delete(sessionId);
+      if (!ended.shown) void announce(sessionId, ended.event);
+    },
+    problem,
     async clicked(notificationId, button) {
+      if (problems.delete(notificationId)) {
+        api.clear(notificationId);
+        hooks.openListen?.();
+        return;
+      }
       const entry = shown.get(notificationId);
       if (!entry) return;
       api.clear(notificationId);
