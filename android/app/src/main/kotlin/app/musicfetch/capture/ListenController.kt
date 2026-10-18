@@ -486,6 +486,7 @@ class ListenController(
     /** Hand the recognizer's latest transcript to the session it belongs to (main thread). */
     private fun pushWords(gen: Long, live: LiveSession, transcript: SungTranscript) {
         if (synchronized(lock) { gen != generation }) return
+        if (transcript.isFinal) Log.i(TAG, "final transcript: ${transcript.text.split(' ').count { it.isNotBlank() }} words")
         runCatching {
             live.pushTranscript(
                 SpeechTranscript(

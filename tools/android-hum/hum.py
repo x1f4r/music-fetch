@@ -18,6 +18,7 @@ Scenarios:
   google                           on the candidates screen: Try Google opens Google's song search
   nomatch_google wav=<file.wav>    a hum that finds nothing; Try Google from the stage
   settings                         the melody library section of Settings
+  takes files=<file>               hum every WAV listed in <file>; <out>/takes.jsonl has the answers
   melody_download manifest=<url>   remove the index, download it from <url> (index + encoder)
   melody_encoder manifest=<url>    an installed index whose encoder is new: just the encoder
 """
@@ -42,7 +43,8 @@ def scenario(fn):
 
 
 def top_activity(d):
-    out = d.sh("dumpsys activity activities | grep -m1 topResumedActivity", check=False)
+    # topResumedActivity (Android 10+ multi-resume) or mResumedActivity (Android 10 and older).
+    out = d.sh("dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity'", check=False)
     m = re.search(r"u0 (\S+)", out)
     return m.group(1) if m else ""
 
@@ -173,6 +175,52 @@ def hum(d, wav=None, label="hum", shots="1", gfx="0"):
     d.clear_dev_file(ux_dev_name())
 
 
+def answers(d):
+    """What the screen ended on: the candidate cards (title, artist, tier) or the no-match line."""
+    root = d.dump()
+    cards = []
+    for i in range(5):
+        card = d.find(f"cand.card.{i}", root=root)
+        if card is None:
+            break
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", card.get("bounds")))
+        texts = []
+        for n in root.iter("node"):
+            b = n.get("bounds")
+            if not b or not n.get("text"):
+                continue
+            a1, b1, a2, b2 = map(int, re.findall(r"\d+", b))
+            if a1 >= x1 and b1 >= y1 and a2 <= x2 and b2 <= y2:
+                texts.append(n.get("text"))
+        cards.append(texts[:3])
+    state = d.find("listen.state", root=root)
+    return {"cards": cards, "state": state.get("text") if state is not None and not cards else None}
+
+
+@scenario
+def takes(d, files=None, label="takes"):
+    """Hum every WAV named in [files] (one path per line) and record what the app answered."""
+    with open(files) as f:
+        paths = [line.strip() for line in f if line.strip()]
+    out = os.path.join(d.out, f"{label}.jsonl")
+    for path in paths:
+        name = os.path.basename(path)[:-4]
+        try:
+            hum(d, wav=path, label=name, shots="0")
+            row = {"take": name, **answers(d)}
+        except Exception as e:  # keep going with the next take
+            row = {"take": name, "error": str(e)}
+        try:
+            with open(os.path.join(d.out, f"timeline-{name}.json")) as f:
+                timeline = json.load(f)
+            row["log"] = timeline.get("log")
+        except OSError:
+            pass
+        with open(out, "a") as f:
+            f.write(json.dumps(row) + "\n")
+        print(json.dumps({k: row.get(k) for k in ("take", "cards", "state", "error")}), flush=True)
+
+
 def ux_dev_name():
     return "debug-capture.wav"
 
@@ -244,9 +292,12 @@ def to_melody_settings(d):
 
 
 def scroll_to(d, key, swipes=6):
-    """Scroll a list down until [key] is on screen (lazy lists hold only what is visible)."""
+    """Scroll a list down until [key] is on screen, clear of the bottom bar (lazy lists hold only
+    what is visible)."""
+    _, height = d.size()
     for _ in range(swipes):
-        if d.exists(key):
+        node = d.find(key)
+        if node is not None and d.center(node)[1] < height * 0.8:
             return
         d.swipe(*ux._mid(d, 0.5, 0.75), *ux._mid(d, 0.5, 0.45), 400)
     d.wait(key, 5)
@@ -268,7 +319,9 @@ def melody_download(d, manifest=None, label="melody"):
     # Debug builds: start without an index (benchmark builds start from a cleared app).
     d.sh(f"run-as {PKG} sh -c 'rm -rf files/engine/melody'", check=False)
     to_melody_settings(d)
+    # The manifest check gives the size; the button sits below the header.
     time.sleep(3)
+    scroll_to(d, "Download")
     d.shot(f"{label}-offer")
     d.tap("Download")
     for i in range(6):
@@ -285,8 +338,8 @@ def melody_encoder(d, manifest=None, label="encoder"):
     """The index is current but its encoder is new: Settings offers just the encoder."""
     use_manifest(d, manifest)
     to_melody_settings(d)
-    if d.exists("Check for updates"):
-        d.tap("Check for updates")
+    scroll_to(d, "Check for updates")
+    d.tap("Check for updates")
     time.sleep(3)
     d.shot(f"{label}-offer")
     if d.exists("melody.update"):
