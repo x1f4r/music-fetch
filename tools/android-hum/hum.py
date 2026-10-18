@@ -299,7 +299,8 @@ def scroll_to(d, key, swipes=6):
         node = d.find(key)
         if node is not None and d.center(node)[1] < height * 0.8:
             return
-        d.swipe(*ux._mid(d, 0.5, 0.75), *ux._mid(d, 0.5, 0.45), 400)
+        # Slow and short: no fling past the target.
+        d.swipe(*ux._mid(d, 0.5, 0.7), *ux._mid(d, 0.5, 0.5), 900)
     d.wait(key, 5)
 
 
@@ -338,9 +339,13 @@ def melody_encoder(d, manifest=None, label="encoder"):
     """The index is current but its encoder is new: Settings offers just the encoder."""
     use_manifest(d, manifest)
     to_melody_settings(d)
-    scroll_to(d, "Check for updates")
-    d.tap("Check for updates")
+    # Settings checks the manifest when it opens; tap only if it has not offered anything yet.
     time.sleep(3)
+    if not d.exists("melody.update"):
+        scroll_to(d, "Check for updates")
+        d.tap("Check for updates")
+        d.wait("melody.update", 15)
+    scroll_to(d, "melody.update")
     d.shot(f"{label}-offer")
     if d.exists("melody.update"):
         d.tap("melody.update")
