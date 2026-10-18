@@ -27,7 +27,8 @@ export default defineBackground(() => {
   // Badge and notifications. Firefox's host lives here; Chromium's is the offscreen
   // document, reached over a short-lived HOST_PORT (no surface, no long connection).
   const hostCall = async <K extends 'session' | 'setPinned'>(method: K, ...args: Parameters<HostApi[K]>): Promise<Awaited<ReturnType<HostApi[K]>>> => {
-    await ensureOffscreenHost();
+    // Inline build constants (not `firefox`) so Firefox bundles drop the offscreen calls.
+    if (!import.meta.env.FIREFOX) await ensureOffscreenHost();
     const rpc = new RpcClient<HostApi>(browser.runtime.connect({ name: HOST_PORT }) as unknown as PortLike, { timeoutMs: 10_000 });
     try {
       return (await (rpc.call as (m: string, ...a: unknown[]) => Promise<unknown>)(method, ...args)) as never;
@@ -44,7 +45,7 @@ export default defineBackground(() => {
 
   onControl({
     'mf:host.ensure': async () => {
-      if (firefox) return { host: 'background' };
+      if (import.meta.env.FIREFOX) return { host: 'background' };
       await ensureOffscreenHost();
       return { host: 'offscreen' };
     },
@@ -58,7 +59,7 @@ export default defineBackground(() => {
       notifications.report({ active, ended, surfaces, events });
       return null;
     },
-    'mf:host.idle': async () => ({ closed: firefox ? false : await closeOffscreenHost() }),
+    'mf:host.idle': async () => ({ closed: import.meta.env.FIREFOX ? false : await closeOffscreenHost() }),
     'mf:host.settings': async () => {
       const [micPriority, lowPower] = await Promise.all([settings.micPriority.getValue(), settings.lowPower.getValue()]);
       return { micPriority: micPriority.map((m) => m.id), lowPower };
