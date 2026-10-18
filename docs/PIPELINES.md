@@ -522,10 +522,23 @@ matcher, which still searches every song.
    budget's `HintOptions`: one placement per (tempo, shift) of `offsets`, where the two
    windows' centres meet, unless retrieval already placed the track there. Hinted
    placements skip the pool cut, carry no votes and compete in the quick stage like any
-   other placement. `votes` adds a retrieval pass restricted to the hinted tracks so
-   their placements carry index votes (about +110 ms per search on an M4 core; off in
-   every budget until retrieval can do it in its first pass); `reserve` sends the first
-   N hits to the full rerank even when the quick stage cuts them (off).
+   other placement. `votes` gives the hinted tracks index votes in retrieval's one
+   pass (`retrieve_forced`): each query window keeps their nearest posting beyond its
+   neighbour limit, both shortlists keep them and their placements pass the pool cut,
+   while every other track is retrieved exactly as without (about +6 ms per search on
+   an M4 core); `reserve` sends the first N hits to the full rerank even when the quick
+   stage cuts them (off).
+7. Score: the hints carry each song's best window cosine and its rank among the hits,
+   which join the score model as `enc_best` and `enc_hit` (hit within the first 200),
+   with their own shift of "none of these" and their own calibration
+   (`ENC_WEIGHTS`, `ENC_NONE`, `CALIBRATION_ENCODER` in matcher.rs, fitted by
+   tools/eval/fit_encoder_terms.py on CHAD's song-disjoint halves with every other
+   weight fixed). The terms apply in the quick stage too, so the encoder's songs
+   compete there on its evidence. A search without the encoder is scored exactly as
+   before.
+8. In the app (`hum::MelodySearcher`) every search of a hum session, progressive and
+   final, uses the installed encoder with `EncoderBudget::for_device`: phones the
+   Android budget, computers the Mac budget, low-power mode the low-power budget.
 
 Measured on the held-out CHAD half with the c2k model (popularity prior off): top-1
 15.3 → 17.1 %, top-10 19.1 → 22.2 % with the Android budget; the encoder stage itself

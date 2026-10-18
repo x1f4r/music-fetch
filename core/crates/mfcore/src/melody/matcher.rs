@@ -175,9 +175,9 @@ const CALIBRATION: (f32, f32) = (-0.7345, 0.9035);
 /// the other weights fixed, so searches without the encoder score exactly as
 /// before): weights of [`Features::enc_best`] and [`Features::enc_hit`], the
 /// shift of "none of these" when the encoder ran, and that path's calibration.
-const ENC_WEIGHTS: [f32; 2] = [0.0, 0.0];
-const ENC_NONE: f32 = 0.0;
-const CALIBRATION_ENCODER: (f32, f32) = CALIBRATION;
+const ENC_WEIGHTS: [f32; 2] = [10.3376, -4.8516];
+const ENC_NONE: f32 = 3.1137;
+const CALIBRATION_ENCODER: (f32, f32) = (-0.2672, 0.5975);
 /// Encoder hits up to this rank count as [`Features::enc_hit`] (the same for every
 /// budget, so the weight means the same everywhere).
 pub const ENC_HIT_RANK: u32 = 200;

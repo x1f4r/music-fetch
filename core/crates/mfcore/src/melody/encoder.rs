@@ -98,7 +98,7 @@ impl EncoderBudget {
             window_neighbours: 1000,
             songs: 200,
             pooling: Pooling::Sum,
-            hints: HintOptions { offsets: vec![(1.0, -20.0), (1.0, 0.0), (1.0, 20.0)], votes: false, reserve: 0 },
+            hints: HintOptions { offsets: vec![(1.0, -20.0), (1.0, 0.0), (1.0, 20.0)], votes: true, reserve: 0 },
         }
     }
 
@@ -111,7 +111,7 @@ impl EncoderBudget {
             pooling: Pooling::Sum,
             hints: HintOptions {
                 offsets: vec![(0.8, 0.0), (1.0, -20.0), (1.0, 0.0), (1.0, 20.0), (1.25, 0.0)],
-                votes: false,
+                votes: true,
                 reserve: 0,
             },
         }
@@ -136,7 +136,7 @@ impl EncoderBudget {
             window_neighbours: 500,
             songs: 100,
             pooling: Pooling::Sum,
-            hints: HintOptions { offsets: vec![(1.0, 0.0)], votes: false, reserve: 0 },
+            hints: HintOptions { offsets: vec![(1.0, 0.0)], votes: true, reserve: 0 },
         }
     }
 }
