@@ -50,7 +50,7 @@ lives in the extension origin's `localStorage`. To reach hard states:
 
 - live sessions: in any extension page's console,
   `localStorage.setItem('mf.mock.next', '<directive>')` with `nomatch`, `quiet`, `silent`,
-  `ratelimited`, `offline` or `fail`;
+  `ratelimited`, `offline`, `fail`, or `hold` (keeps listening until Stop, then matches);
 - links: add `mf-mock=fail`, `mf-mock=mix` or `mf-mock=unsupported` to the link's query.
 
 Streams recorded from the native CLI (`mf listen … > events.jsonl`) replay through
