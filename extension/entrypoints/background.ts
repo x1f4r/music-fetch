@@ -1,9 +1,12 @@
 import { browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
-import { listenToNotificationClicks, showActivity } from '@/src/engine/host-activity';
+import { BackgroundNotifications } from '@/src/engine/host-activity';
+import type { HostApi } from '@/src/engine/host-core';
 import { startFirefoxHost } from '@/src/engine/host-firefox';
 import { injectAgent, resolveTab, tabStream } from '@/src/engine/host-tabs';
+import { RpcClient, type PortLike } from '@/src/messaging/bus';
 import { onControl } from '@/src/messaging/control';
+import { HOST_PORT } from '@/src/messaging/protocol';
 import { installHeaderRules } from '@/src/net/rules';
 import { closeOffscreenHost, ensureOffscreenHost } from '@/src/platform/offscreen';
 import { needsProviderPanel, settings } from '@/src/settings/settings';
@@ -19,7 +22,25 @@ import { needsProviderPanel, settings } from '@/src/settings/settings';
  */
 export default defineBackground(() => {
   const firefox = import.meta.env.FIREFOX;
-  if (firefox) startFirefoxHost();
+  const host = firefox ? startFirefoxHost() : null;
+
+  // Badge and notifications. Firefox's host lives here; Chromium's is the offscreen
+  // document, reached over a short-lived HOST_PORT (no surface, no long connection).
+  const hostCall = async <K extends 'session' | 'setPinned'>(method: K, ...args: Parameters<HostApi[K]>): Promise<Awaited<ReturnType<HostApi[K]>>> => {
+    await ensureOffscreenHost();
+    const rpc = new RpcClient<HostApi>(browser.runtime.connect({ name: HOST_PORT }) as unknown as PortLike, { timeoutMs: 10_000 });
+    try {
+      return (await (rpc.call as (m: string, ...a: unknown[]) => Promise<unknown>)(method, ...args)) as never;
+    } finally {
+      rpc.close();
+    }
+  };
+  const notifications = new BackgroundNotifications({
+    session: (id) => (host ? host.hostSession(id) : hostCall('session', id)),
+    setPinned: (id, pinned) => (host ? host.hostSetPinned(id, pinned) : hostCall('setPinned', id, pinned)),
+  });
+  notifications.listenToClicks();
+  host?.onActivity((activity) => notifications.report(activity));
 
   onControl({
     'mf:host.ensure': async () => {
@@ -33,8 +54,8 @@ export default defineBackground(() => {
       await injectAgent(tabId);
       return { injected: true };
     },
-    'mf:host.activity': async ({ active, ended, surfaces }) => {
-      await showActivity({ active, ended, surfaces });
+    'mf:host.activity': async ({ active, ended, surfaces, events }) => {
+      notifications.report({ active, ended, surfaces, events });
       return null;
     },
     'mf:host.idle': async () => ({ closed: firefox ? false : await closeOffscreenHost() }),
@@ -45,7 +66,6 @@ export default defineBackground(() => {
     'mf:net.ensure': async () => ({ rules: await installHeaderRules() }),
   });
 
-  listenToNotificationClicks();
   // Session rules don't survive a browser restart: install them on every start.
   void installHeaderRules().catch((error: unknown) => console.warn('header rules', error));
 

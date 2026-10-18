@@ -6,7 +6,6 @@ import type { PortLike } from '../messaging/bus';
 import { CAPTURE_PORT, MIC_PORT, type HostSettings } from '../messaging/protocol';
 import { requiredHostPermissions } from '../net/hosts';
 import { settings } from '../settings/settings';
-import { showActivity } from './host-activity';
 import { CaptureError, EngineHost, type HostPlatform, type HostRuntime, type IncomingPort, type OpenedSource, type UiConnection } from './host-core';
 import { openKv } from './host-idb';
 import { EventPageKeepalive } from './host-keepalive';
@@ -115,7 +114,8 @@ export function startFirefoxHost(): EngineHost {
     },
     openMic: (caller, priority) => mic.open(caller, priority, android),
     settings: readSettings,
-    activity: (activity) => void showActivity(activity),
+    // The background wires the badge and notifications through `EngineHost.onActivity`.
+    activity: () => undefined,
     idle: () => undefined,
     takeDirective: takeMockDirective,
     spawnWorker: () => new Worker(new URL('./host-worker.ts', import.meta.url), { type: 'module', name: 'Music Fetch engine' }),

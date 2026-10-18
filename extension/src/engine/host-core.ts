@@ -15,7 +15,7 @@ import { isTerminal } from './events';
 import type { BackendConfig, EngineBackend, NetProbeResult } from './host-backend';
 import type { SessionRegistry, RegistryEntry } from './host-registry';
 import { WorkerEngine, type WorkerLike, type WorkerState } from './host-worker-client';
-import type { AnalyzeMode, CaptureSource, ListenMode, ListenOptions, PageContext, SessionEvent, SessionKind } from './types';
+import type { AnalyzeMode, CaptureSource, ListenMode, ListenOptions, PageContext, SessionDetail, SessionEvent, SessionKind } from './types';
 
 /** A port as the host receives it; `sender` is set by the browser. */
 export interface IncomingPort extends PortLike {
@@ -116,6 +116,9 @@ export interface HostApi {
   sources(): Promise<{ sessionId: string; kind: string; via: string; frames: number }[]>;
   /** e2e builds: fetch through the engine (see `EngineBackend.netProbe`). */
   netProbe(url: string, init: { method?: string; body?: string }): Promise<NetProbeResult>;
+  /** For the background's notifications (it is no surface, so it doesn't use `ENGINE_PORT`). */
+  session(id: string): Promise<SessionDetail | null>;
+  setPinned(id: string, pinned: boolean): Promise<void>;
 }
 
 export interface HostState {
@@ -131,7 +134,7 @@ export interface HostState {
   lowPower: boolean;
 }
 
-const HOST_METHODS = ['state', 'recycle', 'sources', 'netProbe'] as const satisfies readonly (keyof HostApi)[];
+const HOST_METHODS = ['state', 'recycle', 'sources', 'netProbe', 'session', 'setPinned'] as const satisfies readonly (keyof HostApi)[];
 
 interface LiveCapture {
   source: AudioSource;
@@ -259,6 +262,8 @@ export class EngineHost {
       },
       sources: async () => [...this.live.entries()].map(([sessionId, l]) => ({ sessionId, kind: l.source.kind, via: l.via, frames: l.frames })),
       netProbe: (url, init) => this.call('netProbe', [url, init]) as Promise<NetProbeResult>,
+      session: (id) => this.call('session', [id]) as Promise<SessionDetail | null>,
+      setPinned: (id, pinned) => this.call('setPinned', [id, pinned]) as Promise<void>,
     };
   }
 
@@ -419,17 +424,65 @@ export class EngineHost {
       void this.options.registry.remove(sessionId);
       const info = this.kinds.get(sessionId);
       this.kinds.delete(sessionId);
+      this.progressAt.delete(sessionId);
+      this.pending.push({ sessionId, event });
       this.reportActivity({ id: sessionId, kind: info?.kind ?? ('Listen' as SessionKind), event });
       if (this.kinds.size === 0) this.options.platform.keepalive?.(false);
-    } else if (typeof event === 'object' && 'Started' in event) {
-      this.reportActivity(null);
+      return;
     }
+    if (typeof event !== 'object') return;
+    if ('Started' in event || 'Phase' in event) {
+      this.pending.push({ sessionId, event });
+      this.scheduleReport();
+    } else if ('Progress' in event) {
+      // A mix's percentage on the badge: about once a second is plenty.
+      const now = Date.now();
+      if (now - (this.progressAt.get(sessionId) ?? 0) >= 1000) {
+        this.progressAt.set(sessionId, now);
+        this.pending.push({ sessionId, event });
+        this.scheduleReport();
+      }
+    }
+  }
+
+  private readonly pending: { sessionId: string; event: SessionEvent }[] = [];
+  private readonly progressAt = new Map<string, number>();
+  private reportTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Batch events for a moment: each report wakes Chromium's service worker. */
+  private scheduleReport() {
+    this.reportTimer ??= setTimeout(() => {
+      this.reportTimer = null;
+      this.reportActivity(null);
+    }, 150);
   }
 
   private reportActivity(ended: HostActivity['ended']) {
     if (this.closed) return;
+    if (this.reportTimer) clearTimeout(this.reportTimer);
+    this.reportTimer = null;
     const active = [...this.kinds.values()].sort((a, b) => b.started_at_ms - a.started_at_ms);
-    this.options.platform.activity({ active, ended, surfaces: this.ui.size });
+    const events = this.pending.splice(0);
+    const activity: HostActivity = { active, ended, surfaces: this.ui.size, events };
+    this.options.platform.activity(activity);
+    for (const listener of this.activityListeners) listener(activity);
+  }
+
+  private readonly activityListeners = new Set<(activity: HostActivity) => void>();
+
+  /** Activity reports in this context (Firefox: the background is the host). */
+  onActivity(listener: (activity: HostActivity) => void): () => void {
+    this.activityListeners.add(listener);
+    return () => this.activityListeners.delete(listener);
+  }
+
+  /** A session's detail, for the background's notifications in this context. */
+  hostSession(id: string): Promise<SessionDetail | null> {
+    return this.call('session', [id]) as Promise<SessionDetail | null>;
+  }
+
+  hostSetPinned(id: string, pinned: boolean): Promise<void> {
+    return this.call('setPinned', [id, pinned]) as Promise<void>;
   }
 
   /** Nothing left: no pages, no sessions, no Worker. */

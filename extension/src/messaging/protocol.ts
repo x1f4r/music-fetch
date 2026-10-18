@@ -117,6 +117,11 @@ export interface HostActivity {
   ended: EndedSession | null;
   /** UI pages connected to the host (popup, side panel, sidebar, app tabs). */
   surfaces: number;
+  /**
+   * The session events the background's badge and notifications follow, since the last
+   * report: `Started`, `Phase`, `Progress` (at most about once a second) and the terminal one.
+   */
+  events?: { sessionId: string; event: SessionEvent }[];
 }
 
 export interface EndedSession {

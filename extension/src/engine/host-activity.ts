@@ -1,60 +1,81 @@
 import { browser } from 'wxt/browser';
-import { t } from '../i18n';
 import type { HostActivity } from '../messaging/protocol';
-import { appUrl } from '../platform/surfaces';
-import { variantOf, type SessionEvent } from './types';
+import { startNotifier, type Notifier, type NotifierApi } from '../notify/notifier';
+import { appUrl, openApp } from '../platform/surfaces';
+import type { EngineClient, EngineListener } from './client';
 
-/** Toolbar badge: a dot while something runs (extension plan §5.1 "Badge"). */
-export async function showBadge(activity: HostActivity): Promise<void> {
-  const action = browser.action;
-  if (!action?.setBadgeText) return;
-  const running = activity.active.length > 0;
-  await action.setBadgeBackgroundColor?.({ color: '#1FA48A' }).catch(() => undefined);
-  await action.setBadgeText({ text: running ? '•' : '' }).catch(() => undefined);
+/** What the background asks the host for when it builds a notification. */
+export interface ActivityBridge {
+  session: EngineClient['session'];
+  setPinned: EngineClient['setPinned'];
 }
-
-/** What a finished session's notification says, or null when it says nothing (canceled). */
-export function notificationFor(event: SessionEvent): { title: string; message: string } | null {
-  if (variantOf(event) === 'Canceled' || typeof event === 'string') return null;
-  if ('Failed' in event) return { title: t('app.name'), message: event.Failed.message || t('error.other') };
-  if (!('Finished' in event)) return null;
-  const outcome = event.Finished.outcome;
-  if (outcome === 'Waiting') return { title: t('app.name'), message: t('state.offline') };
-  if ('Matched' in outcome) return { title: outcome.Matched.track.title, message: outcome.Matched.track.artist };
-  if ('Completed' in outcome) return { title: t('app.name'), message: t('state.identified', outcome.Completed.identified, outcome.Completed.total) };
-  if ('Candidates' in outcome) return { title: t('app.name'), message: t('library.candidates', t('source.hum'), outcome.Candidates.count) };
-  return { title: t('app.name'), message: t('state.noMatch') };
-}
-
-const NOTIFICATION_PREFIX = 'mf-session:';
 
 /**
- * A session ended while no page was open (the popup closed mid-analysis, a shortcut or
- * menu started it): say so in a notification that opens the session.
+ * The background's badge and notifications (`src/notify/notifier.ts`), fed by the engine
+ * host's activity reports. The host can't badge or notify itself (Chromium's offscreen
+ * document has only `runtime`), and the background must not hold a long-lived engine
+ * connection: Chromium stops the service worker when idle. So the host reports every
+ * session's start, phase, progress and end (`mf:host.activity`), and this replays them
+ * into the notifier as the engine events it expects.
  */
-export async function notifyEnded(activity: HostActivity): Promise<void> {
-  if (!activity.ended || activity.surfaces > 0) return;
-  const content = notificationFor(activity.ended.event);
-  if (!content || !browser.notifications) return;
-  await browser.notifications
-    .create(`${NOTIFICATION_PREFIX}${activity.ended.id}`, {
-      type: 'basic',
-      iconUrl: browser.runtime.getURL('/icon/128.png'),
-      title: content.title,
-      message: content.message,
-    })
-    .catch(() => undefined);
+export class BackgroundNotifications {
+  private readonly listeners = new Set<EngineListener>();
+  private surfaces = 0;
+  readonly notifier: Notifier;
+
+  constructor(bridge: ActivityBridge, api: NotifierApi = browserNotifierApi()) {
+    const engine = {
+      subscribe: (listener: EngineListener) => {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+      },
+      session: bridge.session,
+      setPinned: bridge.setPinned,
+    } as unknown as EngineClient;
+    this.notifier = startNotifier(engine, api, {
+      hasUi: () => this.surfaces > 0,
+      openSession: (id) => void browser.tabs.create({ url: appUrl(`/session/${id}`) }),
+      openUrl: (url) => void browser.tabs.create({ url }),
+      tryAgain: () => void openApp('/listen'),
+    });
+  }
+
+  /** Clicks on our notifications and their buttons. */
+  listenToClicks(): void {
+    browser.notifications?.onClicked.addListener((id) => void this.notifier.clicked(id));
+    browser.notifications?.onButtonClicked?.addListener((id, button) => void this.notifier.clicked(id, button));
+  }
+
+  report(activity: HostActivity): void {
+    this.surfaces = activity.surfaces;
+    for (const { sessionId, event } of activity.events ?? []) {
+      for (const listener of this.listeners) listener.sessionEvent?.(sessionId, event);
+    }
+  }
 }
 
-/** Clicking a session notification opens the session in the app tab. */
-export function listenToNotificationClicks(): void {
-  browser.notifications?.onClicked.addListener((id) => {
-    if (!id.startsWith(NOTIFICATION_PREFIX)) return;
-    void browser.tabs.create({ url: appUrl(`/session/${id.slice(NOTIFICATION_PREFIX.length)}`) });
-    void browser.notifications.clear(id);
-  });
-}
-
-export async function showActivity(activity: HostActivity): Promise<void> {
-  await Promise.all([showBadge(activity), notifyEnded(activity)]);
+/** The notifier's view of the browser: the action badge and system notifications. */
+export function browserNotifierApi(): NotifierApi {
+  const firefox = import.meta.env.FIREFOX;
+  return {
+    setBadge(text, color) {
+      void browser.action?.setBadgeBackgroundColor({ color }).catch(() => undefined);
+      void browser.action?.setBadgeText({ text }).catch(() => undefined);
+    },
+    notify(id, content) {
+      void browser.notifications
+        ?.create(id, {
+          type: 'basic',
+          iconUrl: browser.runtime.getURL('/icon/128.png'),
+          title: content.title,
+          message: content.message,
+          // Firefox shows no buttons; a click opens the session.
+          ...(!firefox && content.buttons.length ? { buttons: content.buttons.map((title) => ({ title })) } : {}),
+        })
+        .catch(() => undefined);
+    },
+    clear(id) {
+      void browser.notifications?.clear(id).catch(() => undefined);
+    },
+  };
 }

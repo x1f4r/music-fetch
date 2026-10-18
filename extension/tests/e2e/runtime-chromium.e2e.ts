@@ -153,7 +153,7 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(CHROMIUM) || !existsSync(E2E_OUTPUT.
     const [newest] = await rpc<{ id: string; title: string; status: string }[]>(app, 'mf-engine', 'library', [{ kinds: [], search: null, pinned_only: false, limit: 1, offset: 0 }]);
     expect(newest).toMatchObject({ title: 'Test Signal C', status: 'Matched' });
     const notifications = await app.evaluate(() => (globalThis as unknown as { chrome: { notifications: { getAll(): Promise<Record<string, unknown>> } } }).chrome.notifications.getAll());
-    expect(Object.keys(notifications)).toContain(`mf-session:${newest!.id}`);
+    expect(Object.keys(notifications)).toContain(`mf-${newest!.id}`);
     await page.close();
   });
 
