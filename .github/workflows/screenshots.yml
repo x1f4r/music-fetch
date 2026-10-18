@@ -1,0 +1,151 @@
+name: Screenshots
+
+# The macOS app's demo states on macOS 26 and macOS 15, light and dark, at several
+# window sizes, with toolbar geometry checks (apple/MusicFetchUITests). The
+# "screenshots" artifact is a contact sheet: open index.html.
+
+on:
+  pull_request:
+    paths:
+      - "apple/**"
+      - "scripts/screenshot-sheet.py"
+      - ".github/workflows/screenshots.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Engine for screenshots
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        working-directory: core
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: screenshots
+      # The demo states run on the app's fake engine; a quicker optimized build is enough.
+      - name: Build
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: scripts/build-core-apple.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: screenshots-core
+          path: |
+            apple/MusicFetchCore/MfCoreFFI.xcframework
+            apple/MusicFetchCore/Sources/MusicFetchCore/MusicFetchCore.swift
+          if-no-files-found: error
+          retention-days: 3
+
+  shots:
+    name: Screenshots (${{ matrix.os }})
+    needs: core
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-26
+            xcode: /Applications/Xcode_26.6.app
+          - os: macos-15
+            xcode: /Applications/Xcode_26.3.app
+    runs-on: ${{ matrix.os }}
+    env:
+      DEVELOPER_DIR: ${{ matrix.xcode }}/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: screenshots-core
+          path: apple/MusicFetchCore
+      - name: Environment
+        run: |
+          xcodebuild -version
+          sw_vers
+          system_profiler SPDisplaysDataType | grep -E 'Resolution|Retina' || true
+      - name: XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec apple/project.yml --quiet
+      - name: Allow UI automation
+        run: sudo automationmodetool enable-automationmode-without-authentication || true
+      # The runners start at 1024 x 768; the windows need 1440 x 760 and no Dock over them.
+      - name: Display
+        run: |
+          brew install displayplacer >/dev/null 2>&1 || true
+          displayplacer list > display.txt 2>&1 || true
+          python3 - <<'PY'
+          import re, subprocess
+          text = open("display.txt").read()
+          print(text[:3000])
+          screen = re.search(r"Persistent screen id: (\S+)", text)
+          modes = []
+          for m in re.finditer(r"mode \d+: res:(\d+)x(\d+) hz:(\d+) color_depth:(\d+)[^\n]*", text):
+              w, h, hz, depth = map(int, m.groups())
+              if "scaling:on" not in m.group(0) and 1600 <= w <= 2560:
+                  modes.append((w * h, w, h, hz, depth))
+          print("modes:", sorted(set(modes))[-6:])
+          if screen and modes:
+              _, w, h, hz, depth = max(modes)
+              arg = f"id:{screen.group(1)} res:{w}x{h} hz:{hz} color_depth:{depth} enabled:true scaling:off origin:(0,0) degree:0"
+              print("displayplacer", arg)
+              subprocess.run(["displayplacer", arg])
+          PY
+          defaults write com.apple.dock autohide -bool true && killall Dock || true
+          sleep 2
+          system_profiler SPDisplaysDataType | grep -iE 'resolution|ui looks' || true
+      - name: Unit tests
+        if: matrix.os == 'macos-26'
+        run: |
+          xcodebuild test -project apple/MusicFetch.xcodeproj -scheme MusicFetch -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData \
+            -resultBundlePath build/unit.xcresult CODE_SIGN_IDENTITY=- | tail -n 60
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Screenshots
+        run: |
+          xcodebuild test -project apple/MusicFetch.xcodeproj -scheme MusicFetchUITests -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData \
+            -resultBundlePath build/shots.xcresult CODE_SIGN_IDENTITY=- | grep -E 'error:|failed|passed|Executed|\*\*' | tail -n 200
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Collect
+        if: always()
+        run: |
+          if [ -d build/shots.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/shots.xcresult --output-path build/shots-raw
+            python3 scripts/screenshot-sheet.py collect --label "${{ matrix.os }}" build/shots-raw build/shots
+            python3 scripts/screenshot-sheet.py sheet --out build/sheet build/shots
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: screenshots-${{ matrix.os }}
+          path: build/shots
+          retention-days: 14
+
+  sheet:
+    name: Contact sheet
+    needs: shots
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: screenshots-macos-*
+          path: build/shots
+      - name: Contact sheet
+        run: python3 scripts/screenshot-sheet.py sheet --out build/sheet build/shots/screenshots-macos-26 build/shots/screenshots-macos-15
+      - uses: actions/upload-artifact@v7
+        with:
+          name: screenshots
+          path: build/sheet
+          retention-days: 14

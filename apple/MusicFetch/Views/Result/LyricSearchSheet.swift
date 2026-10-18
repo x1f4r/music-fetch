@@ -59,7 +59,8 @@ struct LyricSearchSheet: View {
                 Spacer()
                 Button(Copy.cancel, role: .cancel) { model.cancel() }
                     .keyboardShortcut(.cancelAction)
-                Button(Copy.choose) {
+                // "Search" until there is something to choose.
+                Button(model.selection == nil ? Copy.search : Copy.choose) {
                     if let id = model.selection, let candidate = model.results.first(where: { $0.track.identityKey == id }) {
                         model.choose(candidate)
                     } else {

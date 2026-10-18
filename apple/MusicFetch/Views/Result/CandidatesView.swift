@@ -59,7 +59,7 @@ struct CandidatesView: View {
             Button {
                 app.listenNow(.hum)
             } label: {
-                Label(Copy.humAgain, image: "ContourMark")
+                Label(Copy.humAgain, image: "contour.mark")
             }
             .buttonStyle(.bordered)
             .fixedSize()

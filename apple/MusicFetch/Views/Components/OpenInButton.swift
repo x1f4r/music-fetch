@@ -19,6 +19,10 @@ struct OpenInButton: View {
     var fillsWidth = false
     var glassNamespace: Namespace.ID?
 
+    /// The height of a large glass button, so the capsule lines up with Share and Copy
+    /// beside it (28 pt on macOS 26, the bordered large height before).
+    static var height: CGFloat { Compat.usesMacOS26Features ? 28 : 28 }
+
     var body: some View {
         let preference = app.providerPreference
         let links = TrackLinks(track: track, preference: preference)
@@ -36,7 +40,7 @@ struct OpenInButton: View {
                         .lineLimit(1)
                         .padding(.leading, 16)
                         .padding(.trailing, links.others.isEmpty ? 16 : 12)
-                        .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: 32)
+                        .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: Self.height)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -51,7 +55,7 @@ struct OpenInButton: View {
                     } label: {
                         Image(systemName: "chevron.down")
                             .font(.caption.weight(.semibold))
-                            .frame(width: 34, height: 32)
+                            .frame(width: 34, height: Self.height)
                             .contentShape(Rectangle())
                     }
                     .menuStyle(.button)
@@ -110,6 +114,10 @@ struct ProviderMenuItems: View {
 struct OpenInMenu: View {
     @Environment(AppModel.self) private var app
     var track: Track
+
+    /// The height of a large glass button, so the capsule lines up with Share and Copy
+    /// beside it (28 pt on macOS 26, the bordered large height before).
+    static var height: CGFloat { Compat.usesMacOS26Features ? 28 : 28 }
 
     var body: some View {
         let preference = app.providerPreference

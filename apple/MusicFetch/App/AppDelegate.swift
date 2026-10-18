@@ -5,7 +5,17 @@ import MusicFetchCore
 /// ("Identify with Music Fetch"), staying alive for the menu bar extra, and
 /// committing pending deletes at quit.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        AppModel.shared?.demo?.applyAppearance()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if RenderHarness.isActive {
+            Task { await RenderHarness.run() }
+            return
+        }
+        #endif
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
         // The menu bar extra needs the engine even when no window opens.
