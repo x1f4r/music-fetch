@@ -439,6 +439,19 @@ impl EncoderIndex {
         self.model()?.embed(features)
     }
 
+    /// Parse the model and plan it for the batch sizes a hum's searches mostly use
+    /// (1, 2 and 4 query windows), so the first search does not pay for it. Blocking
+    /// and CPU-bound; safe to call from several threads.
+    pub fn warm_up(&self) {
+        if let Ok(model) = self.model() {
+            for batch in [1, 2, 4] {
+                if let Err(e) = model.plan(batch) {
+                    tracing::warn!("melody encoder plan: {e:#}");
+                }
+            }
+        }
+    }
+
     /// The songs whose coded windows come closest to the query's.
     pub fn search(&self, index: &MelodyIndex, query: &MelodyQuery, budget: &EncoderBudget) -> Result<Vec<EncoderHit>> {
         self.search_timed(index, query, budget).map(|(hits, _)| hits)

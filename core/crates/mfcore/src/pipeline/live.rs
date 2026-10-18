@@ -685,9 +685,15 @@ impl Live {
     }
 
     /// Humming needs the melody index: tell the app as soon as an impression starts.
+    /// With an encoder, plan its model meanwhile, so the first search does not wait.
     fn notify_missing_index(&self) {
-        if self.ctx.engine.melody_index().is_none() {
-            self.ctx.emitter.notice(Notice::MelodyIndexMissing);
+        match self.ctx.engine.melody_index() {
+            None => self.ctx.emitter.notice(Notice::MelodyIndexMissing),
+            Some(index) => {
+                if let Some(encoder) = self.ctx.engine.melody_encoder(&index) {
+                    drop(self.ctx.engine.runtime.spawn_blocking(move || encoder.warm_up()));
+                }
+            }
         }
     }
 
