@@ -76,7 +76,10 @@ export function acrEndpoint(host: string, allowLoopbackHttp = false): string | n
 export function providerOrigin<K extends ProviderId>(id: K, keys: ProviderKeys[K], allowLoopbackHttp = false): string | null {
   if (id === 'audd') return 'https://api.audd.io/*';
   const endpoint = acrEndpoint((keys as AcrKeys).host, allowLoopbackHttp);
-  return endpoint ? `${new URL(endpoint).origin}/*` : null;
+  if (!endpoint) return null;
+  // Match patterns name no port (Firefox refuses one); the host's own pattern covers them all.
+  const url = new URL(endpoint);
+  return `${url.protocol}//${url.hostname}/*`;
 }
 
 /** ACRCloud's answer codes (core `check_status`). */
