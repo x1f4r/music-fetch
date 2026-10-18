@@ -453,6 +453,8 @@ States mirror §6.1 with these platform differences:
 - Phone audio asks for notifications first on Android 13+ (its result usually arrives while another app is in front), then for the capture consent.
 - The "add tile" offer waits until the stage has been idle for a second, never over a listen the user just asked for.
 - A tile or widget match while the stage is on screen opens the session there instead of notifying.
+- While humming (microphone listens, `live_candidates`), a Strong or Possible top answer of the progressive search replaces the dimmed source toggles in the action row: a `surfaceContainerHigh` chip (24dp radius, ≥ 48dp tall, ≤ 400dp wide) with the contour mark, "Sounds like" (`labelMedium` onSurfaceVariant) over title (`titleSmall`) · artist (`bodyMedium` onSurfaceVariant, gives way first), and the tier tag. Long shots are not named. Each new list replaces it (150 ms cross-fade; none on the low-power path), an empty one removes it, and it stays while the final pass runs. It is not a live region; TalkBack reads "Sounds like ‹title› by ‹artist›, ‹tier›" when focused, and a tap stops listening like the button. Only the final list opens §6.4.
+- A hum (or a microphone listen that turned into humming) that found nothing offers "Try Google" second, after "Hum again", when the Google app can open its song search (`com.google.android.googlequicksearchbox.MUSIC_SEARCH`, the screen its own "Search a song" button opens); nothing takes its place otherwise.
 
 ### 6.3 Result (matched track) — both platforms
 
@@ -514,7 +516,8 @@ hum row  64dp: trace (fills, 48dp) · "Your hum · 11 s" labelMedium onSurfaceVa
 cards    8dp gap, 16dp margins, radius 16, surfaceContainerLow; expanded card surfaceContainer
          head: artwork 56 · titleMedium + bodyMedium · tag (· [▶] IconButton when collapsed)
          expanded: overlay 96dp + legend · actions: [▶] FilledTonalIconButton … [This is it] Button(filled)
-footer   "Not here?" bodyMedium + [Type a lyric] TextButton (wraps at large font sizes)
+footer   "Not here?" bodyMedium + [Type a lyric] TextButton + [Try Google] TextButton when the best answer
+         is not Strong and the Google app can open its song search (wraps at large font sizes)
 ```
 
 The first card is expanded by default. Tapping a collapsed card expands it (`animateContentSize`, hero spring) and collapses the other.
@@ -676,6 +679,8 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | source.hum | Hum |
 | listenAgain.android | Listen again (group label) |
 | action.humAgain | Hum again |
+| action.tryGoogle.android | Try Google |
+| hum.soundsLike.android | Sounds like (preview chip label; TalkBack: "Sounds like %@ by %@, %@") |
 | field.link | Paste a link |
 | field.linkSuggestion.android | %@ — Identify |
 
@@ -698,6 +703,9 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | melody.update | Update |
 | melody.tryAgain | Try Again |
 | melody.alsoLyrics | Also search lyrics you sing |
+| melody.speechPackNeeded.android | Needs the %@ speech pack on this phone · [Download speech pack] |
+| melody.speechPackDownloading.android | Downloading the %@ speech pack |
+| melody.status.encoderAvailable | Better matching available · %@ (the index is current; only its encoder is missing) · [Download] |
 | melody.autoStop | Stop automatically after a pause |
 
 **Results**

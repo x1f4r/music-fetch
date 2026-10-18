@@ -11,8 +11,10 @@ own (enrichment of the final candidates) and, in the Google scenarios, the Googl
 
 Scenarios:
   index index=<file.mfi>           install a melody index into the app (stops the app)
-  hum wav=<file.wav> [label=x]     hum from the stage; shots while the answer forms, a timeline
-                                   (timeline-<label>.json), and the candidates or no-match
+  hum wav=<file.wav> [label=x] [gfx=1] [shots=0]
+                                   hum from the stage; shots while the answer forms, a timeline
+                                   (timeline-<label>.json), and the candidates or no-match;
+                                   gfx=1 adds frame statistics and the app's CPU use
   google                           on the candidates screen: Try Google opens Google's song search
   nomatch_google wav=<file.wav>    a hum that finds nothing; Try Google from the stage
   settings                         the melody library section of Settings
@@ -90,8 +92,34 @@ def to_hum_stage(d):
     d.tap("listen.source.hum")
 
 
+def gfx_summary(d):
+    """Frame statistics of the app since the last reset (dumpsys gfxinfo)."""
+    out = d.sh(f"dumpsys gfxinfo {PKG}", check=False)
+    keys = ["Total frames rendered", "Janky frames", "50th percentile", "90th percentile", "95th percentile",
+            "99th percentile", "Number Slow UI thread", "Number Frame deadline missed"]
+    summary = {}
+    for line in out.splitlines():
+        for k in keys:
+            if line.strip().startswith(k) and k not in summary:
+                summary[k] = line.split(":", 1)[1].strip()
+    return summary
+
+
+def cpu_sample(d):
+    """CPU use of the app's process right now (top, one iteration)."""
+    pid = d.sh(f"pidof {PKG}", check=False).strip()
+    if not pid:
+        return None
+    line = d.sh(f"top -b -n 1 -p {pid} | tail -1", check=False).split()
+    # PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ ARGS
+    try:
+        return float(line[8])
+    except (IndexError, ValueError):
+        return None
+
+
 @scenario
-def hum(d, wav=None, label="hum", shots="1"):
+def hum(d, wav=None, label="hum", shots="1", gfx="0"):
     """Hum from the stage and follow the answer: preview chip, early stop, candidates.
 
     UI dumps take seconds while the stage animates, so the run is followed with plain
@@ -105,11 +133,16 @@ def hum(d, wav=None, label="hum", shots="1"):
     logcat_clear(d)
     frames = os.path.join(d.out, "frames")
     os.makedirs(frames, exist_ok=True)
+    if gfx == "1":
+        d.sh(f"dumpsys gfxinfo {PKG} reset", check=False)
     start = time.time()
     d.tap("listen.button")
     ended_at = None
-    while time.time() - start < 45:
+    cpu = []
+    while time.time() - start < 75:
         t = time.time() - start
+        if gfx == "1" and ended_at is None:
+            cpu.append(cpu_sample(d))
         if shots == "1":
             data = subprocess.run(["adb", "-s", d.serial, "exec-out", "screencap", "-p"], capture_output=True).stdout
             with open(os.path.join(frames, f"{label}-{t:05.1f}.png"), "wb") as f:
@@ -121,16 +154,22 @@ def hum(d, wav=None, label="hum", shots="1"):
             if time.time() - ended_at > 2.5:
                 break
         time.sleep(0.4)
+    frames_stats = gfx_summary(d) if gfx == "1" else None
     root = d.dump()
     screen = "candidates" if d.find("cand.confirm", root=root) is not None else (
         "session" if d.find("session.back", root=root) is not None else "stage")
     actions = [n.get("resource-id", "").split("/")[-1] for n in d.nodes(root)]
     actions = [a for a in actions if a.startswith("listen.action.")]
     d.shot(f"{label}-end", settle=1.0)
-    log = [line for line in logcat_lines(d, "ListenController") if "session ended" in line or "interim" in line]
+    log = [line for line in logcat_lines(d, "ListenController")
+           if "session ended" in line or "interim" in line or "transcript" in line or "capturing" in line]
+    result = {"wav": os.path.basename(wav), "end": screen, "actions": actions, "log": log}
+    if gfx == "1":
+        result["gfx"] = frames_stats
+        result["cpu"] = [c for c in cpu if c is not None]
     with open(os.path.join(d.out, f"timeline-{label}.json"), "w") as f:
-        json.dump({"wav": os.path.basename(wav), "end": screen, "actions": actions, "log": log}, f, indent=1)
-    print(json.dumps({"label": label, "end": screen, "actions": actions, "log": log}), flush=True)
+        json.dump(result, f, indent=1)
+    print(json.dumps({"label": label, **result}), flush=True)
     d.clear_dev_file(ux_dev_name())
 
 
@@ -170,11 +209,30 @@ def nomatch_google(d, wav=None):
 
 
 @scenario
-def settings(d):
+def settings(d, speech_pack="0"):
+    """The melody library and "While humming" sections; speech_pack=1 also asks the system for
+    the missing speech pack and waits (up to 10 min) until it is installed."""
     to_melody_settings(d)
     d.shot("settings-melody")
     scroll_to(d, "settings.autoStop")
     d.shot("settings-while-humming")
+    if speech_pack == "1" and d.exists("settings.speechPack"):
+        d.tap("settings.speechPack")
+        # The system asks first ("Download English (US) update … Download").
+        d.wait("Download", 20)
+        d.shot("settings-speech-pack-confirm", settle=0.5)
+        d.tap("Download")
+        d.shot("settings-speech-pack-downloading", settle=3)
+        end = time.time() + 600
+        while time.time() < end:
+            time.sleep(15)
+            # Settings checks the pack again when it resumes.
+            d.sh("input keyevent KEYCODE_HOME")
+            time.sleep(1)
+            launch(d, "settings.autoStop")
+            if not d.exists("settings.speechPack") and "Downloading" not in str([n.get("text") for n in d.nodes()]):
+                break
+        d.shot("settings-speech-pack-installed")
     d.back()
 
 
@@ -207,7 +265,8 @@ def use_manifest(d, url):
 def melody_download(d, manifest=None, label="melody"):
     """No index installed: Settings offers the download (index and encoder), then shows it installed."""
     use_manifest(d, manifest)
-    d.sh(f"run-as {PKG} sh -c 'rm -rf files/engine/melody'")
+    # Debug builds: start without an index (benchmark builds start from a cleared app).
+    d.sh(f"run-as {PKG} sh -c 'rm -rf files/engine/melody'", check=False)
     to_melody_settings(d)
     time.sleep(3)
     d.shot(f"{label}-offer")
