@@ -86,7 +86,7 @@
       <div class="brand"><span class="mini" aria-hidden="true"><span class="ic ic-mark"></span></span>{t('app.name')}</div>
       <div class="nav-list">
         {@render nav({ name: 'listen' }, 'ic-hum', t('nav.listen'), is('listen'))}
-        {@render nav({ name: 'library', pinned: false }, 'ic-stack', t('nav.library'), is('library'))}
+        {@render nav({ name: 'library', pinned: false }, 'ic-stack', t('nav.library'), is('library') || (route.name === 'session' && !pinned.some((e) => e.id === route.id)))}
         {#if pinned.length > 0}
           <div class="nav-sec" id="nav-pinned">{t('nav.pinned')}</div>
           {#each pinned.slice(0, PINNED_IN_SIDEBAR) as entry (entry.id)}

@@ -119,7 +119,7 @@
   onclick={() => void listen.toggle()}
 />
 <div class="state" class:active={stage.lineActive} class:two id="stage-state" role="status" aria-busy={stage.phase === 'working'}>
-  {#if stage.phase === 'working' && !stage.download}<span class="spinner" aria-hidden="true"></span>{/if}{first}{#if second}<br />{second}{/if}
+  {#if stage.phase === 'working' && !stage.download && stage.retryAt === null}<span class="spinner" aria-hidden="true"></span>{/if}{first}{#if second}<br />{second}{/if}
 </div>
 {#if stage.download}
   <div

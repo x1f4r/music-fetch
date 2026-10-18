@@ -40,7 +40,7 @@
 
 <Sheet title={t('ask.title')} onclose={oncancel}>
   <div class="ask-source">
-    <Artwork url={thumbnail} size="video" />
+    {#if thumbnail}<Artwork url={thumbnail} size="video" />{/if}
     <div class="text">
       <div class="headline truncate">{title}</div>
       <div class="callout secondary">{site} · <span class="tnum">{clock(durationMs)}</span></div>

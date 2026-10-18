@@ -112,6 +112,9 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .popup .dl-bar { position: absolute; left: 60px; right: 60px; top: 338px; margin: 0; max-width: none; }
 .popup .scroll { overflow-y: auto; scrollbar-width: thin; }
 .popup .scroll .hero { padding-top: 14px; }
+/* The provider menu centres on the result's actions, above the button (popup-result-menu). */
+.popup .hero .actions { position: relative; }
+.popup .hero .split-wrap { position: static; }
 .popup .scroll .details { margin-top: 6px; padding-bottom: 12px; }
 .popup .top .back + .field { flex: 1; }
 .popup .hint { position: absolute; left: 12px; right: 12px; top: 452px; height: 56px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--on-surface-variant); font-size: var(--fs-callout); }
@@ -127,6 +130,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 
 /* ---------- Results ---------- */
 .hero h1.ttl { margin-bottom: 0; }
+.hero > .sr-only { position: absolute; }
 .hero .artist { color: var(--on-surface); }
 .details .dhead { width: 100%; }
 .details .dhead:focus-visible { box-shadow: var(--focus-ring); border-radius: var(--r-s); }
@@ -242,8 +246,9 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .toast-wrap .toast { pointer-events: auto; }
 .row .kind { vertical-align: -2px; margin-right: 4px; }
 .row .trail .pin { color: var(--primary); }
-.row .text > .truncate:first-child { font-weight: var(--fw-regular); }
 .search input::-webkit-search-cancel-button { display: none; }
+.app .toolbar .field.search { flex: 0 1 200px; min-width: 120px; }
+.app .toolbar .seg { flex: none; }
 
 /* Session (app-session-*.html) */
 .session-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
@@ -330,7 +335,7 @@ body.surface-panel, body.surface-app { overflow: hidden; }
 .mobile .hint .btn { height: 36px; }
 
 /* ---------- Demo states (app.html?demo=…) ---------- */
-html.demo-still *, html.demo-still *::before, html.demo-still *::after { animation-play-state: paused !important; transition: none !important; caret-color: transparent; }
+html.demo-still *, html.demo-still *::before, html.demo-still *::after { animation: none !important; transition: none !important; caret-color: transparent; }
 body.surface-gallery { overflow: auto; height: auto; }
 .gallery { padding: 24px 32px 48px; }
 .gallery header { display: flex; align-items: center; gap: 16px; }

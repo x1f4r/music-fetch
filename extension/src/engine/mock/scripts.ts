@@ -1,3 +1,4 @@
+import { contour, MELODY_SECONDS } from './melody';
 import type {
   Candidate,
   ErrorCode,
@@ -47,34 +48,19 @@ function levels(fromMs: number, toMs: number, loudness: number): TimedEvent[] {
   return out;
 }
 
-/** A short hummed phrase as MIDI notes (pitch, onset ms, duration ms). */
-const HUM_PHRASE: [number, number, number][] = [
-  [62, 0, 380],
-  [64, 400, 380],
-  [67, 800, 380],
-  [64, 1200, 380],
-  [71, 1600, 700],
-  [71, 2350, 380],
-  [69, 2750, 900],
-];
+/** The hummed phrase around this MIDI note (the melody's median). */
+const HUM_CENTER = 64;
 
-function hummedMidi(tMs: number): number | null {
-  const phraseMs = 4000;
-  const local = tMs % phraseMs;
-  const note = HUM_PHRASE.find(([, onset, dur]) => local >= onset && local < onset + dur);
-  if (!note) return null;
-  return note[0] + 0.15 * Math.sin(tMs / 40);
-}
-
-/** Pitch batches about 10 per second, each with three frames. */
+/** Pitch batches about 10 per second, each with three frames, from the design's phrase. */
 function pitch(fromMs: number, toMs: number): TimedEvent[] {
+  const semis = contour({ from: fromMs / 1000, to: toMs / 1000, stepMs: 33, seed: 11, jitter: 0.5, vibrato: 0.15 });
   const out: TimedEvent[] = [];
-  for (let t = fromMs; t < toMs; t += 100) {
-    const frames: PitchFrame[] = [0, 33, 66].map((d) => {
-      const midi = hummedMidi(t + d);
-      return { t_ms: t + d, midi, confidence: midi === null ? 0.1 : 0.9 };
+  for (let i = 0; i < semis.length; i += 3) {
+    const frames: PitchFrame[] = semis.slice(i, i + 3).map((semi, k) => {
+      const voiced = Number.isFinite(semi);
+      return { t_ms: fromMs + (i + k) * 33, midi: voiced ? HUM_CENTER + semi : null, confidence: voiced ? 0.9 : 0.1 };
     });
-    out.push(at(t, { Pitch: { frames } }));
+    out.push(at(fromMs + i * 33, { Pitch: { frames } }));
   }
   return out;
 }
@@ -192,13 +178,10 @@ export function failedScript(code: ErrorCode, message: string, afterMs = 600): M
 }
 
 function alignment(offset: number): Candidate['alignment'] {
-  const query: number[] = [];
-  const reference: number[] = [];
-  for (let t = 0; t < 4000; t += 40) {
-    const midi = hummedMidi(t);
-    query.push(midi === null ? Number.NaN : midi - 66);
-    reference.push(midi === null ? Number.NaN : Math.round(midi) - 66 + offset * Math.sin(t / 300));
-  }
+  const query = contour({ from: 0, to: MELODY_SECONDS, stepMs: 40, seed: 11, jitter: 0.5, vibrato: 0.15 });
+  const reference = contour({ from: 0, to: MELODY_SECONDS, stepMs: 40, seed: 1, jitter: 0, vibrato: 0, slide: 0.02 }).map((v, i) =>
+    Number.isFinite(v) ? v + offset * Math.sin(i / 12) : v,
+  );
   return { frame_ms: 40, query, reference };
 }
 

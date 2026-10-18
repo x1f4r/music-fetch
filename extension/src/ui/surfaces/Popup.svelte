@@ -182,7 +182,7 @@
           track={stage.track}
           preferred={providers.provider}
           custom={providers.custom}
-          artSize={touch ? 200 : 120}
+          artSize={touch ? 200 : 160}
           {touch}
           details
           heard={resultDetail ?? []}

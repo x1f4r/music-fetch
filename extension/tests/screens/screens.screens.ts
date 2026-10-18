@@ -29,6 +29,7 @@ describe.skipIf(!existsSync(CHROMIUM) || !existsSync(OUTPUT.chromium))('demo sta
       pipe: true,
       enableExtensions: [OUTPUT.chromium],
       userDataDir: tempProfile('screens'),
+      protocolTimeout: 60_000,
       args: ['--no-first-run', '--no-default-browser-check', '--mute-audio', '--disable-gpu', '--use-angle=swiftshader', '--hide-scrollbars', '--lang=en-US'],
     });
     const deadline = Date.now() + 120_000;
@@ -45,27 +46,32 @@ describe.skipIf(!existsSync(CHROMIUM) || !existsSync(OUTPUT.chromium))('demo sta
   });
 
   it('renders every state', async () => {
-    const page = await browser.newPage();
-    page.setDefaultTimeout(20_000);
     const states = DEMO_STATES.filter((s) => ONLY.length === 0 || ONLY.includes(s.id));
     const failures: string[] = [];
     for (const state of states) {
       for (const theme of THEMES) {
-        await page.setViewport({ width: state.width, height: state.height, deviceScaleFactor: SCALE });
-        await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }]);
-        const url = `chrome-extension://${id}/${demoUrl(state, { theme, still: true })}`;
-        await page.goto('about:blank');
-        await page.goto(url);
+        // A fresh page per shot: nothing (open menus, timers) carries over between states.
+        const page = await browser.newPage();
+        page.setDefaultTimeout(20_000);
         try {
-          await page.waitForSelector('html[data-demo-ready]', { timeout: 15_000 });
-        } catch {
-          failures.push(`${state.id}/${theme}: never ready`);
+          await page.setViewport({ width: state.width, height: state.height, deviceScaleFactor: SCALE });
+          await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }]);
+          await page.goto(`chrome-extension://${id}/${demoUrl(state, { theme, still: true })}`);
+          try {
+            await page.waitForSelector('html[data-demo-ready]', { timeout: 15_000 });
+          } catch {
+            failures.push(`${state.id}/${theme}: never ready`);
+          }
+          const problems = await page.$eval('html', (html) => html.dataset.demoProblems ?? null);
+          if (problems) failures.push(`${state.id}/${theme}: ${problems}`);
+          const file = `${state.id}-${theme}.png`;
+          await page.screenshot({ path: join(OUT, file) as `${string}.png` });
+          shots.push({ id: state.id, title: state.title, theme, file, prototype: state.prototype ?? null, problems, width: state.width, height: state.height });
+        } catch (error) {
+          failures.push(`${state.id}/${theme}: ${String(error).slice(0, 200)}`);
+        } finally {
+          await page.close().catch(() => undefined);
         }
-        const problems = await page.$eval('html', (html) => html.dataset.demoProblems ?? null);
-        if (problems) failures.push(`${state.id}/${theme}: ${problems}`);
-        const file = `${state.id}-${theme}.png`;
-        await page.screenshot({ path: join(OUT, file) as `${string}.png` });
-        shots.push({ id: state.id, title: state.title, theme, file, prototype: state.prototype ?? null, problems, width: state.width, height: state.height });
       }
     }
     expect(failures).toEqual([]);

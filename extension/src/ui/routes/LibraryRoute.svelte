@@ -54,10 +54,8 @@
   });
 
   $effect(() => {
-    if (library.selection.size > 1) {
-      ondetails({ kind: 'many', entries: library.selected, onpin: () => void library.togglePinned(), ondelete: () => void library.requestDelete() });
-      return;
-    }
+    // While selecting, the column still shows the focused (last clicked) session; batch
+    // actions live in the context bar (design spec "Details").
     const detail = focusedDetail;
     if (!detail) return ondetails(null);
     const view = sessionView(detail);

@@ -52,7 +52,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="row"
-  class:selected={selectable ? checked : current}
+  class:selected={selectable && checked}
   class:current
   id="row-{entry.id}"
   data-id={entry.id}
@@ -70,7 +70,7 @@
   {/if}
   <Artwork url={entry.artwork_url} size={art} />
   <div class="text">
-    <div class="truncate" class:secondary={failed}>{title}</div>
+    <div class="truncate" class:headline={chevron} class:secondary={failed}>{title}</div>
     {#if subtitle}
       <div class="callout secondary truncate"><span class="ic {kindIcon(entry)} s12 kind"></span>{subtitle}</div>
     {/if}

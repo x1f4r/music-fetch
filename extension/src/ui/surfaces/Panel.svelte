@@ -35,7 +35,7 @@
   // svelte-ignore state_referenced_locally
   const surface = new ListenSurface(engine, platform, { recentLimit: 50 });
   // svelte-ignore state_referenced_locally
-  const library = new LibraryController(engine, { limit: 50 });
+  const library = new LibraryController(engine, { limit: 50, pinnedSection: false });
   const listen = surface.listen;
   let field = $state<LinkField | undefined>();
   let width = $state(360);

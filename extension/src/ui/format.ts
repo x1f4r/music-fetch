@@ -3,9 +3,10 @@ import { t, tm, type Message } from '../i18n';
 import { dayLabel } from '../models/library';
 import { heardSource, matchedBy, type Fact } from '../models/session';
 
-/** A message or a plain string, as models return them. */
-export function text(value: Message | string): string {
-  return typeof value === 'string' ? value : tm(value);
+/** A message or a plain string, as models return them; parts are joined with " · ". */
+export function text(value: Message | string | readonly (Message | string)[]): string {
+  if (Array.isArray(value)) return value.map((part) => text(part)).filter(Boolean).join(' · ');
+  return typeof value === 'string' ? value : tm(value as Message);
 }
 
 export function clockTime(ms: number): string {
