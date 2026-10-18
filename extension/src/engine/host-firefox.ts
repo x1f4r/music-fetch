@@ -79,7 +79,16 @@ class PageMicRelay {
       failed?.(new CaptureError('MicUnavailable', 'The page closed.'));
       source.signal({ type: 'ended', reason: 'ended', message: 'The page holding the microphone closed.' });
     });
-    await source.start();
+    // A page in the background gets no microphone until it comes to the front: don't wait forever.
+    const timer = setTimeout(() => failed?.(new CaptureError('MicUnavailable', 'The microphone did not start. Keep Music Fetch in front while it listens.')), 12_000);
+    try {
+      await source.start();
+    } catch (error) {
+      port.disconnect();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
     return { source, via: 'mic', tab: null };
   }
 }

@@ -181,6 +181,11 @@ describe.skipIf(!RUNTIME_E2E || !existsSync(FIREFOX) || !existsSync(E2E_OUTPUT.f
       const html = await tab.evaluate((id) => (document.getElementById(id) as HTMLIFrameElement).contentDocument?.body?.innerHTML.slice(0, 600) ?? 'no frame', FRAME);
       throw new Error(`popup did not render at ${where}: ${html}`, { cause: error });
     });
+    // The page that captures must be in front: browsers hold getUserMedia for background tabs.
+    await tab.evaluate(async () => {
+      const api = (globalThis as unknown as { browser: Api & { tabs: { getCurrent(): Promise<{ id: number }> } } }).browser;
+      await api.tabs.update((await api.tabs.getCurrent()).id, { active: true });
+    });
     await tab.evaluate((id) => {
       const doc = (document.getElementById(id) as HTMLIFrameElement).contentDocument!;
       [...doc.querySelectorAll<HTMLButtonElement>('.sources button')].find((b) => b.textContent?.trim() === 'Microphone')?.click();
