@@ -134,6 +134,19 @@ export function demoPlatform(state: DemoState, base: Platform | null): Platform 
     async openShortcuts() {
       toast('shortcuts');
     },
+    async shortcuts() {
+      return [
+        { name: '_execute_action', shortcut: 'Alt+Shift+M' },
+        { name: 'identify-tab', shortcut: 'Alt+Shift+I' },
+        { name: 'hum', shortcut: 'Alt+Shift+H' },
+      ];
+    },
+    async microphones() {
+      return [
+        { id: 'usb', label: 'USB Microphone', inUse: false },
+        { id: 'built-in', label: 'Built-in Microphone', inUse: true },
+      ];
+    },
     close() {
       toast('close');
     },

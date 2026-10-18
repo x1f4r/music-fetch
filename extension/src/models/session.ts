@@ -444,11 +444,12 @@ export function sourceSite(detail: SessionDetail): string | null {
 
 /** The deep link that plays a mix at `startMs` on its site (YouTube `t=`, SoundCloud `#t=`). */
 export function cueLink(detail: SessionDetail, segment: Segment): string | null {
-  if (segment.source_url) return segment.source_url;
+  if (segment.source_url?.startsWith('http')) return segment.source_url;
   const url = detail.source?.url ?? detail.entry.source_url;
   if (!url) return null;
   try {
     const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
     const seconds = Math.floor(segment.start_ms / 1000);
     if (/(^|\.)(youtube\.com|youtu\.be)$/.test(parsed.hostname)) {
       parsed.searchParams.set('t', `${seconds}s`);

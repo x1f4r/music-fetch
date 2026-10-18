@@ -32,6 +32,12 @@ export type LowPowerSetting = 'auto' | 'on' | 'off';
 /** The stage's source toggles, in the apps' order. */
 export type ListenChoice = 'Microphone' | 'Tab' | 'Hum';
 
+/** A microphone in the priority list. */
+export interface MicPreference {
+  id: string;
+  label: string;
+}
+
 /** What the browser said about the microphone, as last seen in an extension page. */
 export type MicGrant = 'unknown' | 'granted' | 'denied' | 'session';
 
@@ -105,8 +111,12 @@ export const settings = {
   /** "Don't ask again for ‹site›" on the analyze sheet: the remembered choice per site. */
   analyzeChoice: defineSetting<Record<string, AnalyzeChoice>>('sync:analyzeChoice', {}),
 
-  /** Microphone device ids, most preferred first. */
-  micPriority: defineSetting<string[]>('local:micPriority', []),
+  /**
+   * Microphones by preference, most preferred first (Settings › Listening). Labels are
+   * kept so a device that is not connected still shows its name. The first connected one
+   * is used; any other microphone comes after the list.
+   */
+  micPriority: defineSetting<MicPreference[]>('local:micPriority', []),
   micGrant: defineSetting<MicGrant>('local:micGrant', 'unknown'),
   lastSource: defineSetting<ListenChoice | null>('local:lastSource', null),
   /** The welcome flow's next step (0 = provider, 1 = microphone, 2 = shortcut tip, 3 = done). */

@@ -1,15 +1,18 @@
 <script lang="ts">
-  import { browser } from 'wxt/browser';
   import MicGrant from '../components/MicGrant.svelte';
+  import { useSurface } from '../context';
 
-  /** `#/grant-mic`: opened from the popup or Settings; closes itself after a grant. */
-  async function done(grant: string) {
-    if (grant !== 'granted' && grant !== 'session') return;
-    setTimeout(async () => {
-      const tab = await browser.tabs.getCurrent();
-      if (tab?.id !== undefined) await browser.tabs.remove(tab.id);
-    }, 1200);
+  /** `#/grant-mic` (`?state=denied` …): opened from the popup or Settings; closes itself after a grant. */
+  interface Props {
+    initial?: 'granted' | 'denied' | 'session' | null;
+  }
+
+  let { initial = null }: Props = $props();
+  const { platform } = useSurface();
+
+  function done(grant: string) {
+    if (grant === 'granted') setTimeout(() => platform.close(), 1500);
   }
 </script>
 
-<MicGrant ondone={(grant) => void done(grant)} />
+<MicGrant {initial} onclosetab={() => platform.close()} onsitesettings={() => void platform.openSiteSettings()} ondone={done} />

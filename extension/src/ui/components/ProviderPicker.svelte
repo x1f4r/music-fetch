@@ -69,6 +69,23 @@
     showProblem = false;
   }
 
+  /** One tab stop for the radio group: the selected option, else the first. */
+  function rovingIndex(provider: Provider): number {
+    if (selected) return isSelected(provider) ? 0 : -1;
+    return providerKey(provider) === providerKey({ kind: 'service', service: COMMON_PROVIDERS[0]! }) ? 0 : -1;
+  }
+
+  function onkeydown(event: KeyboardEvent) {
+    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft'].includes(event.key)) return;
+    const radios = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+    const index = radios.indexOf(document.activeElement as HTMLButtonElement);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = radios[(index + (event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : -1) + radios.length) % radios.length];
+    next?.focus();
+    next?.click();
+  }
+
   async function choose() {
     if (!selected || busy) return;
     if (problem) {
@@ -98,7 +115,7 @@
 
 {#snippet serviceRow(service: Service)}
   {@const provider = asProvider(service)}
-  <button class="opt" class:on={isSelected(provider)} role="radio" aria-checked={isSelected(provider)} onclick={() => select(provider)}>
+  <button class="opt" class:on={isSelected(provider)} role="radio" aria-checked={isSelected(provider)} tabindex={rovingIndex(provider)} onclick={() => select(provider)}>
     <span class="radio" class:on={isSelected(provider)}></span>
     <span class="name">{serviceName(service)}</span>
     {#if service === suggested}<span class="meta">{t('provider.fromTab')}</span>{/if}
@@ -108,7 +125,7 @@
 <div class="mini-disc" aria-hidden="true"><span class="ic ic-mark"></span></div>
 <h1 id="provider-title">{t('provider.title')}</h1>
 <p class="lede">{t('provider.message')}</p>
-<div class="opts" role="radiogroup" aria-labelledby="provider-title">
+<div class="opts" role="radiogroup" aria-labelledby="provider-title" tabindex="-1" {onkeydown}>
   {#each COMMON_PROVIDERS as service (service)}
     {@render serviceRow(service)}
   {/each}
@@ -116,7 +133,7 @@
     {#each MORE_PROVIDERS as service (service)}
       {@render serviceRow(service)}
     {/each}
-    <button class="opt" class:on={isCustom} role="radio" aria-checked={isCustom} onclick={() => select({ kind: 'custom' })}>
+    <button class="opt custom" class:on={isCustom} role="radio" aria-checked={isCustom} tabindex={rovingIndex({ kind: 'custom' })} onclick={() => select({ kind: 'custom' })}>
       <span class="radio" class:on={isCustom}></span>
       <span class="name">{t('provider.custom')}</span>
     </button>
@@ -142,7 +159,7 @@
       </div>
     {/if}
   {:else}
-    <button class="opt" aria-expanded="false" onclick={() => (showMore = true)}>
+    <button class="opt more" aria-expanded="false" onclick={() => (showMore = true)}>
       <span class="spacer"></span>
       <span class="name">{t('provider.more')}</span>
       <span class="meta">{t('provider.moreMeta', MORE_PROVIDERS.length)}</span>
@@ -155,5 +172,5 @@
   <button class="btn filled" onclick={choose} disabled={!selected || busy}>{chooseLabel}</button>
 </div>
 {#if !compact}
-  <div class="dots" aria-hidden="true"><i class="on"></i><i></i><i></i></div>
+  <div class="dots" role="img" aria-label={t('welcome.step', 1, 3)}><i class="on"></i><i></i><i></i></div>
 {/if}

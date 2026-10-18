@@ -30,6 +30,8 @@ export class ListenController {
   offline = $state(false);
   /** Whether the tab "This tab" would capture is playing sound (null: unknown). */
   tabAudible: boolean | null = $state(null);
+  /** Progress of link sessions running in the background (mixes), by session id. */
+  progress: Record<string, { analyzedMs: number; totalMs: number }> = $state({});
 
   private unsubscribe: (() => void) | null = null;
   private melody: MelodyIndexStatus | null = null;
@@ -43,6 +45,9 @@ export class ListenController {
   async start(defaultSource: ListenChoice | null): Promise<void> {
     this.unsubscribe = this.engine.subscribe({
       sessionEvent: (sessionId, event) => {
+        if (typeof event === 'object' && 'Progress' in event) {
+          this.progress = { ...this.progress, [sessionId]: { analyzedMs: event.Progress.analyzed_ms, totalMs: event.Progress.total_ms } };
+        }
         this.stage = reduceStage(this.stage, sessionId, event);
       },
       libraryChanged: () => void this.loadRecent(),
@@ -110,6 +115,32 @@ export class ListenController {
       const autoStop = await settings.autoStop.getValue();
       return this.engine.startListening(source === 'Tab' ? 'Tab' : 'Microphone', source === 'Hum' ? 'Hum' : 'Auto', { auto_stop: autoStop });
     });
+  }
+
+  /** The link or file running in the background (a mix): the popup's last-session row follows it. */
+  get background(): LibraryEntry | null {
+    return this.recent.find((e) => e.status === 'Running' && (e.kind === 'Link' || e.kind === 'File') && e.id !== this.stage.sessionId) ?? null;
+  }
+
+  /** The newest finished session, for the last-session row. */
+  get last(): LibraryEntry | null {
+    return this.recent.find((e) => e.status !== 'Running') ?? null;
+  }
+
+  /**
+   * A long video analyzed in the background (the analyze sheet's "Whole video"): the stage
+   * stays free and the last-session row shows its progress.
+   */
+  async analyzeInBackground(input: string, page: PageContext | null, mode: 'Auto' | 'Mix'): Promise<string | null> {
+    try {
+      const id = await this.engine.analyze(input, mode, page);
+      await this.loadRecent();
+      return id;
+    } catch (error) {
+      const code = error instanceof EngineError ? error.code : 'Internal';
+      this.stage = failedStage({ ...this.stage, kind: 'Link', input }, code === 'Disconnected' || code === 'Timeout' || code === 'Unknown' ? 'Internal' : code, error instanceof Error ? error.message : String(error));
+      return null;
+    }
   }
 
   /** Paste a link, or "Analyze this page". `mode` is the analyze sheet's choice. */

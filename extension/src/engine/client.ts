@@ -42,6 +42,11 @@ export interface EngineApi {
   finishSession(sessionId: string): Promise<void>;
   cancelSession(sessionId: string): Promise<void>;
   analyze(input: string, mode: AnalyzeMode, page: PageContext | null): Promise<string>;
+  /**
+   * A local audio or video file (app tab: Open a file, or drop), decoded in the engine.
+   * `bytes` crosses the Port by structured clone (Chrome 148+, Firefox).
+   */
+  analyzeFile(name: string, bytes: ArrayBuffer, mode: AnalyzeMode): Promise<string>;
   searchLyrics(text: string): Promise<string>;
 
   library(query: LibraryQuery): Promise<LibraryEntry[]>;
@@ -79,6 +84,7 @@ export const ENGINE_METHODS = [
   'finishSession',
   'cancelSession',
   'analyze',
+  'analyzeFile',
   'searchLyrics',
   'library',
   'session',

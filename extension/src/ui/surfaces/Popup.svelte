@@ -1,26 +1,24 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import type { EngineClient } from '../../engine/client';
-  import { isLink } from '../../engine/links';
   import { t } from '../../i18n';
-  import { showsResult } from '../../models/stage';
-  import type { ActiveTab } from '../../platform/surfaces';
-  import { isAnalyzablePage } from '../../platform/surfaces';
-  import { primaryLink, providerLinks } from '../../providers/links';
-  import { serviceName, suggestProvider } from '../../providers/services';
-  import { loadProviderSettings, watchProviderSettings, type ListenChoice, type ProviderSettings } from '../../settings/settings';
+  import { isRunning, showsResult } from '../../models/stage';
+  import { suggestProvider } from '../../providers/services';
+  import AskSheet from '../components/AskSheet.svelte';
   import CandidatesView from '../components/CandidatesView.svelte';
   import LinkField from '../components/LinkField.svelte';
   import ProviderPicker from '../components/ProviderPicker.svelte';
+  import RecentRow from '../components/RecentRow.svelte';
   import ResultView from '../components/ResultView.svelte';
-  import SessionRow from '../components/SessionRow.svelte';
   import Stage from '../components/Stage.svelte';
   import { provideSurface, type Platform } from '../context';
-  import { ListenController } from '../listen.svelte';
+  import { heardRows } from '../format';
+  import { ListenSurface } from '../surface.svelte';
 
   /**
    * The toolbar popup (380 × 560 on desktop, full screen on Firefox for Android): the
-   * listen stage with fixed slots, or the first-run provider panel until a decision exists.
+   * listen stage with fixed slots, a result or candidates in place of the stage, or the
+   * first-run provider panel until a decision exists.
    */
   interface Props {
     engine: EngineClient;
@@ -30,62 +28,53 @@
   let { engine, platform }: Props = $props();
   // svelte-ignore state_referenced_locally
   provideSurface({ engine, platform });
-
+  // svelte-ignore state_referenced_locally
+  const surface = new ListenSurface(engine, platform);
   // svelte-ignore state_referenced_locally
   const caps = platform.capabilities;
-  const sources: ListenChoice[] = caps.tabCapture || caps.target === 'firefox' ? ['Microphone', 'Tab', 'Hum'] : ['Microphone', 'Hum'];
-  // svelte-ignore state_referenced_locally
-  const listen = new ListenController(engine, { recentLimit: 1, tabCapture: sources.includes('Tab') });
-  let providers = $state<ProviderSettings | null>(null);
-  let tab = $state<ActiveTab | null>(null);
-  let stopWatching: (() => void) | null = null;
+  const listen = surface.listen;
+  const touch = caps.android;
   let field = $state<LinkField | undefined>();
-
-  const stage = $derived(listen.stage);
-  const pageHost = $derived(tab && isAnalyzablePage(tab.url) ? new URL(tab.url!).hostname.replace(/^www\./, '') : null);
-  const recent = $derived(listen.recent[0] ?? null);
-  /** The last session's song in the preferred provider, for its row's trailing button. */
-  const recentLink = $derived.by(() => {
-    if (!recent?.track || !providers) return null;
-    const link = primaryLink(providerLinks(recent.track, providers.custom), providers.provider);
-    if (!link) return null;
-    const name = link.provider.kind === 'custom' ? providers.custom?.name ?? t('provider.customDefault') : serviceName(link.provider.service);
-    return { label: t('result.openIn', name), onclick: () => void platform.openUrl(link.url) };
-  });
   /** The session pinned from the result's pin button (sessions start unpinned). */
   let pinnedSession = $state<string | null>(null);
+
+  const stage = $derived(listen.stage);
+  const providers = $derived(surface.providers);
+  const recent = $derived(surface.recentRow);
   const pinned = $derived(pinnedSession !== null && pinnedSession === stage.sessionId);
   const panelLabel = caps.panel === 'sidebar' ? t('nav.sidebar') : t('nav.sidePanel');
-
-  onMount(async () => {
-    tab = await platform.activeTab();
-    providers = await loadProviderSettings();
-    stopWatching = watchProviderSettings((value) => (providers = value));
-    await listen.start(tab?.audible && sources.includes('Tab') ? 'Tab' : null);
+  /** Firefox's popup can't keep the microphone once it closes (plan §3.1): say so while humming. */
+  const keepOpen = $derived(caps.target === 'firefox' && stage.humming && (stage.phase === 'listening' || stage.phase === 'starting'));
+  const resultDetail = $derived.by(() => {
+    if (stage.phase !== 'matched' || !stage.track || !stage.sessionId) return null;
+    return heardRows({
+      entry: {
+        id: stage.sessionId,
+        kind: stage.kind ?? 'Listen',
+        status: 'Matched',
+        created_at_ms: Date.now(),
+        title: stage.track.title,
+        subtitle: stage.track.artist,
+        artwork_url: stage.track.artwork_url,
+        track: stage.track,
+        track_count: 1,
+        duration_ms: null,
+        source_url: stage.source === 'Tab' ? (surface.tab?.url ?? null) : null,
+        pinned,
+      },
+      source: null,
+      segments: [],
+      candidates: [],
+      transcript: null,
+    });
   });
 
-  onDestroy(() => {
-    stopWatching?.();
-    listen.stop();
-  });
-
-  function submit(text: string) {
-    if (isLink(text)) void listen.analyze(text);
-    else void listen.searchLyrics(text);
-  }
-
-  function analyzePage() {
-    if (!tab?.url) return;
-    void listen.analyze(tab.url, { tab_id: tab.id ?? null, url: tab.url, title: tab.title ?? null, facts: null });
-  }
-
-  function focusField() {
-    field?.focus();
-  }
+  onMount(() => void surface.start());
+  onDestroy(() => surface.stop());
 
   async function openPanel() {
     // No await before this call: the browser needs the click's user gesture.
-    await platform.openPanel(tab?.windowId).catch(() => platform.openApp('/listen'));
+    await platform.openPanel(surface.tab?.windowId).catch(() => platform.openApp('/listen'));
     platform.close();
   }
 
@@ -94,100 +83,155 @@
     platform.close();
   }
 
-  async function chooseCandidate(trackIndex: number) {
+  async function chooseCandidate(index: number) {
     const id = stage.sessionId;
-    const candidate = stage.candidates[trackIndex];
+    const candidate = stage.candidates[index];
     if (!id || !candidate) return;
     await engine.confirmCandidate(id, candidate.track);
     listen.stage = { ...stage, phase: 'matched', track: candidate.track };
   }
 
   function onkeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && showsResult(stage)) {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    if (showsResult(stage)) {
       event.preventDefault();
       listen.reset();
+    } else if (isRunning(stage)) {
+      event.preventDefault();
+      void listen.cancel();
     }
+  }
+
+  function onpaste(event: ClipboardEvent) {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('input, textarea')) return;
+    if (surface.pasted(event.clipboardData?.getData('text') ?? '')) event.preventDefault();
+  }
+
+  async function share() {
+    const track = stage.track;
+    if (!track) return;
+    const link = surface.openInFor(track);
+    const shared = await platform.share({ title: track.title, text: `${track.artist} – ${track.title}`, url: link?.url });
+    if (!shared) await platform.copyText(`${track.artist} – ${track.title}`);
   }
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {onpaste} />
 
 {#snippet footer()}
-  <div class="footer">
-    <button class="btn text quiet" onclick={() => openApp('/library')}><span class="ic ic-stack"></span>{t('nav.library')}</button>
+  <nav class="footer" aria-label={t('nav.main')}>
+    <button class="btn text quiet" onclick={() => openApp('/library')}><span class="ic ic-stack {touch ? 's18' : ''}"></span>{t('nav.library')}</button>
     {#if caps.panel}
       <button class="btn text quiet" onclick={openPanel}><span class="ic ic-panel"></span>{panelLabel}</button>
-    {:else if caps.android}
-      <button class="btn text quiet" onclick={() => openApp('/listen')}><span class="ic ic-expand"></span>{t('nav.fullView')}</button>
+    {:else if touch}
+      <button class="btn text quiet" onclick={() => openApp('/listen')}><span class="ic ic-expand s18"></span>{t('nav.fullView')}</button>
     {/if}
     <span class="grow"></span>
-    <button class="btn icon plain" aria-label={t('nav.settings')} onclick={() => openApp('/settings/general')}><span class="ic ic-gear"></span></button>
+    <button class="btn icon plain" aria-label={t('nav.settings')} onclick={() => openApp('/settings/general')}><span class="ic ic-gear {touch ? 's18' : ''}"></span></button>
+  </nav>
+{/snippet}
+
+{#snippet chip()}
+  <div class="chip-slot">
+    {#if surface.chipVisible}
+      <button class="chip" onclick={() => void surface.analyzePage()}>
+        <span class="ic ic-mix {touch ? 's18' : 's14'}"></span><span>{t('chip.analyzePage')} <span class="host">· {surface.pageHost}</span></span>
+      </button>
+    {/if}
   </div>
 {/snippet}
 
-{#snippet resultBody()}
-  {#if stage.phase === 'matched' && stage.track && providers}
-    <ResultView
-      track={stage.track}
-      preferred={providers.provider}
-      custom={providers.custom}
-      menuUp
-      {pinned}
-      context={stage.source === 'Tab' && pageHost ? t('result.fromTab', pageHost) : null}
-      onpin={(value) => {
-        pinnedSession = value ? stage.sessionId : null;
-        if (stage.sessionId) void engine.setPinned(stage.sessionId, value);
-      }}
-      onopen={(url) => void platform.openUrl(url)}
-      oncopy={(text) => void platform.copyText(text)}
+{#snippet recentRow()}
+  {#if keepOpen}
+    <div class="hint" role="note">
+      <span class="ic ic-info {touch ? 's18' : 's14'}"></span>{t('mic.keepOpen')}
+      {#if caps.panel}
+        <button class="btn text" onclick={openPanel}>{t('nav.openSidebar')}</button>
+      {:else}
+        <button class="btn text" onclick={() => openApp('/listen')}>{t('nav.fullView')}</button>
+      {/if}
+    </div>
+  {:else if recent}
+    {@const link = surface.openInFor(recent.track)}
+    <RecentRow
+      entry={recent}
+      {touch}
+      openIn={link ? { label: link.label, onclick: () => void platform.openUrl(link.url) } : null}
+      progress={listen.progress[recent.id] ?? null}
+      onclick={() => openApp(`/session/${recent.id}`)}
     />
-  {:else if stage.phase === 'candidates'}
-    <CandidatesView candidates={stage.candidates} onchoose={(c) => void chooseCandidate(stage.candidates.indexOf(c))} />
   {/if}
 {/snippet}
 
-<div class={caps.android ? 'mobile touch' : 'popup'}>
+<main class={touch ? 'mobile touch' : 'popup'}>
   {#if !providers}
     <!-- Loading the provider decision: render nothing rather than flash the stage. -->
   {:else if providers.needsPanel}
     <div class="first-run">
-      <ProviderPicker compact suggested={suggestProvider(tab?.url)} savedCustom={providers.custom} />
+      <ProviderPicker compact suggested={suggestProvider(surface.tab?.url)} savedCustom={providers.custom} />
     </div>
   {:else if showsResult(stage)}
     <div class="top">
       <button class="back" aria-label={t('action.back')} onclick={() => listen.reset()}><span class="ic ic-chev-left"></span></button>
-      <LinkField bind:this={field} onsubmit={submit} />
+      <LinkField bind:this={field} onsubmit={(text) => surface.submit(text)} />
     </div>
-    <div class="scroll">{@render resultBody()}</div>
-    {@render footer()}
-  {:else if caps.android}
-    <div class="top"><LinkField bind:this={field} onsubmit={submit} /></div>
-    <div class="chip-slot">
-      {#if pageHost}
-        <button class="chip" onclick={analyzePage}><span class="ic ic-mix s14"></span><span>{t('chip.analyzePage')} <span class="host">· {pageHost}</span></span></button>
+    <div class="scroll">
+      {#if stage.phase === 'matched' && stage.track}
+        <ResultView
+          track={stage.track}
+          preferred={providers.provider}
+          custom={providers.custom}
+          artSize={touch ? 200 : 120}
+          {touch}
+          details
+          heard={resultDetail ?? []}
+          {pinned}
+          context={surface.resultContext}
+          contextIcon={stage.source === 'Microphone' ? 'ic-mic' : 'ic-tab'}
+          onpin={(value) => {
+            pinnedSession = value ? stage.sessionId : null;
+            if (stage.sessionId) void engine.setPinned(stage.sessionId, value);
+          }}
+          onopen={(url) => void platform.openUrl(url)}
+          oncopy={(text) => void platform.copyText(text)}
+          onshare={() => void share()}
+        />
+      {:else}
+        <CandidatesView
+          candidates={stage.candidates}
+          onchoose={(c) => void chooseCandidate(stage.candidates.indexOf(c))}
+          onhumagain={() => void listen.listenWith('Hum')}
+          ontypelyric={() => {
+            listen.reset();
+            queueMicrotask(() => field?.focus());
+          }}
+        />
       {/if}
     </div>
-    <div class="stage">
-      <Stage {listen} {sources} ontypelyric={focusField} ondownloadmelody={() => void engine.installMelodyIndex()} onopensession={(id) => openApp(`/session/${id}`)} />
-    </div>
-    {#if stage.humming && stage.phase === 'listening'}
-      <div class="hint callout">{t('mic.keepOpen')}</div>
-    {/if}
-    {#if recent}
-      <div class="recent"><SessionRow entry={recent} openIn={recentLink} onclick={() => openApp(`/session/${recent.id}`)} /></div>
-    {/if}
     {@render footer()}
   {:else}
-    <div class="top"><LinkField bind:this={field} onsubmit={submit} /></div>
-    <div class="chip-slot">
-      {#if pageHost}
-        <button class="chip" onclick={analyzePage}><span class="ic ic-mix s14"></span><span>{t('chip.analyzePage')} <span class="host">· {pageHost}</span></span></button>
-      {/if}
-    </div>
-    <Stage {listen} {sources} ontypelyric={focusField} ondownloadmelody={() => void engine.installMelodyIndex()} onopensession={(id) => openApp(`/session/${id}`)} />
-    {#if recent}
-      <SessionRow entry={recent} extra="recent" openIn={recentLink} onclick={() => openApp(`/session/${recent.id}`)} />
+    <div class="top"><LinkField bind:this={field} onsubmit={(text) => surface.submit(text)} /></div>
+    {@render chip()}
+    {#if touch}
+      <div class="stage">
+        <Stage {listen} sources={surface.sources} equal ontypelyric={() => field?.focus()} onopensession={(id) => openApp(`/session/${id}`)} onallowmic={() => openApp('/grant-mic')} onsitesettings={() => void platform.openSiteSettings()} />
+      </div>
+      {@render recentRow()}
+    {:else}
+      <Stage {listen} sources={surface.sources} ontypelyric={() => field?.focus()} onopensession={(id) => openApp(`/session/${id}`)} onallowmic={() => openApp('/grant-mic')} onsitesettings={() => void platform.openSiteSettings()} />
+      {@render recentRow()}
     {/if}
     {@render footer()}
   {/if}
-</div>
+  {#if surface.ask}
+    <AskSheet
+      title={surface.ask.title}
+      site={surface.ask.site}
+      durationMs={surface.ask.durationMs}
+      thumbnail={null}
+      oncancel={() => (surface.ask = null)}
+      onanalyze={(choice, remember) => void surface.answerAsk(choice, remember)}
+    />
+  {/if}
+</main>

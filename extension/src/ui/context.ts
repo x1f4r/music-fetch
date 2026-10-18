@@ -32,6 +32,10 @@ export interface Platform {
   openSiteSettings(): Promise<void>;
   /** The browser's keyboard shortcut settings. */
   openShortcuts(): Promise<void>;
+  /** The keyboard shortcuts as the browser has them now (`commands.getAll`). */
+  shortcuts(): Promise<{ name: string; shortcut: string }[]>;
+  /** Microphones the browser lists (names only after the grant), the one in use marked. */
+  microphones(): Promise<{ id: string; label: string; inUse: boolean }[]>;
   /** Close this surface (the popup after handing off to another one; the grant tab). */
   close(): void;
 }

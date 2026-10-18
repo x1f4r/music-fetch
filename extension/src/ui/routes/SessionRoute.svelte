@@ -1,108 +1,137 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import type { Segment, SessionDetail } from '../../engine/types';
+  import type { ExportFormat, Segment } from '../../engine/types';
   import { t } from '../../i18n';
+  import { singleTrack } from '../../models/session';
+  import { primaryLink, providerLinks } from '../../providers/links';
   import type { ProviderSettings } from '../../settings/settings';
-  import Artwork from '../components/Artwork.svelte';
-  import CandidatesView from '../components/CandidatesView.svelte';
-  import OpenInButton from '../components/OpenInButton.svelte';
-  import ResultView from '../components/ResultView.svelte';
+  import ExportMenu from '../components/ExportMenu.svelte';
+  import SessionContent from '../components/SessionContent.svelte';
   import { useSurface } from '../context';
+  import type { DetailSubject } from '../details';
+  import { heardRows } from '../format';
+  import { exportFileName, EXPORT_FORMATS, SessionController } from '../session.svelte';
 
   /**
-   * One session in the app tab: the result for a single track, the candidates for a hum,
-   * or the tracklist for a playlist or mix (the timeline strip and row actions are X8).
+   * One session in the app tab: back, title, Export ▾, Pin and Listen in the toolbar; the
+   * song, candidates, mix or playlist below; the details column shows the selection.
    */
   interface Props {
     id: string;
     providers: ProviderSettings | null;
+    narrow: boolean;
+    /** The details column is on screen (≥ 1000 px). */
+    columns: boolean;
     onback: () => void;
+    onlisten: () => void;
+    ondetails: (subject: DetailSubject | null) => void;
   }
 
-  let { id, providers, onback }: Props = $props();
+  let { id, providers, narrow, columns, onback, onlisten, ondetails }: Props = $props();
   const { engine, platform } = useSurface();
-  let detail = $state<SessionDetail | null>(null);
-  let missing = $state(false);
-  let stop: (() => void) | null = null;
+  // svelte-ignore state_referenced_locally
+  const session = new SessionController(engine, id);
+  let zoom = $state(1);
+  const view = $derived(session.view);
+  const shape = $derived(session.shape);
+  const touch = platform.capabilities.android;
 
-  const tracks = $derived((detail?.segments ?? []).filter((s): s is Segment & { track: NonNullable<Segment['track']> } => s.track !== null));
-  const single = $derived(detail?.entry.track ?? (tracks.length === 1 && (detail?.source?.item_count ?? 1) <= 1 ? tracks[0]!.track : null));
+  onMount(() => void session.start());
+  onDestroy(() => session.dispose());
 
-  async function load() {
-    detail = await engine.session(id).catch(() => null);
-    missing = detail === null;
-  }
-
-  onMount(() => {
-    stop = engine.subscribe({
-      libraryChanged: () => void load(),
-      sessionEvent: (sessionId) => {
-        if (sessionId === id) void load();
-      },
-    });
-    void load();
+  $effect(() => {
+    if (!view) return ondetails(null);
+    if (shape === 'single') {
+      const track = singleTrack(view);
+      return ondetails(track ? { kind: 'track', track, heard: heardRows(view.detail) } : null);
+    }
+    if (shape === 'candidates') {
+      const index = Number(session.selectedId?.replace('cand-', '') ?? 0) || 0;
+      const candidate = view.detail.candidates[index] ?? view.detail.candidates[0];
+      return ondetails(candidate ? { kind: 'candidate', candidate } : null);
+    }
+    const segment = session.selectedSegment;
+    if (shape === 'mix') return ondetails(segment ? { kind: 'segment', segment, detail: view.detail } : null);
+    if (shape === 'playlist') return ondetails(segment?.track ? { kind: 'item', track: segment.track } : null);
+    ondetails(null);
   });
-  onDestroy(() => stop?.());
 
-  function clock(ms: number): string {
-    const s = Math.floor(ms / 1000);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const ss = String(s % 60).padStart(2, '0');
-    return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+  async function exportAs(format: ExportFormat) {
+    if (!view) return;
+    const item = EXPORT_FORMATS.find((f) => f.format === format)!;
+    await platform.download(exportFileName(view.detail.entry.title, item.ext), item.mime, await session.export(format));
   }
 
-  async function pin(pinned: boolean) {
-    await engine.setPinned(id, pinned);
-    await load();
+  function selectedTrack() {
+    if (!view) return null;
+    if (shape === 'single') return singleTrack(view);
+    return session.selectedSegment?.track ?? null;
+  }
+
+  function onkeydown(event: KeyboardEvent) {
+    const mod = event.metaKey || event.ctrlKey;
+    if (!mod || (event.target as HTMLElement | null)?.closest('input, textarea')) return;
+    const key = event.key.toLowerCase();
+    if (event.shiftKey && key === 'p' && view) {
+      event.preventDefault();
+      void session.setPinned(!view.detail.entry.pinned);
+    } else if (shape === 'mix' && (key === '+' || key === '=')) {
+      event.preventDefault();
+      zoom = Math.min(8, zoom * 2);
+    } else if (shape === 'mix' && key === '-') {
+      event.preventDefault();
+      zoom = Math.max(1, zoom / 2);
+    } else if (shape === 'mix' && key === '0') {
+      event.preventDefault();
+      zoom = 1;
+    } else if (key === 'enter' && providers) {
+      const track = selectedTrack();
+      const link = track ? primaryLink(providerLinks(track, providers.custom), providers.provider) : null;
+      if (link) {
+        event.preventDefault();
+        void platform.openUrl(link.url);
+      }
+    } else if (key === 'c' && !window.getSelection()?.toString()) {
+      const track = selectedTrack();
+      if (track) {
+        event.preventDefault();
+        void platform.copyText(`${track.artist} – ${track.title}`);
+      }
+    }
+  }
+
+  function humPart(segment: Segment) {
+    void segment;
+    onlisten();
   }
 </script>
 
-<div class="toolbar">
-  <button class="btn icon plain" aria-label={t('nav.library')} onclick={onback}><span class="ic ic-chev-left"></span></button>
-  <span class="wtitle truncate">{detail?.entry.title ?? ''}</span>
-  <span class="grow"></span>
-  {#if detail}
-    <button class="btn icon plain" aria-pressed={detail.entry.pinned} aria-label={detail.entry.pinned ? t('result.unpin') : t('result.pin')} onclick={() => void pin(!detail!.entry.pinned)}>
-      <span class="ic {detail.entry.pinned ? 'ic-pin-fill' : 'ic-pin'}"></span>
+<svelte:window {onkeydown} />
+
+<div class="toolbar session-toolbar">
+  <button class="btn icon plain" aria-label={t('action.backToLibrary')} onclick={onback}><span class="ic ic-chev-left"></span></button>
+  <h1 class="wtitle truncate">{view?.detail.entry.title ?? ''}</h1>
+  {#if view}
+    {#if shape === 'mix' || shape === 'playlist' || shape === 'single'}
+      <ExportMenu onexport={(format) => void exportAs(format)} oncopy={() => void platform.copyText(session.tracklist())} />
+    {/if}
+    <button class="btn icon plain" class:on={view.detail.entry.pinned} aria-pressed={view.detail.entry.pinned} aria-label={t('result.pin')} onclick={() => void session.setPinned(!view.detail.entry.pinned)}>
+      <span class="ic {view.detail.entry.pinned ? 'ic-pin-fill' : 'ic-pin'}"></span>
     </button>
   {/if}
+  {#if !narrow}<button class="btn filled" onclick={onlisten}><span class="ic ic-mark listen-mark"></span>{t('action.listen')}</button>{/if}
 </div>
-<div class="scroll-area">
-  {#if missing}
-    <div class="empty"><div class="headline">{t('session.notFound')}</div></div>
-  {:else if detail && providers}
-    <div class="session-pane">
-      {#if single}
-        <ResultView
-          track={single}
-          preferred={providers.provider}
-          custom={providers.custom}
-          artSize={200}
-          onopen={(url) => void platform.openUrl(url)}
-          oncopy={(text) => void platform.copyText(text)}
-        />
-      {:else if detail.candidates.length > 0}
-        <CandidatesView candidates={detail.candidates} onchoose={(c) => void engine.confirmCandidate(id, c.track).then(load)} />
-      {:else if tracks.length > 0}
-        <div class="tracklist">
-          {#each tracks as segment (segment.id)}
-            <div class="row track">
-              <span class="tc">{clock(segment.start_ms)}</span>
-              <Artwork url={segment.track.artwork_url} size={32} />
-              <div class="text">
-                <div class="headline truncate">{segment.track.title}</div>
-                <div class="callout secondary truncate">{segment.track.artist}</div>
-              </div>
-              <div class="trail">
-                <OpenInButton track={segment.track} preferred={providers.provider} custom={providers.custom} small onopen={(url) => void platform.openUrl(url)} />
-              </div>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="empty"><div class="headline">{detail.entry.status === 'Running' ? t('library.running') : t('state.noMatch')}</div></div>
-      {/if}
-    </div>
-  {/if}
+<div class="session-scroll" class:mixed={shape === 'mix' || shape === 'playlist'}>
+  <SessionContent
+    {session}
+    {providers}
+    layout="app"
+    {zoom}
+    {touch}
+    inlineDetails={!columns}
+    onopen={(url) => void platform.openUrl(url)}
+    oncopy={(text) => void platform.copyText(text)}
+    onhum={humPart}
+    onhumagain={onlisten}
+  />
 </div>

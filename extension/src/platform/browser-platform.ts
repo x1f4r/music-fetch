@@ -53,6 +53,24 @@ export function browserPlatform(): Platform {
       if (TARGET === 'firefox' && commands?.openShortcutSettings) return commands.openShortcutSettings();
       await browser.tabs.create({ url: 'chrome://extensions/shortcuts' });
     },
+    async shortcuts() {
+      try {
+        const commands = await browser.commands.getAll();
+        return commands.map((c) => ({ name: c.name ?? '', shortcut: c.shortcut ?? '' }));
+      } catch {
+        return [];
+      }
+    },
+    async microphones() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        return devices
+          .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications')
+          .map((d) => ({ id: d.deviceId, label: d.label, inUse: false }));
+      } catch {
+        return [];
+      }
+    },
     close() {
       window.close();
     },

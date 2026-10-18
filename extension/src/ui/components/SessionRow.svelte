@@ -1,57 +1,84 @@
 <script lang="ts">
   import type { LibraryEntry } from '../../engine/types';
   import { t } from '../../i18n';
+  import { kindIcon, rowSubtitle, rowTime } from '../../models/library';
+  import { text } from '../format';
   import Artwork from './Artwork.svelte';
 
+  /**
+   * One library row (DESIGN §6.8): artwork, title, the kind symbol and subtitle, the time
+   * and the pin. In the app tab a checkbox leads it (on hover and while selecting); in the
+   * side panel a chevron trails it. The list around it owns focus and keys (listbox).
+   */
   interface Props {
     entry: LibraryEntry;
-    /** Extra classes from the surface (`recent` in the popup). */
-    extra?: string;
-    selected?: boolean;
-    /** A trailing "Open in ‹provider›" button (the popup's last-session row). */
-    openIn?: { label: string; onclick: () => void } | null;
-    onclick: () => void;
+    candidateCount?: number | null;
+    /** Under a day heading (the time is a clock), or in Pinned (a day for older rows). */
+    inDaySection?: boolean;
+    headingId?: string;
+    selectable?: boolean;
+    checked?: boolean;
+    /** The keyboard cursor (aria-activedescendant) and the details column's row. */
+    current?: boolean;
+    chevron?: boolean;
+    art?: 40 | 44;
+    now?: number;
+    onclick: (event: MouseEvent) => void;
+    ontoggle?: () => void;
   }
 
-  let { entry, extra = '', selected = false, openIn = null, onclick }: Props = $props();
+  let {
+    entry,
+    candidateCount = null,
+    inDaySection = true,
+    headingId,
+    selectable = false,
+    checked = false,
+    current = false,
+    chevron = false,
+    art = 40,
+    now = Date.now(),
+    onclick,
+    ontoggle,
+  }: Props = $props();
 
-  function subtitle(e: LibraryEntry): string {
-    if (e.status === 'Running') return t('library.running');
-    if (e.status === 'Waiting') return t('library.waiting');
-    if (e.status === 'NoMatch') return t('library.noMatch');
-    if (e.status === 'Failed') return t('library.failed');
-    if (e.status === 'Candidates') return e.subtitle ?? '';
-    if (e.track_count > 1) return t('library.tracks', e.subtitle ?? e.title, e.track_count);
-    return e.subtitle ?? '';
-  }
-
-  const time = $derived(new Date(entry.created_at_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-  const sub = $derived(subtitle(entry));
+  const subtitle = $derived(text(rowSubtitle(entry, candidateCount)));
+  const time = $derived(text(rowTime(entry, now, inDaySection)));
+  const failed = $derived(entry.status === 'NoMatch' || entry.status === 'Failed');
+  const title = $derived(entry.status === 'NoMatch' ? t('library.noMatch') : entry.title);
+  const label = $derived([title, subtitle, time, entry.pinned ? t('library.pinnedRow') : ''].filter(Boolean).join(', '));
 </script>
 
-{#snippet body()}
-  <Artwork url={entry.artwork_url} size={40} />
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<div
+  class="row"
+  class:selected={selectable ? checked : current}
+  class:current
+  id="row-{entry.id}"
+  data-id={entry.id}
+  role="option"
+  aria-selected={selectable ? checked : current}
+  aria-label={label}
+  aria-describedby={headingId}
+  tabindex="-1"
+  {onclick}
+>
+  {#if selectable}
+    <!-- The row's aria-selected carries the state; the box is for the pointer. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <span class="cb" class:on={checked} aria-hidden="true" onclick={(e) => (e.stopPropagation(), ontoggle?.())}>{#if checked}<span class="ic ic-check"></span>{/if}</span>
+  {/if}
+  <Artwork url={entry.artwork_url} size={art} />
   <div class="text">
-    <div class="headline truncate">{entry.title}</div>
-    {#if sub}<div class="callout secondary truncate">{sub}</div>{/if}
+    <div class="truncate" class:secondary={failed}>{title}</div>
+    {#if subtitle}
+      <div class="callout secondary truncate"><span class="ic {kindIcon(entry)} s12 kind"></span>{subtitle}</div>
+    {/if}
   </div>
-{/snippet}
-
-{#if openIn}
-  <!-- Two actions: the row opens the session, the trailing button opens the song. -->
-  <div class="row {extra}" class:selected>
-    <button class="row-main" aria-label="{entry.title}{sub ? `, ${sub}` : ''}, {time}" {onclick}>{@render body()}</button>
-    <div class="trail">
-      <span class="callout tnum">{time}</span>
-      <button class="btn small outlined" onclick={openIn.onclick}>{openIn.label}</button>
-    </div>
+  <div class="trail">
+    {#if entry.status === 'Running'}<span class="spinner small" aria-hidden="true"></span>{/if}
+    <span class="callout tnum">{time}</span>
+    {#if entry.pinned}<span class="ic ic-pin-fill s14 pin" aria-hidden="true"></span>{/if}
+    {#if chevron}<span class="ic ic-chev-right s14" aria-hidden="true"></span>{/if}
   </div>
-{:else}
-  <button class="row {extra}" class:selected aria-label="{entry.title}{sub ? `, ${sub}` : ''}, {time}" {onclick}>
-    {@render body()}
-    <div class="trail">
-      {#if entry.pinned}<span class="ic ic-pin-fill s14" aria-label={t('result.pin')}></span>{/if}
-      <span class="callout tnum">{time}</span>
-    </div>
-  </button>
-{/if}
+</div>

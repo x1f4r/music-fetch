@@ -312,6 +312,20 @@ export class MockEngine implements EngineClient {
     this.notify((l) => l.captureStatus?.(sessionId, status));
   }
 
+  async analyzeFile(name: string, bytes: ArrayBuffer, mode: AnalyzeMode): Promise<string> {
+    if (!name.trim() || bytes.byteLength === 0) throw new EngineError('Decode', 'That file is empty.');
+    if (!/\.(mp3|m4a|aac|mp4|m4v|mov|webm|ogg|oga|opus|flac|wav|aiff?)$/i.test(name)) {
+      throw new EngineError('Decode', 'That file type can’t be read.');
+    }
+    const n = this.listenCount++;
+    // About a megabyte per minute of compressed audio: long files are mixes.
+    const long = mode === 'Mix' || bytes.byteLength > 12_000_000;
+    const script = long
+      ? mixScript([...DEMO_TRACKS], `file:${name}`, null, 'File', name.replace(/\.[^.]+$/, ''))
+      : mediaScript(demoTrack(n), `file:${name}`, null, 'File', name.replace(/\.[^.]+$/, ''));
+    return this.begin('File', null, name, null, script);
+  }
+
   async searchLyrics(text: string): Promise<string> {
     const query = text.trim();
     if (!query) throw new EngineError('InvalidInput', 'Type a few words of the lyrics.');
