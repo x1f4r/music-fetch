@@ -5,17 +5,29 @@
 //! the Apple Music link, genre and a second artwork/preview source but allows only
 //! about 20 calls a minute, so enrichment skips it when its queue is long.
 //! Nothing here fails: errors leave the track as it was.
+//!
+//! Without the `net` feature only the link builders remain (`search_links`,
+//! `custom_link`, `with_search_links`).
 
+// The matching and merging helpers serve `enrich` and `find` (`net`).
+#![cfg_attr(not(feature = "net"), allow(dead_code, unused_imports))]
+
+#[cfg(feature = "net")]
 mod cache;
+#[cfg(feature = "net")]
 pub(crate) mod deezer;
+#[cfg(feature = "net")]
 pub(crate) mod itunes;
 mod matching;
 
+#[cfg(feature = "net")]
 use std::sync::LazyLock;
+#[cfg(feature = "net")]
 use std::time::Duration;
 
 use url::Url;
 
+#[cfg(feature = "net")]
 use self::cache::TtlCache;
 use self::matching::Query;
 use crate::error::Result;
@@ -24,8 +36,10 @@ use crate::model::{Service, ServiceLink, Track};
 use crate::util::cancel::CancelToken;
 
 /// iTunes calls `enrich` may queue behind before skipping Apple Music.
+#[cfg(feature = "net")]
 const ENRICH_ITUNES_QUEUE: usize = 2;
 /// iTunes calls `find` may queue behind (it has no other fallback).
+#[cfg(feature = "net")]
 const FIND_ITUNES_QUEUE: usize = 4;
 
 /// Services that get a link on every enriched track, in display order.
@@ -41,8 +55,10 @@ pub const LINK_SERVICES: [Service; 8] = [
 ];
 
 // Match results per query. Deezer entries expire before its signed preview URLs do.
+#[cfg(feature = "net")]
 static DEEZER_MATCHES: LazyLock<TtlCache<Option<Track>>> =
     LazyLock::new(|| TtlCache::new(512, Duration::from_secs(600)));
+#[cfg(feature = "net")]
 static APPLE_MATCHES: LazyLock<TtlCache<Option<Track>>> =
     LazyLock::new(|| TtlCache::new(512, Duration::from_secs(6 * 3600)));
 
@@ -51,6 +67,7 @@ static APPLE_MATCHES: LazyLock<TtlCache<Option<Track>>> =
 /// Fills ISRC, duration, album, release year, genre, artwork and preview where
 /// missing, adds direct Deezer and Apple Music links when a confident match is
 /// found and search links for every other service.
+#[cfg(feature = "net")]
 pub async fn enrich(http: &reqwest::Client, track: Track, country: &str, cancel: &CancelToken) -> Track {
     let mut track = crate::links::finish_track(track);
     if track.title.is_empty() {
@@ -71,6 +88,7 @@ pub async fn enrich(http: &reqwest::Client, track: Track, country: &str, cancel:
 /// services): Deezer only, so a whole collection finishes in seconds. iTunes
 /// is asked only for tracks Deezer does not know, and only while nothing else
 /// waits for it. Tracks that already carry Deezer's metadata are only finished.
+#[cfg(feature = "net")]
 pub async fn enrich_quick(http: &reqwest::Client, track: Track, country: &str, cancel: &CancelToken) -> Track {
     let mut track = crate::links::finish_track(track);
     if track.title.is_empty() || has_deezer_metadata(&track) {
@@ -107,6 +125,7 @@ pub fn with_search_links(track: Track) -> Track {
 /// Returns the catalog's own metadata (Deezer first, then iTunes) with its
 /// direct link and search links for the other services; pass it to `enrich`
 /// for the second catalog.
+#[cfg(feature = "net")]
 pub async fn find(
     http: &reqwest::Client,
     title: &str,
@@ -179,6 +198,7 @@ fn query_key(track: &Track) -> String {
     format!("{}|{seconds}", identity::fuzzy_key(&track.title, &primary_artist(track)))
 }
 
+#[cfg(feature = "net")]
 async fn deezer_match(http: &reqwest::Client, track: &Track, cancel: &CancelToken) -> Option<Track> {
     let key = match (track.ids.get("deezer"), track.isrc.as_deref().and_then(normalize_isrc)) {
         (Some(id), _) => format!("id:{id}"),
@@ -200,6 +220,7 @@ async fn deezer_match(http: &reqwest::Client, track: &Track, cancel: &CancelToke
     }
 }
 
+#[cfg(feature = "net")]
 async fn deezer_lookup(http: &reqwest::Client, track: &Track, cancel: &CancelToken) -> Result<Option<Track>> {
     if let Some(id) = track.ids.get("deezer").filter(|id| !id.trim().is_empty()) {
         return deezer::track(http, id.trim(), cancel).await.map(Some);
@@ -227,6 +248,7 @@ fn plausible_title(track: &Track, found: &Track) -> bool {
     a.is_empty() || a.contains(&b) || b.contains(&a) || strsim::normalized_levenshtein(&a, &b) >= 0.5
 }
 
+#[cfg(feature = "net")]
 async fn apple_match(
     http: &reqwest::Client,
     track: &Track,
@@ -254,6 +276,7 @@ async fn apple_match(
     }
 }
 
+#[cfg(feature = "net")]
 async fn apple_lookup(
     http: &reqwest::Client,
     track: &Track,
@@ -416,6 +439,7 @@ mod tests {
         assert!(!plausible_title(&track("Billie Jean", "MJ"), &track("Thriller", "MJ")));
     }
 
+    #[cfg(feature = "net")]
     #[tokio::test]
     async fn never_fails_and_respects_cancellation() {
         let http = crate::links::fetch::test_client();

@@ -3,12 +3,13 @@
 //! The state lock is only held to reserve a slot; waiting happens without it, so
 //! `cooldown`, `success` and `throttled` never block behind a sleeping caller.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 
 use crate::error::{MfError, Result};
 use crate::util::cancel::CancelToken;
+use crate::util::rt::Instant;
 
 /// Serializes calls to one remote service with a minimum spacing.
 pub struct RateLimiter {

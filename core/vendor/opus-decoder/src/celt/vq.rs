@@ -10,7 +10,7 @@ pub(crate) const SPREAD_NONE: i32 = 0;
 /// PVQ band decode diagnostic information.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PvqDecodeInfo {
-    pub collapse_mask: u8,
+    pub collapse_mask: u32,
     pub nc: u32,
     pub index: u32,
 }
@@ -103,12 +103,13 @@ fn normalise_residual(iy: &[i32], x: &mut [f32], gain: f32) -> u32 {
 ///
 /// Params: decoded pulse vector, band length and block count.
 /// Returns: bit mask with one bit per short block.
-fn extract_collapse_mask(iy: &[i32], n: usize, b: usize) -> u8 {
+fn extract_collapse_mask(iy: &[i32], n: usize, b: usize) -> u32 {
     if b <= 1 {
         return 1;
     }
     let n0 = n / b;
-    let mut mask = 0u8;
+    // 32 bits as in libopus: a split band can have more than eight blocks.
+    let mut mask = 0u32;
     for i in 0..b {
         let mut nonzero = 0i32;
         for j in 0..n0 {

@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// A service a track can be opened in, or a site a source came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Service {
     Spotify,
     AppleMusic,
@@ -44,7 +45,8 @@ pub enum Service {
 
 /// A link to a track on a service. `is_search` links open a search for the track
 /// rather than the exact track page.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ServiceLink {
     pub service: Service,
     pub url: String,
@@ -52,7 +54,8 @@ pub struct ServiceLink {
 }
 
 /// A recording: the unit every result points at.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Track {
     pub title: String,
     /// Display string for all credited artists, e.g. "Calvin Harris & Dua Lipa".
@@ -76,7 +79,8 @@ pub struct Track {
     pub identity_key: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SessionKind {
     /// Microphone, recorded music expected.
     Listen,
@@ -92,7 +96,8 @@ pub enum SessionKind {
     Lyrics,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SessionStatus {
     Running,
     /// A live session found the recording.
@@ -109,7 +114,8 @@ pub enum SessionStatus {
     Waiting,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SegmentKind {
     Track,
     /// Music that could not be identified.
@@ -119,7 +125,8 @@ pub enum SegmentKind {
 }
 
 /// Display tier for segments; drawn with fill style and text, never color alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Tier {
     Confirmed,
     Likely,
@@ -127,7 +134,8 @@ pub enum Tier {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum EvidenceSource {
     Shazam,
     AudD,
@@ -142,7 +150,8 @@ pub enum EvidenceSource {
     User,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Evidence {
     pub source: EvidenceSource,
     /// Position in the source media the evidence came from.
@@ -154,7 +163,8 @@ pub struct Evidence {
 }
 
 /// A stretch of a source: one identified track, or a gap.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Segment {
     /// Stable id within the session. Updates reuse the id.
     pub id: String,
@@ -173,14 +183,16 @@ pub struct Segment {
     pub source_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum CandidateTier {
     Strong,
     Possible,
     LongShot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum CandidateSourceKind {
     Melody,
     Lyrics,
@@ -188,7 +200,8 @@ pub enum CandidateSourceKind {
     Fingerprint,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct CandidateSource {
     pub kind: CandidateSourceKind,
     pub score: f32,
@@ -199,7 +212,8 @@ pub struct CandidateSource {
 /// "Your hum vs. the song": both contours in semitones relative to the query's
 /// median, sampled every `frame_ms`. NaN marks unvoiced frames. The reference is
 /// already transposed and time-aligned to the query.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct MelodyAlignment {
     pub frame_ms: u32,
     pub query: Vec<f32>,
@@ -207,7 +221,8 @@ pub struct MelodyAlignment {
 }
 
 /// One possible answer to an impression (hum, whistle, singing) or lyric search.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Candidate {
     pub track: Track,
     /// Calibrated probability-like score in 0..=1.
@@ -218,7 +233,8 @@ pub struct Candidate {
 }
 
 /// What a link or file turned out to be.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SourceInfo {
     /// Canonical URL (None for local files).
     pub url: Option<String>,
@@ -235,7 +251,8 @@ pub struct SourceInfo {
     pub hints: Vec<Track>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct PitchFrame {
     /// Time since the session started.
     pub t_ms: u64,
@@ -245,7 +262,8 @@ pub struct PitchFrame {
     pub confidence: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Phase {
     Listening,
     Resolving,
@@ -258,7 +276,8 @@ pub enum Phase {
     Finishing,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Notice {
     /// Listening for a while with a weak signal.
     MoveCloser,
@@ -276,7 +295,8 @@ pub enum Notice {
     ProviderUnavailable { provider: String, message: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum NoMatchReason {
     TooQuiet,
     TooShort,
@@ -286,7 +306,8 @@ pub enum NoMatchReason {
     NotFound,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 #[allow(clippy::large_enum_variant)] // FFI value type; boxing would change the bindings.
 pub enum Outcome {
     /// A live session identified the recording.
@@ -311,7 +332,8 @@ pub enum Outcome {
     Waiting,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum ErrorCode {
     InvalidInput,
     UnsupportedLink,
@@ -326,7 +348,8 @@ pub enum ErrorCode {
 }
 
 /// Events pushed to a `SessionObserver`, in order, from engine threads.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SessionEvent {
     Started {
         session_id: String,
@@ -388,13 +411,15 @@ pub enum SessionEvent {
     Canceled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum CaptureSource {
     Microphone,
     SystemAudio,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum ListenMode {
     /// Recording first; switches to impression analysis when humming or singing is detected.
     Auto,
@@ -405,7 +430,8 @@ pub enum ListenMode {
 }
 
 /// Options for `Engine::start_listening_with`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ListenOptions {
     /// Stop automatically after a hummed/sung phrase ends, or as soon as the melody
     /// search is confident (default true). When false the session runs until
@@ -414,7 +440,7 @@ pub struct ListenOptions {
     /// While humming, emit the progressive melody search's candidates as interim
     /// `Candidates { is_final: false }` events during `Phase::Listening` (default
     /// false). See docs/PIPELINES.md ("Progressive melody search").
-    #[uniffi(default = false)]
+    #[cfg_attr(feature = "ffi", uniffi(default = false))]
     #[serde(default)]
     pub live_candidates: bool,
 }
@@ -425,7 +451,8 @@ impl Default for ListenOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum AnalyzeMode {
     /// Pick the strategy from the input.
     Auto,
@@ -437,7 +464,8 @@ pub enum AnalyzeMode {
     Mix,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LibraryQuery {
     /// Empty means all kinds.
     pub kinds: Vec<SessionKind>,
@@ -447,7 +475,8 @@ pub struct LibraryQuery {
     pub offset: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LibraryEntry {
     pub id: String,
     pub kind: SessionKind,
@@ -465,7 +494,8 @@ pub struct LibraryEntry {
     pub pinned: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SessionDetail {
     pub entry: LibraryEntry,
     pub source: Option<SourceInfo>,
@@ -475,7 +505,8 @@ pub struct SessionDetail {
     pub transcript: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum ExportFormat {
     /// "[mm:ss] Artist - Title" lines.
     Text,
@@ -484,7 +515,8 @@ pub enum ExportFormat {
     Cue,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct MelodyIndexStatus {
     pub installed: bool,
     pub version: Option<String>,
@@ -495,7 +527,8 @@ pub struct MelodyIndexStatus {
     pub download_bytes: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct StorageUsage {
     pub database_bytes: u64,
     pub cache_bytes: u64,
@@ -503,14 +536,16 @@ pub struct StorageUsage {
 }
 
 /// Lyrics for a track (from LRCLIB).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Lyrics {
     pub plain: String,
     /// Time-synced lines when available; empty otherwise.
     pub synced: Vec<LyricLine>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LyricLine {
     pub t_ms: u64,
     pub text: String,

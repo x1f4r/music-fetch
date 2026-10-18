@@ -4,7 +4,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct EngineConfig {
     /// Persistent app data (database, melody index).
     pub data_dir: String,
@@ -23,7 +24,8 @@ pub struct EngineConfig {
     pub melody_index_manifest_url: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct MediaToolsConfig {
     /// Python interpreter to run `yt_dlp_path` with. None runs `yt_dlp_path` directly.
     pub python_path: Option<String>,
@@ -36,7 +38,8 @@ pub struct MediaToolsConfig {
 }
 
 /// Optional paid providers. Never persisted by the core.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Credentials {
     pub audd_token: Option<String>,
     /// ACRCloud project with the fingerprint engine (recordings).
@@ -45,7 +48,8 @@ pub struct Credentials {
     pub acr_humming: Option<AcrCredentials>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct AcrCredentials {
     /// e.g. "identify-eu-west-1.acrcloud.com"
     pub host: String,

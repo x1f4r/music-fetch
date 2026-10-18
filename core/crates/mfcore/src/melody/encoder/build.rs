@@ -4,11 +4,11 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
 
 use crate::error::{MfError, Result};
 use crate::melody::contour::kmeans;
 use crate::melody::index::MelodyIndex;
+use crate::util::rt::Instant;
 
 use super::scan::{self, BLOCK, KSUB};
 use super::{CHANNELS, FORMAT, HEADER_LEN, MAGIC, Model, SECTION_TABLE, SECTIONS, featurize};

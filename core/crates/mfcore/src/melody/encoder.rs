@@ -37,7 +37,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
 
 use parking_lot::Mutex;
 use tract_onnx::pb;
@@ -48,6 +47,7 @@ use crate::error::{MfError, Result};
 use crate::melody::index::{MelodyIndex, le_u16, le_u32, le_u64};
 use crate::melody::matcher::{Hint, HintOptions};
 use crate::melody::notes::MelodyQuery;
+use crate::util::rt::Instant;
 
 use scan::{BLOCK, KSUB, Kernel};
 
@@ -164,6 +164,7 @@ pub struct EncoderTiming {
 }
 
 enum Bytes {
+    #[cfg(feature = "mmap")]
     Mapped(memmap2::Mmap),
     Owned(Vec<u8>),
 }
@@ -172,6 +173,7 @@ impl std::ops::Deref for Bytes {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
+            #[cfg(feature = "mmap")]
             Bytes::Mapped(m) => m,
             Bytes::Owned(v) => v,
         }
@@ -218,11 +220,19 @@ impl EncoderIndex {
     pub fn open(path: &Path, index: &MelodyIndex) -> Result<Self> {
         let file = File::open(path).map_err(|_| MfError::internal("the melody encoder file is missing"))?;
         // Safety: like the index, the file is written once and renamed into place.
+        #[cfg(feature = "mmap")]
         let bytes = match unsafe { memmap2::Mmap::map(&file) } {
             Ok(map) => Bytes::Mapped(map),
             Err(_) => Bytes::Owned(
                 std::fs::read(path).map_err(|_| MfError::internal("the melody encoder file is unreadable"))?,
             ),
+        };
+        #[cfg(not(feature = "mmap"))]
+        let bytes = {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut &file, &mut bytes)
+                .map_err(|_| MfError::internal("the melody encoder file is unreadable"))?;
+            Bytes::Owned(bytes)
         };
         Self::parse(bytes, index)
     }

@@ -16,7 +16,9 @@ uniffi = { version = "=0.32.2" }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time", "sync", "process", "io-util", "fs", "net"] }
+# What every target can build; wasm32-unknown-unknown has no tokio runtime. Native
+# crates add the runtime features (mfcore's native target dependencies, mf-cli).
+tokio = { version = "1.53", default-features = false, features = ["macros", "sync"] }
 tracing = "0.1"
 anyhow = "1"
 

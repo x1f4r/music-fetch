@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use reqwest::StatusCode;
@@ -13,6 +13,7 @@ use reqwest::StatusCode;
 use crate::error::MfError;
 use crate::util::cancel::CancelToken;
 use crate::util::ratelimit::RateLimiter;
+use crate::util::rt::Instant;
 
 /// Per-request timeout.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
@@ -163,7 +164,7 @@ impl Fetcher<'_> {
             limits.acquire(self.cancel, self.max_wait).await?;
             self.cancel.check().map_err(|_| FetchError::Canceled)?;
             self.stats.requests.fetch_add(1, Ordering::Relaxed);
-            let response = build().timeout(REQUEST_TIMEOUT).send().await.map_err(|e| {
+            let response = crate::util::http::prepare(build().timeout(REQUEST_TIMEOUT)).send().await.map_err(|e| {
                 FetchError::Network(if e.is_timeout() { "timed out".into() } else { e.without_url().to_string() })
             })?;
             let status = response.status();
@@ -205,6 +206,7 @@ impl Fetcher<'_> {
         }
     }
 
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
     fn cache_path(&self, remote: Remote, key: &str, found: bool) -> Option<PathBuf> {
         let dir = self.cache_dir?;
         let ext = if found { "json" } else { "404" };
@@ -212,6 +214,7 @@ impl Fetcher<'_> {
     }
 
     /// `Some(Ok(body))` for a cached body, `Some(Err(NotFound))` for a cached 404.
+    #[cfg(not(target_family = "wasm"))]
     async fn read_cache(&self, remote: Remote, key: &str) -> Option<Result<String, FetchError>> {
         let found = self.cache_path(remote, key, true)?;
         if let Ok(body) = tokio::fs::read_to_string(&found).await {
@@ -221,6 +224,7 @@ impl Fetcher<'_> {
         tokio::fs::metadata(&missing).await.ok().map(|_| Err(FetchError::NotFound))
     }
 
+    #[cfg(not(target_family = "wasm"))]
     async fn write_cache(&self, remote: Remote, key: &str, body: Option<&str>) {
         let Some(path) = self.cache_path(remote, key, body.is_some()) else { return };
         if let Some(dir) = path.parent()
@@ -233,6 +237,15 @@ impl Fetcher<'_> {
             tracing::debug!("lyrics cache: {e}");
         }
     }
+
+    /// The browser has no cache directory.
+    #[cfg(target_family = "wasm")]
+    async fn read_cache(&self, _remote: Remote, _key: &str) -> Option<Result<String, FetchError>> {
+        None
+    }
+
+    #[cfg(target_family = "wasm")]
+    async fn write_cache(&self, _remote: Remote, _key: &str, _body: Option<&str>) {}
 }
 
 fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
@@ -242,6 +255,7 @@ fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
 }
 
 /// FNV-1a: a stable file name for a cache key across builds and platforms.
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
 fn fnv1a(text: &str) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3))
 }
