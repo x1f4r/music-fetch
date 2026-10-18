@@ -98,20 +98,21 @@ Progressive melody search (impressions only):
 - Confident: the top answer scores ≥ 0.9, no other answer scores above 0.1, and the
   previous search had the same top song. With `auto_stop` on this ends the capture
   (`Stop::Confident`) and no further searches start.
-- After a confident stop the last search is the final melody answer when nothing was
-  voiced after it. Otherwise the final analysis tracks pitch on the whole capture again:
-  the streaming tracker must choose the whistle path from the frames heard so far and
-  cannot revise it, so an early whistle-like stretch (sibilants, whistles near 1.2 kHz)
-  can put the rest of the capture on the slowed path where the batch analysis, which
-  votes on the whole clip, would not.
+- The final melody answer: the streaming frames equal a batch analysis of the capture
+  unless the stream took the whistle path, which it must choose from the frames heard so
+  far and cannot revise (an early whistle-like stretch, sibilants or whistles near
+  1.2 kHz can switch it where the batch analysis, voting on the whole clip, would not).
+  So: the last search when nothing was voiced after it and the stream stayed on the
+  direct path (or after a confident stop); else a search on the streaming frames; after
+  a whistle switch, or when the tracker failed, pitch is tracked on the whole capture
+  again.
 
 Finishing:
 
 - Impression (or Hum) with < 4 s voiced → `Notice::KeepGoing` (unless already sent) and
   `NoMatch(TooShort)`: too little to answer with, so no guess.
-- Impression (or Hum) with ≥ 4 s voiced → impression analysis (below) on the capture
-  (or with the last progressive search after a confident stop), session kind becomes
-  `Hum`.
+- Impression (or Hum) with ≥ 4 s voiced → impression analysis (below) with the melody
+  answer chosen as above, session kind becomes `Hum`.
 - Otherwise: if the last recording query is older than 4 s and there is ≥ 3 s of
   audible audio, run one final query; then `NoMatch` with a reason:
   `CaptureSilent` (silent notice and no audible audio), `TooQuiet` (median RMS < −45

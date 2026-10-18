@@ -896,18 +896,22 @@ impl Live {
             }
         }
         tracing::debug!(?stop, voiced, "impression finished");
-        // A confident progressive search is the answer when nothing was voiced after
-        // it. Otherwise the whole capture is tracked again: the streaming tracker
-        // decides on the whistle path from the last second only, and singing with
-        // sibilants or whistles near 1.2 kHz can switch it mid-capture, which
-        // measured worse on the user recordings than tracking the whole capture.
+        // The streaming frames are the batch analysis's unless the stream took the
+        // whistle path, which it cannot revise: a hissy onset, sibilants or whistles
+        // near 1.2 kHz can switch it where the batch analysis, voting on the whole
+        // clip, would not. Then (or when the tracker failed) the whole capture is
+        // tracked again. Otherwise the last progressive search is the answer when
+        // nothing was voiced after it, and the final search runs on the streaming
+        // frames. After a confident stop the last search is the answer either way.
+        let direct = self.pitch.as_ref().is_some_and(|p| !p.is_whistle());
         let melody = match self.searched.take() {
             Some(s)
-                if stop == Stop::Confident
+                if (stop == Stop::Confident || direct)
                     && !self.details[s.frames.min(self.details.len())..].iter().any(|f| f.voiced) =>
             {
                 hum::MelodyInput::Searched(s.result)
             }
+            _ if direct && !self.details.is_empty() => hum::MelodyInput::Frames(std::mem::take(&mut self.details)),
             _ => hum::MelodyInput::Track,
         };
         let capture = std::mem::take(&mut self.capture);
