@@ -53,7 +53,7 @@ Three humps of growing amplitude that settle: a hummed phrase, deliberately asym
 | Matching (`Phase::Recognizing` / `MatchingMelody` after capture stops) | The line freezes at its last frame and fades to 70 %. State line shows a small progress indicator and "Matching". | fade 150 ms |
 | Matched (`Outcome::Matched`) | The button's glass **morphs into the primary "Open in …" button** of the result; the artwork rises into place; title, artist, meta follow. | §4.4 "Result reveal" |
 | Candidates (`Outcome::Candidates`) | The trace band shrinks to the hum strip at the top of the candidates view; the list appears beneath. | spring hero |
-| No match | The line returns to the resting mark; the state line shows the reason; the action row replaces the source toggles. | fade 150 ms |
+| No match | The line returns to the resting mark; the state line shows the reason. macOS: up to three actions fill the recovery row under the source toggles, which stay. Android: the action row replaces the source toggles. | fade 150 ms |
 
 Reduce Motion / "Remove animations": every morph and matched-geometry move becomes a 150 ms crossfade; the halo stops scaling (opacity may still follow level); Android shape morphing is disabled (static `Cookie9Sided`); the trace band still scrolls (it is content, not decoration).
 
@@ -65,7 +65,7 @@ Reduce Motion / "Remove animations": every morph and matched-geometry move becom
 
 **Scenes**
 
-- `WindowGroup` — main window, default 1180 × 760, minimum 900 × 600. `NavigationSplitView` (sidebar + detail) with `.inspector(isPresented:)`.
+- `Window` — main window, default 1180 × 760, minimum 900 × 600. `NavigationSplitView` (sidebar + detail) with one `.inspector(isPresented:)` attached to the split view (not to the screens inside it). Below 1060pt with the sidebar shown (832pt without), the inspector folds away and comes back when the window widens; the preference (View › Show Inspector) is unchanged, and opening it by hand in a narrow window keeps it open.
 - `Settings` — five panes (§6.9). Opened with ⌘, from the app menu only; never a toolbar button.
 - `MenuBarExtra("Music Fetch", systemImage: …)` with `.menuBarExtraStyle(.window)` and `isInserted` bound to the "Show in menu bar" setting (§6.10).
 - `ControlWidget` "Identify with Music Fetch" for Control Center and the menu bar (runs the Listen App Intent).
@@ -83,26 +83,31 @@ Pinned
 ```
 
 - `List(selection:)` with `NavigationLink(value:)`. Two levels maximum. Not hidden by default. Pinned sessions use the kind symbol; selection uses the system row style. Nothing critical at the bottom.
-- The "Pinned" section appears only when at least one session is pinned.
+- Choosing Listen, or clicking it again while a result shows, returns to the stage (like ⌘1); a mix still being analyzed stays on screen.
+- Library carries a badge with the number of links and files still being analyzed.
+- The "Pinned" section appears only when at least one session is pinned. It is collapsible, shows the newest 12 and then "Show All" (Library with the Pinned scope). A pinned row's context menu: Open in ‹service› ▸, Export ▸, Show in Library, Unpin, Delete.
 
 **Detail column**
 
 | Selection | Content | Window title (`.navigationTitle`) |
 |---|---|---|
-| Listen | Listen stage (idle / listening / hum / link progress), or the last session's result/candidates after a match | "Listen" |
+| Listen | Listen stage (idle / listening / hum / link progress), or the last session's result/candidates after a match | "Listen", removed from the toolbar (the sidebar already says it) |
 | Library | Session list; selecting a row pushes the session in a `NavigationStack` | "Library"; pushed sessions set the session title but remove it from the toolbar with `.toolbar(removing: .title)` so the content header carries it |
 | Pinned session | Same as a pushed Library session | as above |
 
-**Toolbar** (≤ 3 groups; symbols without borders; one `.prominent` item on the trailing side)
+**Toolbar** (≤ 3 groups; symbols without borders; one prominent item; nothing centered on the window)
 
-| View | Leading | Center (`.principal`) | Trailing |
+| View | Leading | Content trailing | Over the inspector |
 |---|---|---|---|
-| Listen, idle/listening/hum | title | link field (300pt, prompt "Paste a link") | [Inspector toggle] |
-| Listen, showing a result/candidates | title | link field | [Listen ▸ `.glassProminent`] [Inspector toggle] |
-| Library | title | `Picker(.segmented)`: All · Heard · Hummed · Links · Mixes | search field (200pt) · [Listen ▸] [Inspector toggle] |
-| Session (pushed) | back | — | [Export ▾] [Listen ▸] [Inspector toggle] |
+| Listen, stage | link field (240pt, prompt "Paste a link") | — | [Inspector toggle] |
+| Listen, showing a session | [‹ Back to Listen] link field | [Export ▾ · Pin] [Listen ▾] | [Inspector toggle] |
+| Library | title | [Pin] [Listen ▾] | [Inspector toggle] · search field |
+| Session (pushed or pinned) | back | [Export ▾ · Pin] [Listen ▾] | [Inspector toggle] |
 
-The Listen button is **hidden on the idle Listen stage** (the big button is the same action; one place for one action) and present everywhere else. Use `ToolbarItem(...).hidden(isIdleStage)` so the whole item hides. On macOS 26.1+ add `.visibilityPriority(.high)` to Listen so it survives overflow. Every toolbar action also exists in the menu bar.
+- The inspector toggle lives in the inspector's own `.toolbar`, which makes SwiftUI add the inspector's tracking separator: every content item stays left of the inspector divider, the toggle is the first item over the inspector, and nothing ever sits on the divider when the inspector is resized or toggled. With the inspector closed the toggle is the last item.
+- **Listen ▾** is a split button: on macOS 26 a `.borderedProminent` button and a chevron `Menu` in one toolbar item, which the toolbar draws as one accent-tinted glass capsule, with a hairline between the parts (a `Menu(primaryAction:)` is drawn untinted there); before macOS 26, where toolbars draw every button plain, an accent capsule with a chevron segment like "Open in". The main part listens again with the current method (its icon: `mic`, `macbook` or the contour mark) and reads "Stop" while capturing, "Matching" (disabled) while matching. The chevron lists Listen with Microphone · Listen to This Mac · Hum, Whistle or Sing, then Identify Link… · Open File… · Type a Lyric…. It is **hidden on the Listen stage** (the big button and the source toggles are the same actions; one place for one action): `ToolbarItem(...).hidden(isOnListenStage)`.
+- Export ▾ (sessions with a tracklist or a single answer) and Pin sit together before Listen; Pin shows `pin` "Pin", or `pin.slash` "Unpin" when every target is pinned.
+- Every toolbar action also exists in the menu bar.
 
 **Inspector** (300pt, min 260, max 360; `.inspector`, system material)
 
@@ -112,14 +117,17 @@ The Listen button is **hidden on the idle Listen stage** (the big button is the 
 | Hum candidate | "Your hum vs. ‹title›" contour overlay + legend · Album, Released, Matched by, Where |
 | Mix segment | artwork 64, title, artists, cue range · Match, Evidence, Album · [Open in ‹service› ▾] · [‹Site› at ‹cue›] |
 | Library row (selected, not opened) | the same as its kind |
-| Nothing | `ContentUnavailableView` is **not** used; the inspector stays empty |
+| Several library rows | "‹n› sessions" (`.headline`) · [Pin] and/or [Unpin] · [Delete] (bordered, large, full width) |
+| Nothing | "No Selection", `.title3` tertiary, centered (the AppKit convention; `ContentUnavailableView` is **not** used) |
 
 **Keyboard**
 
 | Shortcut | Action | Menu |
 |---|---|---|
-| ⌘L | Listen (toggle; Esc also stops) | Listen |
+| ⌘L | Listen with the current method (toggle; Esc also stops) | Listen |
 | ⌘⇧H | Hum | Listen |
+| — | Listen with Microphone, Listen to This Mac (one item per method; the Source picker below them only chooses) | Listen |
+| ⌘[ / Esc | Back to Listen from a result; Esc also leaves a no-match or an error | — |
 | ⌘K | Identify Link… (focuses the toolbar field) | File |
 | ⌘O | Open File… | File |
 | ⌘V | Paste a link and identify it (when no text field has focus and the pasteboard holds a URL) | Edit |
@@ -132,7 +140,7 @@ The Listen button is **hidden on the idle Listen stage** (the big button is the 
 | ⌘C | Copy "Artist – Title" (selected track) | Edit |
 | ⌘↩ | Open in default service | Session |
 | Space | Play/pause preview | Session |
-| ⌘⇧P | Pin / Unpin | Session |
+| ⌘⇧P | Pin / Unpin the session on screen or every selected library row (Undo with ⌘Z) | Session |
 | ⌫ | Delete (Library) | Edit |
 | ⌘+ / ⌘− / ⌘0 | Zoom timeline strip / reset | View |
 | ↑ ↓ | Move selection in candidates / tracklist / library | — |
@@ -273,7 +281,7 @@ Android only: `Confirm` on `Outcome::Matched`; `Confirm` on "This is it"; `Segme
 
 ### 4.6 Iconography
 
-macOS uses SF Symbols: `mic`, `macbook`, the custom contour mark (as a symbol image with template rendering), `link`, `doc`, `rectangle.split.3x1` (mixes), `music.note`, `square.stack`, `sidebar.trailing`, `pin`, `play.fill`, `square.and.arrow.up`, `doc.on.doc`, `checkmark`, `xmark`, `magnifyingglass`, `text.alignleft` (lyrics), `arrow.up.right.square`, `gearshape`, `key`, `internaldrive`, `info.circle`. Android uses Material Symbols (outlined): `mic`, `smartphone`, the custom mark, `link`, `attach_file`, `description`, `view_timeline`, `music_note`, `video_library`, `push_pin`, `play_arrow`, `pause`, `share`, `content_copy`, `check`, `close`, `search`, `lyrics`, `open_in_new`, `settings`, `delete`.
+macOS uses SF Symbols: `mic`, `macbook`, the custom contour mark (`contour.mark`, a custom symbol generated from §2.1 by `apple/tools/make-contour-symbol.py`; Ultralight, Regular and Black sources, so it takes every weight and scale like the system symbols), `link`, `chevron.backward`, `pin.fill`, `pin.slash`, `doc`, `rectangle.split.3x1` (mixes), `music.note`, `square.stack`, `sidebar.trailing`, `pin`, `play.fill`, `square.and.arrow.up`, `doc.on.doc`, `checkmark`, `xmark`, `magnifyingglass`, `text.alignleft` (lyrics), `arrow.up.right.square`, `gearshape`, `key`, `internaldrive`, `info.circle`. Android uses Material Symbols (outlined): `mic`, `smartphone`, the custom mark, `link`, `attach_file`, `description`, `view_timeline`, `music_note`, `video_library`, `push_pin`, `play_arrow`, `pause`, `share`, `content_copy`, `check`, `close`, `search`, `lyrics`, `open_in_new`, `settings`, `delete`.
 
 ---
 
@@ -293,7 +301,7 @@ macOS uses SF Symbols: `mic`, `macbook`, the custom contour mark (as a symbol im
 
 Three options, always in this order: **Microphone · This Mac / Phone · Hum**. Selecting Hum sets `ListenMode::Hum` with the microphone; Microphone and This Mac/Phone use `ListenMode::Auto` (the core detects humming on its own, so humming into "Microphone" also works). While a session runs the toggles are disabled at 45 % opacity, never hidden.
 
-- macOS: three `Toggle`s with `.toggleStyle(.button)` and `.buttonStyle(.glass)` in a `GlassEffectContainer(spacing: 12)`; 28pt tall; symbol + label.
+- macOS: three `Toggle`s with `.toggleStyle(.button)` and `.buttonStyle(.glass)` in a `GlassEffectContainer(spacing: 12)`; 28pt tall; symbol + label. They are on the stage in **every** state, so the method can change after any result. Choosing one never starts listening; after a no-match, an error or a prompt it returns the stage to idle ("Identify what's playing") for the new method.
 - Android: `ButtonGroup` (connected) of three `ToggleButton`s, 40dp, `connectedLeading/Middle/TrailingButtonShapes()`, icon 20dp + label (icons only from 400dp width at font scale ≤ 1.15). The same three appear as actions in the "Listen again" dock (§6.3).
 
 ### 5.3 State line
@@ -302,7 +310,9 @@ A single `.title3` / `titleMedium` line centered under the button. Fixed height 
 
 ### 5.4 Action row
 
-The slot under the state line (28pt / 40dp tall) holds either the source toggles or, after a no-match, up to three actions of the same height (`.glass` buttons / `FilledTonalButton` + `TextButton`s). Never both.
+macOS: the **recovery row**, a 28pt slot under the source toggles, holds up to three actions after a no-match, an error or a prompt, as accent text buttons (`.borderless`, medium weight) so they read as actions rather than more toggles: Try again (the same method, or the same link or file again), Hum it (only when the last try wasn't a hum), Type a lyric, Use Microphone, Continue, Open System Settings, OK, Stop. It is empty otherwise but keeps its slot.
+
+Android: the slot under the state line (40dp tall) holds either the source toggles or, after a no-match, up to three actions of the same height (`FilledTonalButton` + `TextButton`s). Never both.
 
 Android: the toggles stay after failures, offline saves and failed links; the message stays on the state line until the next toggle, button tap or link, and the button retries with the selected source (no [Try again] or [OK]). Only these replace the toggles: link running [Stop] · microphone off [Open settings] · phone-audio pre-prompt [Continue] [Use microphone] · silent phone audio [Use microphone] · rate limited [Stop] · no match (suggestions below). Every suggestion starts at once, most useful first; actions that don't fit the width are left out from the end.
 
@@ -313,7 +323,7 @@ Android: the toggles stay after failures, offline saves and failed links; the me
 
 ### 5.5 Link field
 
-macOS: `TextField("Paste a link", text:)` in the toolbar (`ToolbarItem(placement: .principal)`), 300pt, `.textFieldStyle(.roundedBorder)` (Tahoe renders it as a capsule), leading `link` symbol, submits on ↩. Android: a docked `SearchBar` input field styled surface (`surfaceContainerHigh`, 56dp, 28dp radius) with leading `link`, placeholder "Paste a link", trailing `attach_file` (opens `OpenDocument` for audio/video). When the clipboard holds a URL on resume, Android shows it as a suggestion row beneath the field ("youtube.com/watch… — Identify"); macOS relies on ⌘V.
+macOS: `TextField("Paste a link", text:)` in the toolbar's leading group (`ToolbarItem(placement: .navigation)`, never `.principal`, which centers on the window), 240pt, leading `link` symbol, submits on ↩. On macOS 26 the toolbar's glass capsule is its border; before, a rounded field border. Android: a docked `SearchBar` input field styled surface (`surfaceContainerHigh`, 56dp, 28dp radius) with leading `link`, placeholder "Paste a link", trailing `attach_file` (opens `OpenDocument` for audio/video). When the clipboard holds a URL on resume, Android shows it as a suggestion row beneath the field ("youtube.com/watch… — Identify"); macOS relies on ⌘V.
 
 ### 5.6 Pitch trace (live)
 
@@ -343,7 +353,7 @@ Capsule 18pt tall (`.subheadline` medium) on macOS; `AssistChip`-sized 22dp tag 
 
 ### 5.11 "Open in" split button
 
-- macOS: `Menu { services } label: { Text("Open in Spotify") } primaryAction: { open }` rendered with `.buttonStyle(.glassProminent)` and `.controlSize(.large)` (28pt). The primary part opens the default service (Settings › General); the chevron lists every available `ServiceLink` in the order Spotify, Apple Music, YouTube Music, YouTube, Deezer, Tidal, Amazon Music, SoundCloud, Shazam, then "Search the web". Links with `is_search` are suffixed "(search)".
+- macOS: a split capsule on accent-tinted glass ("Open in Spotify" | chevron menu), 28pt tall like the large glass buttons beside it, joined to the listen button's glass morph. The primary part opens the default service (Settings › General); the chevron lists every available `ServiceLink` in the order Spotify, Apple Music, YouTube Music, YouTube, Deezer, Tidal, Amazon Music, SoundCloud, Shazam, then "Search the web". Links with `is_search` are suffixed "(search)".
 - Android: `SplitButton` (filled): leading "Open in Spotify", trailing chevron → `DropdownMenu` with the same list.
 - Beside it on macOS: `ShareLink` and Copy as `.glass` icon buttons (28pt). On Android, Pin (a toggle: outlined pin → filled `primary` pin), Share and the overflow (Copy title and artist, Copy link, Delete) live in the top app bar.
 
@@ -379,22 +389,23 @@ Pane = detail column minus the 52pt toolbar. Everything is horizontally centered
 | Trace band | 560 × 96, bottom edge at `c − 120` | empty unless humming |
 | Listen button | 112 × 112, center at `c − 44` | §5.1 (+ halo, + ring) |
 | State line | 20 tall, top at `c + 30` | §7 |
-| Action row | 28 tall, top at `c + 70` | source toggles or no-match actions |
-| Recent row | 520 × 56, bottom margin 24 | last result (artwork 40, `.headline` title, `.callout` artist, time, "Open in ‹service›" bordered) — only when a previous result exists; click opens the session |
+| Source toggles | 28 tall, top at `c + 70` | §5.2, in every state |
+| Recovery row | 28 tall, top at `c + 110` | §5.4; empty unless there is something to recover from |
+| Recent row | 520 × 56, bottom margin 24 | last result (artwork 40, `.headline` title, `.callout` artist, time, "Open in ‹service›" bordered) — only when a previous result exists; highlights on hover, click opens the session; context menu Open, Open in ▸, Copy, Pin/Unpin |
 
 **States**
 
-| State (engine) | Glyph / button | State line | Action row | Other |
+| State (engine) | Glyph / button | State line | Recovery row (macOS) | Other |
 |---|---|---|---|---|
-| Idle | mark | "Identify what's playing" (secondary) | toggles | — |
+| Idle | mark | "Identify what's playing" (secondary) | — | — |
 | Permission pre-prompt (first "This Mac") | mark | "macOS will ask to allow system audio recording." | [Continue] [Use Microphone] | the system prompt follows Continue |
 | Microphone denied | mark | "Microphone access is off." | [Open System Settings] | deep link to Privacy › Microphone |
-| Listening (`Started`, `Phase::Listening`) | live line + halo | "Listening" | toggles, disabled | Esc / click stops |
+| Listening (`Started`, `Phase::Listening`) | live line + halo | "Listening" | — (toggles disabled) | Esc / click stops |
 | `Notice::MoveCloser` (6 s) | same | "Move closer to the sound" | same | — |
-| `Notice::ImpressionDetected` | low live line + ring | "Keep going" | toggles, disabled (Hum selected) | trace band scrolling |
+| `Notice::ImpressionDetected` | low live line + ring | "Keep going" | — (toggles disabled) | trace band scrolling |
 | Hum mode start (`ListenMode::Hum`) | low live line + ring at 0 | "Hum, whistle or sing" | same | trace band visible, empty |
 | `Notice::KeepGoing` | same | "Keep going" | same | — |
-| Matching (`Phase::Recognizing` / `MatchingMelody` / `SearchingLyrics` after capture ends) | frozen line at 70 % | "⟳ Matching" (small `ProgressView` inline) | toggles, disabled | — |
+| Matching (`Phase::Recognizing` / `MatchingMelody` / `SearchingLyrics` after capture ends) | frozen line at 70 % | "⟳ Matching" (small `ProgressView` inline) | — (toggles disabled) | — |
 | `Outcome::Matched` | morphs into the result | — | — | §6.3 replaces the stage |
 | `Outcome::Candidates` | — | — | — | §6.4 replaces the stage |
 | `NoMatch(NotFound)` | mark | "No match found" | [Try again] [Hum it] [Type a lyric] | — |
@@ -407,7 +418,7 @@ Pane = detail column minus the 52pt toolbar. Everything is horizontally centered
 | `Notice::RateLimited { retry_in_ms }` | mark | "Too many requests. Trying again in ‹n› s." | [Stop] | counts down |
 | `Notice::ProviderUnavailable` | unchanged | unchanged | unchanged | nothing shown; logged |
 | Offline (no route at session start) | mark | "You're offline. Saved to identify later." | [OK] | the session is stored with status Running and retried on reconnect; Library row subtitle "Waiting for connection" |
-| Drop targeted | mark, tint 100 %, scale 1.04 | "Drop to identify" | toggles | — |
+| Drop targeted | mark, tint 100 %, scale 1.04 | "Drop to identify" | — | — |
 | Link: `Phase::Resolving` | `link` symbol replaces the mark (crossfade) | "Resolving link" | [Stop] | — |
 | Link: `Phase::Downloading` (fraction) | `link` symbol + determinate ring (reuse the hum ring) | "Downloading" | [Stop] | — |
 | Link: `Phase::Decoding` / `Segmenting` | ring indeterminate (`ProgressView`-style rotating 90° arc) | "Preparing" | [Stop] | — |
@@ -549,11 +560,13 @@ Empty result: a single line in the list area, "No songs with that lyric." + [Try
 
 ### 6.8 Library — both platforms
 
-Grouped by day (Today, Yesterday, then "Sunday, October 11" via `Date.FormatStyle(date: .complete)` without the year in the current year). Filter: All · Heard · Hummed · Links · Mixes (Android: · Pinned) (`SessionKind` → Heard = Listen + SystemAudio, Hummed = Hum, Links = Link + File + Lyrics, Mixes = sessions with ≥ 2 segments or `AnalyzeMode::Mix`). Search matches title, artist, source title and host.
+Grouped by day (Today, Yesterday, then "Sunday, October 11" via `Date.FormatStyle(date: .complete)` without the year in the current year). Filter: All · Heard · Hummed · Links · Mixes · Pinned (`SessionKind` → Heard = Listen + SystemAudio, Hummed = Hum, Links = Link + File + Lyrics, Mixes = sessions with ≥ 2 segments or `AnalyzeMode::Mix`, Pinned = pinned sessions). Search matches title, artist, source title and host.
+
+**Pin is the one way to keep sessions** (there is no separate favorite): pinned sessions are listed in the sidebar like a playlist (Android: in the Pinned section at the top of the Library), keep their audio (Settings › Storage) and ask before deleting.
 
 Row (56pt / 72dp): artwork 40 / 56 (video thumbnail for mixes, collection art for playlists, hatched tile for unresolved) · title · subtitle = kind symbol + artist / "8 tracks so far" / "a-ha · 4 candidates" / "Sabrina Carpenter · tiktok.com" / "Waiting for connection" · trailing time (monospaced) · pin symbol if pinned · small spinner while Running.
 
-- macOS: toolbar per §3.1; `List(selection:)`; day headers `.headline` secondary; context menu: Open, Open in ‹service› ▸, Pin/Unpin, Export…, Delete. ⌫ deletes.
+- macOS: toolbar per §3.1; the filter is a one-click scope bar pinned above the list (`Picker(.segmented)`, a menu when the column is too narrow); `List(selection:)` with multiple selection (⌘-click, ⇧-click, ⌘A); day headers `.headline` secondary. The row's pin is a button: `pin.fill` while pinned, an outline `pin` in tertiary on hover or selection. Pin and unpin work on any selection — context menu (Pin when any is unpinned, Unpin when any is pinned, both for mixed selections, like Finder's tags), ⌘⇧P, the toolbar's Pin, the inspector, a leading swipe (orange) — update at once and undo with ⌘Z. Context menu for one row: Open, Open in ‹service› ▸, Pin/Unpin, Export ▸, Delete; for several: Pin/Unpin, Delete. Trailing swipe deletes. ⌫ deletes. Space previews the selected row. Empty Pinned scope: "Nothing pinned yet" / "Pin songs and mixes to keep them here and in the sidebar."
 - Android: `AppBarWithSearch` ("Search") with a Settings action; `FilterChip` row (32dp, 8dp gap) beneath; `LazyColumn` with `stickyHeader` day headers (`titleSmall` primary); swipe start→end pins (the row springs back, "Pinned · Undo"), end→start deletes. TalkBack gets Pin/Unpin and Delete as custom actions. Back clears a search before it leaves the Library.
 - Android pinned section: with no search and at least one pinned session, a sticky "Pinned" header (same style as the day headers) comes first; pinned sessions are not repeated under their day. More than 5 pinned make the header collapsible (count + chevron). The Pinned filter lists only pinned sessions, by day.
 - Android selection: long-press selects a row (haptic); while selecting, a tap toggles a row. The selected row's artwork turns into a 56dp `primary` circle with a check and its background `secondaryContainer`; swipes are off. The search field turns into the selection bar in place (`secondaryContainer`, 28dp radius): Close · "3 selected" · Pin (Unpin when every selected session is pinned) · Share · Delete · More › Select all (on narrow screens with large fonts Share moves into More, so the count stays readable). Chips are disabled while selecting. Pin shows "3 pinned · Undo"; Share sends "Title — Artist" and the best link per track, the tracklist for mixes and collections; Delete confirms when a mix or a pinned session is selected ("Delete 3 sessions?" / "Their tracklists and saved audio will be removed."), otherwise "3 deleted · Undo". Back, a filter change, reselecting the destination or leaving it ends the selection; rotation keeps it.
@@ -587,6 +600,7 @@ Settings mockups: `mac-settings-services.png` and `mac-settings-melody.png` show
 listen button 72pt (glass, accent tint; same choreography at 64 % scale; halo and live line included)
 12  state line .body
 12  source toggles (compact, 24pt)
+ 8  recovery row (compact; only while it has actions)
 16  divider · last result row: artwork 40 · .headline title + .callout artist · [Open in Spotify] bordered
  8  divider · footer: "Open Music Fetch" (plain) … gear (opens Settings)
 ```
@@ -768,8 +782,8 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | Key | String |
 |---|---|
 | library.title | Library |
-| library.search | Search |
-| library.filter.all / heard / hummed / links / mixes | All / Heard / Hummed / Links / Mixes |
+| library.search | Search Library |
+| library.filter.all / heard / hummed / links / mixes / pinned | All / Heard / Hummed / Links / Mixes / Pinned |
 | library.today / yesterday | Today / Yesterday |
 | library.candidates | %@ · %d candidates |
 | library.tracks | %@ · %d tracks |
@@ -778,7 +792,7 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 | library.empty.message | Songs you identify will show up here. |
 | session.pin / unpin | Pin / Unpin |
 | session.pinned / notPinned | Pinned / Not pinned (pin toggle state) |
-| library.filter.pinned.android | Pinned |
+| library.filter.pinned | Pinned |
 | library.selected.android | %d selected |
 | library.pinnedN / unpinnedN / deletedN | %d pinned / %d unpinned / %d deleted (one session: Pinned / Unpinned / Deleted) |
 | library.deleteN.title | Delete %d sessions? |
@@ -830,7 +844,7 @@ All user-facing strings, final wording. Sentence case; no exclamation marks; no 
 
 ## 8. Accessibility
 
-- **Labels.** Every icon-only control has a label: Listen (value: idle/listening/humming/matching), Inspector, Share, Copy, Play preview / Pause preview, Confirm, Not this, Pin, Stop, Export, Back. Source toggles announce "Microphone, selected".
+- **Labels.** Every icon-only control has a label: Listen (value: idle/listening/humming/matching), Inspector, Share, Copy, Play preview / Pause preview, Confirm, Not this, Pin / Unpin, Stop, Export, Back to Listen, Other Ways to Identify. Library rows read "Pinned" as their value and offer Pin / Unpin as an accessibility action. Source toggles announce "Microphone, selected".
 - **Announcements.** `AccessibilityNotification.Announcement` / `announceForAccessibility` for: "Listening", "Move closer to the sound", "Keep going", "Found ‹title› by ‹artist›", "‹n› possible matches. Best: ‹title› by ‹artist›, ‹tier›", "No match found. ‹reason›", "‹n› of ‹m› identified" every 5 new segments while a mix runs.
 - **Live regions.** The state line is a polite live region on Android; on macOS it is read through announcements only (avoid double reads).
 - **Reduce Motion** (`accessibilityReduceMotion` / "Remove animations"): §2.2. **Reduce Transparency**: the glass button becomes an opaque accent circle (`.glassEffect` adapts; for custom halo use `accessibilityReduceTransparency` to disable it). **Increase Contrast**: capsules and tags gain a 1pt outline in label color; the strip's Likely tier uses 75 % instead of 60 %. **Differentiate Without Color**: already satisfied by fill styles and text.

@@ -120,6 +120,25 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
 
+  # Screenshots of the demo states (CI only: it launches the app). See
+  # .github/workflows/screenshots.yml.
+  MusicFetchUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: MusicFetchUITests
+    dependencies:
+      - target: MusicFetch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.musicfetch.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        TEST_TARGET_NAME: MusicFetch
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+
 schemes:
   MusicFetch:
     build:
@@ -134,3 +153,13 @@ schemes:
         - MusicFetchTests
     archive:
       config: Release
+
+  MusicFetchUITests:
+    build:
+      targets:
+        MusicFetch: all
+        MusicFetchUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - MusicFetchUITests

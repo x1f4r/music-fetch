@@ -26,6 +26,15 @@ nonisolated enum ListenSource: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The Listen menus: "Microphone", "This Mac", "Hum".
+    var menuTitle: String {
+        switch self {
+        case .microphone: Copy.listenWithMicrophone
+        case .thisMac: Copy.listenToThisMac
+        case .hum: Copy.humWhistleOrSing
+        }
+    }
+
     /// SF Symbol, or nil for the contour mark.
     var symbol: String? {
         switch self {
