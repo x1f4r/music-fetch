@@ -61,7 +61,7 @@ export function startPageScript(win: Window & typeof globalThis, doc: Document, 
   }
   global.stop?.();
   const played = global.played;
-  const adapter = siteAdapter(win.location.hostname);
+  const adapter = siteAdapter(win.location.hostname, doc);
   let marked: HTMLMediaElement | null = null;
 
   const element = (): HTMLMediaElement | null => adapter.element(win, doc, played);

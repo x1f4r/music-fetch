@@ -5,7 +5,7 @@ import { serveRpc, type PortLike, type ServedPort } from '../messaging/bus';
 import { CAPTURE_PORT } from '../messaging/protocol';
 import { siteAdapter } from '../page/adapters';
 import { PageBridge } from '../page/bridge';
-import { adapterFor, readPageFacts, type PageFacts } from '../page/facts';
+import { readPageFacts, type PageFacts } from '../page/facts';
 import { PLAYER_ATTR, type MarkedPlayer } from '../page/main-world';
 import { finite, pickElement } from '../page/site';
 import { AGENT_METHODS, type AgentApi, type AgentHello, type AgentTopics, type PlayerInfo, type PrepareOptions } from './agent-protocol';
@@ -124,7 +124,7 @@ class CaptureAgent implements AgentApi {
       .call('hello', undefined, 800)
       .then(() => true)
       .catch(() => false);
-    return { url: this.env.win.location.href, title: this.env.doc.title, adapter: adapterFor(this.env.win.location.hostname), page: this.pageScript };
+    return { url: this.env.win.location.href, title: this.env.doc.title, adapter: this.adapterId(), page: this.pageScript };
   }
 
   async facts(): Promise<PageFacts> {
@@ -146,7 +146,7 @@ class CaptureAgent implements AgentApi {
     }
     const element =
       (marked?.found ? this.env.doc.querySelector<HTMLMediaElement>(`[${PLAYER_ATTR}="${this.nonce}"]`) : null) ??
-      siteAdapter(this.env.win.location.hostname).element(this.env.win, this.env.doc, []) ??
+      siteAdapter(this.env.win.location.hostname, this.env.doc).element(this.env.win, this.env.doc, []) ??
       pickElement(this.env.doc.querySelectorAll('audio, video'));
     if (!element) return null;
     if (element !== this.element) this.bind(element);
@@ -162,7 +162,7 @@ class CaptureAgent implements AgentApi {
     const src = el.currentSrc || el.src || '';
     const durationMs = marked?.durationMs ?? (finite(el.duration) ?? 0) * 1000;
     return {
-      adapter: adapterFor(this.env.win.location.hostname),
+      adapter: this.adapterId(),
       durationMs: durationMs || null,
       currentMs: el.currentTime * 1000,
       paused: el.paused,
@@ -293,6 +293,10 @@ class CaptureAgent implements AgentApi {
   }
 
   // MARK: the element
+
+  private adapterId() {
+    return siteAdapter(this.env.win.location.hostname, this.env.doc).id;
+  }
 
   private need(): HTMLMediaElement {
     if (!this.element) throw Object.assign(new Error('Nothing is playing in this tab.'), { code: 'Platform', reason: 'NothingPlaying' });

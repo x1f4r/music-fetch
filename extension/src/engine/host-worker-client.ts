@@ -55,7 +55,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 interface Running {
   worker: WorkerLike;
   rpc: RpcClient<EngineBackend, EngineTopics>;
-  pcm: MessagePort;
+  engine: ChannelPort;
   ports: ChannelPort[];
 }
 
@@ -110,10 +110,10 @@ export class WorkerEngine {
 
   /** Audio for a session. Dropped while no Worker runs (a session can't exist then). */
   pushPcm(sessionId: string, chunk: PcmChunk): void {
-    const pcm = this.running?.pcm;
-    if (!pcm) return;
-    const message: PcmMessage = { sessionId, chunk };
-    pcm.postMessage(message, [chunk.samples.buffer]);
+    const engine = this.running?.engine;
+    if (!engine) return;
+    const message: PcmMessage = { t: 'mf:pcm', sessionId, chunk };
+    engine.send(message, [chunk.samples.buffer]);
   }
 
   /** Keep the Worker while the returned release isn't called (a capture is being set up). */
@@ -149,14 +149,13 @@ export class WorkerEngine {
     const worker = this.options.spawn();
     const engine = new MessageChannel();
     const capture = new MessageChannel();
-    const pcm = new MessageChannel();
     const enginePort = channelPort(engine.port1, 'engine');
     const capturePort = channelPort(capture.port1, 'capture');
     const rpc = new RpcClient<EngineBackend, EngineTopics>(enginePort, { timeoutMs: this.options.callTimeoutMs ?? 60_000 });
     rpc.on('session', ({ sessionId, event }) => this.sessionEvent(sessionId, event));
     rpc.on('library:changed', () => this.options.onLibraryChanged());
     serveRpc(capturePort, this.options.capture, CAPTURE_METHODS);
-    const running: Running = { worker, rpc, pcm: pcm.port1, ports: [enginePort, capturePort] };
+    const running: Running = { worker, rpc, engine: enginePort, ports: [enginePort, capturePort] };
 
     const ready = new Promise<void>((resolve, reject) => {
       worker.addEventListener('message', (event) => {
@@ -170,8 +169,8 @@ export class WorkerEngine {
         else reject(new EngineError('Internal', message));
       });
     });
-    const init: WorkerInit = { type: 'mf:worker.init', config: this.options.config(), engine: engine.port2, capture: capture.port2, pcm: pcm.port2 };
-    worker.postMessage(init, [engine.port2, capture.port2, pcm.port2]);
+    const init: WorkerInit = { type: 'mf:worker.init', config: this.options.config(), engine: engine.port2, capture: capture.port2 };
+    worker.postMessage(init, [engine.port2, capture.port2]);
     try {
       await withTimeout(ready, this.options.startTimeoutMs ?? 30_000, 'Starting the engine');
     } catch (error) {
@@ -200,7 +199,6 @@ export class WorkerEngine {
       // already gone
     }
     for (const port of running.ports) port.hangUp();
-    running.pcm.close();
   }
 
   /** The Worker died (a wasm panic aborts it): fail what was running, start again on the next call. */

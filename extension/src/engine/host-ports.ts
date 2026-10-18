@@ -13,6 +13,8 @@ class Listeners<F extends (...args: never[]) => void> implements EventLike<F> {
 export interface ChannelPort extends PortLike {
   /** Tell this side's listeners that the other side is gone (the Worker was terminated). */
   hangUp(): void;
+  /** Post with a transfer list (audio buffers), in order with the RPC traffic. */
+  send(message: unknown, transfer: Transferable[]): void;
 }
 
 /**
@@ -38,6 +40,9 @@ export function channelPort(port: MessagePort, name: string): ChannelPort {
     postMessage(message) {
       if (!open) throw new Error('Attempting to use a disconnected port object');
       port.postMessage(message);
+    },
+    send(message, transfer) {
+      if (open) port.postMessage(message, transfer);
     },
     disconnect() {
       if (!open) return;

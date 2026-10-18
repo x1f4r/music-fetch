@@ -88,8 +88,9 @@ class LiveProbe {
   private silentNoticed = false;
   private nextQuery = 0;
   private match: Track | null = null;
-  private waiting: ((outcome: MockLiveOutcome | null) => void) | null = null;
+  private waiting: ((outcome: MockLiveOutcome | null) => void)[] = [];
   private waitTimer: ReturnType<typeof setTimeout> | null = null;
+  private final = false;
 
   constructor(private readonly emit: (event: SessionEvent) => void) {}
 
@@ -108,7 +109,7 @@ class LiveProbe {
       this.nextQuery++;
       this.query();
     }
-    if (this.waiting) this.settleIfDecided(false);
+    if (this.waiting.length) this.settleIfDecided();
   }
 
   private query() {
@@ -130,25 +131,34 @@ class LiveProbe {
     return undefined;
   }
 
-  private settleIfDecided(final: boolean) {
-    const outcome = this.outcome(final);
-    if (outcome === undefined || !this.waiting) return;
-    const resolve = this.waiting;
-    this.waiting = null;
+  private settleIfDecided() {
+    const outcome = this.outcome(this.final);
+    if (outcome === undefined || this.waiting.length === 0) return;
+    const waiting = this.waiting.splice(0);
     if (this.waitTimer) clearTimeout(this.waitTimer);
-    resolve(outcome);
+    this.waitTimer = null;
+    for (const resolve of waiting) resolve(outcome);
   }
 
-  /** The scripted capture ended (`script`) or the user stopped (`finish`). */
+  /**
+   * The scripted capture ended (`script`) or the capture stopped (`finish`: the user, or
+   * the source ended). Audio sent before the stop has arrived by then: it travels in the
+   * same queue as the call.
+   */
   decide(reason: 'script' | 'finish'): Promise<MockLiveOutcome | null> {
-    if (reason === 'finish') this.query();
+    if (reason === 'finish') {
+      this.final = true;
+      this.query();
+    }
     return new Promise((resolve) => {
-      this.waiting?.(null);
-      this.waiting = resolve;
-      this.settleIfDecided(reason === 'finish');
-      if ((this.waiting as typeof resolve | null) === resolve) {
+      this.waiting.push(resolve);
+      this.settleIfDecided();
+      if (this.waiting.length && !this.waitTimer) {
         // No audio arriving at all (capture failed silently): don't hang the session.
-        this.waitTimer = setTimeout(() => this.settleIfDecided(true), this.hasAudio ? MAX_LIVE_MS : 3000);
+        this.waitTimer = setTimeout(() => {
+          this.final = true;
+          this.settleIfDecided();
+        }, this.hasAudio ? MAX_LIVE_MS : 3000);
       }
     });
   }

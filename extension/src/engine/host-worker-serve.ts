@@ -9,19 +9,26 @@ import { channelPort } from './host-ports';
 export interface WorkerInit {
   type: 'mf:worker.init';
   config: BackendConfig;
-  /** Host → engine calls; session and library events back. */
+  /**
+   * Host → engine calls, and audio (`PcmMessage`, transferred) in the same queue, so a
+   * session's last audio always arrives before the call that finishes it; session and
+   * library events back.
+   */
   engine: MessagePort;
   /** Engine → host `CaptureHost` calls. */
   capture: MessagePort;
-  /** Host → engine audio, transferred, never answered. */
-  pcm: MessagePort;
 }
 
 export type WorkerReply = { type: 'mf:worker.ready' } | { type: 'mf:worker.failed'; message: string };
 
 export interface PcmMessage {
+  t: 'mf:pcm';
   sessionId: string;
   chunk: PcmChunk;
+}
+
+function isPcm(message: unknown): message is PcmMessage {
+  return (message as Partial<PcmMessage> | null)?.t === 'mf:pcm';
 }
 
 export const CAPTURE_METHODS = ['attach', 'listenThrough', 'windows', 'release'] as const satisfies readonly (keyof CaptureHost)[];
@@ -40,12 +47,15 @@ export async function serveWorker(init: WorkerInit, factory: BackendFactory, rep
     // Capture calls last as long as a listen-through: no timeout.
     const capture = captureProxy(new RpcClient<CaptureHost>(channelPort(init.capture, 'capture'), { timeoutMs: 0 }));
     const backend = await factory({ ...init.config, capture });
-    const served = serveRpc<EngineBackend, EngineTopics>(channelPort(init.engine, 'engine'), backend, BACKEND_METHODS);
+    const engine = channelPort(init.engine, 'engine');
+    engine.onMessage.addListener((message) => {
+      if (isPcm(message)) backend.pushPcm(message.sessionId, message.chunk);
+    });
+    const served = serveRpc<EngineBackend, EngineTopics>(engine, backend, BACKEND_METHODS);
     backend.subscribe({
       sessionEvent: (sessionId, event) => served.emit('session', { sessionId, event }),
       libraryChanged: () => served.emit('library:changed', null),
     });
-    init.pcm.onmessage = (message: MessageEvent<PcmMessage>) => backend.pushPcm(message.data.sessionId, message.data.chunk);
     reply({ type: 'mf:worker.ready' });
     return backend;
   } catch (error) {
