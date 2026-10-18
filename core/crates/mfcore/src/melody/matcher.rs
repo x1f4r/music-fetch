@@ -321,6 +321,135 @@ impl QueryTraits {
     }
 }
 
+/// A placement suggested by another recall stage (the learned encoder, see
+/// [`crate::melody::encoder`]): reference frame `ref_frame` of `track` met query
+/// frame `query_frame`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hint {
+    pub track: u32,
+    pub ref_frame: f32,
+    pub query_frame: f32,
+}
+
+/// How hints become placements.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HintOptions {
+    /// One placement per hint at each (query over reference tempo, shift in frames).
+    pub offsets: Vec<(f32, f32)>,
+    /// Also pool the index's own votes for the hinted tracks: a second retrieval
+    /// pass restricted to them, so their placements carry evidence on the score
+    /// model's scale.
+    pub votes: bool,
+    /// The first this many hints always reach the full rerank (with their best
+    /// quick-check placement), even when the quick stage would cut them.
+    pub reserve: usize,
+}
+
+/// [`search_with`] plus hinted placements (see [`HintOptions`]). Hinted
+/// placements skip the pool cut and compete in the quick stage.
+pub fn search_with_hints(
+    index: &MelodyIndex,
+    query: &MelodyQuery,
+    k: usize,
+    options: &MatchOptions,
+    hints: &[Hint],
+    how: &HintOptions,
+) -> Vec<MelodyMatch> {
+    let Some(q) = Query::new(query) else {
+        return Vec::new();
+    };
+    let mut refs = References::new(index);
+    let placements = hinted(index, &q, &mut refs, options, hints, how);
+    let ranked = rerank_reserved(&q, &mut refs, placements, options, hints, how);
+    best_per_song(index, &q, &mut refs, ranked, k, options.popularity_weight)
+}
+
+/// [`candidates`] plus hinted placements (see [`search_with_hints`]).
+pub fn candidates_with_hints(
+    index: &MelodyIndex,
+    query: &MelodyQuery,
+    options: &MatchOptions,
+    hints: &[Hint],
+    how: &HintOptions,
+) -> Vec<Candidate> {
+    let Some(q) = Query::new(query) else {
+        return Vec::new();
+    };
+    let mut refs = References::new(index);
+    let placements = hinted(index, &q, &mut refs, options, hints, how);
+    rerank_reserved(&q, &mut refs, placements, options, hints, how).into_iter().map(candidate).collect()
+}
+
+/// [`rerank`], plus the reserved hints' best quick-check placement when the
+/// quick stage dropped their track.
+fn rerank_reserved(
+    q: &Query,
+    refs: &mut References,
+    placements: Vec<Placement>,
+    options: &MatchOptions,
+    hints: &[Hint],
+    how: &HintOptions,
+) -> Vec<Scored> {
+    let mut quick = quick_stage(q, refs, placements, options.rerank);
+    if how.reserve > 0 {
+        let kept: HashSet<u32> = quick.iter().map(|(_, p)| p.track).collect();
+        for h in hints.iter().take(how.reserve).filter(|h| !kept.contains(&h.track)) {
+            let own: Vec<Placement> = how
+                .offsets
+                .iter()
+                .map(|&(tempo, shift)| Placement {
+                    track: h.track,
+                    tempo,
+                    anchor: h.ref_frame + shift - h.query_frame / tempo,
+                    votes: 0.0,
+                    note_votes: 0.0,
+                })
+                .collect();
+            quick.extend(quick_stage(q, refs, own, 1));
+        }
+    }
+    full_stage(q, refs, quick)
+}
+
+/// Retrieval's placements plus the hinted ones it has not already made (same
+/// track, the query's middle within 1 s).
+fn hinted(
+    index: &MelodyIndex,
+    q: &Query,
+    refs: &mut References,
+    options: &MatchOptions,
+    hints: &[Hint],
+    how: &HintOptions,
+) -> Vec<Placement> {
+    let mut placements = retrieve_all(index, q, refs, options, &|_| true);
+    let mid = q.contour.len() as f32 / 2.0;
+    let mut by_track: HashMap<u32, Vec<f32>> = HashMap::new();
+    for p in &placements {
+        by_track.entry(p.track).or_default().push(p.anchor + mid / p.tempo);
+    }
+    let mut add = |p: Placement, placements: &mut Vec<Placement>| {
+        let middle = p.anchor + mid / p.tempo;
+        let known = by_track.entry(p.track).or_default();
+        if !known.iter().any(|m| (m - middle).abs() < 20.0) {
+            known.push(middle);
+            placements.push(p);
+        }
+    };
+    if how.votes && !hints.is_empty() {
+        let tracks: HashSet<u32> = hints.iter().map(|h| h.track).collect();
+        for p in retrieve_all(index, q, refs, options, &|t| tracks.contains(&t)) {
+            add(p, &mut placements);
+        }
+    }
+    for h in hints {
+        for &(tempo, shift) in &how.offsets {
+            let anchor = h.ref_frame + shift - h.query_frame / tempo;
+            add(Placement { track: h.track, tempo, anchor, votes: 0.0, note_votes: 0.0 }, &mut placements);
+        }
+    }
+    placements
+}
+
 /// The query in the forms the stages need.
 struct Query {
     /// Utility of "none of these" for this query.

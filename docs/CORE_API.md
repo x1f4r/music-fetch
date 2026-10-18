@@ -133,6 +133,11 @@ English sentences without stack traces or URLs containing secrets.
   format is deleted at startup, so the app offers the download again.
 - Without an index, impression sessions still run lyrics and ACRCloud humming and emit
   `Notice::MelodyIndexMissing`.
+- Optional `encoder` object: the index's learned-encoder file (`melody/encoder.rs`,
+  docs/PIPELINES.md "Melody encoder"), e.g.
+  `"encoder": {"url": "https://…/melody-encoder-android.mfe", "sha256": "…", "bytes": 13000000, "format": 1, "min_core": "1.2.0"}`.
+  It belongs to exactly that index file. Cores ignore entries they cannot use
+  (`Manifest::usable_encoder`), and the index works without it.
 
 ## Melody builder input (JSONL)
 

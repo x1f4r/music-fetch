@@ -1,0 +1,15 @@
+[package]
+name = "tract-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Same tract as mfcore (core/crates/mfcore/Cargo.toml).
+[dependencies]
+tract-onnx = "0.23.8"
+
+[profile.release]
+codegen-units = 16
+
+# Standalone: not part of the core workspace.
+[workspace]
