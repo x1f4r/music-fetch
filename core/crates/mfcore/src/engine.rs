@@ -14,7 +14,8 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 #[cfg(not(target_family = "wasm"))]
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -33,6 +34,7 @@ use crate::model::{
     SessionKind, StorageUsage, Tier, Track,
 };
 use crate::pipeline::analyze::{self, AnalyzeInput};
+use crate::pipeline::capture::{self, CaptureSink, PageMedia};
 use crate::pipeline::ctx::{EngineCtx, SessionCtx, preview_expired};
 use crate::pipeline::emitter::Emitter;
 use crate::pipeline::hum;
@@ -697,6 +699,88 @@ impl Engine {
             pitch_low_power: OnceLock::new(),
             recognizer_url: options.shazam_base_url.clone().unwrap_or_else(|| crate::shazam::client::ENDPOINT.into()),
         })
+    }
+
+    /// Analyze media the app captures from a player itself (the browser's
+    /// listen-through): push its audio into the returned sink, then
+    /// `finish()` it; the survey or mix pipeline runs on what was captured.
+    /// See `pipeline::capture`.
+    pub fn analyze_captured(
+        &self,
+        page: PageMedia,
+        mode: AnalyzeMode,
+        observer: Arc<dyn SessionObserver>,
+    ) -> Result<(Arc<AnalysisSession>, Arc<CaptureSink>)> {
+        let url = page.url.trim().to_string();
+        if !url.starts_with("https://") && !url.starts_with("http://") {
+            return Err(MfError::invalid("That isn't a link."));
+        }
+        let title = page.title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| url.clone());
+        let ctx = self.open_session(SessionKind::Link, &truncate(&title, TITLE_CHARS), Some(&url), observer, true)?;
+        let sink = match capture::sink(ctx.clone(), &page) {
+            Ok(sink) => sink,
+            Err(e) => {
+                let _ = self.ctx.store.delete_sessions(std::slice::from_ref(&ctx.id));
+                return Err(e);
+            }
+        };
+        let body = (ctx.clone(), sink.clone());
+        let session = self.spawn_session(
+            ctx,
+            SessionKind::Link,
+            rt::sendable(async move { capture::run(body.0, body.1, page, mode).await }),
+        );
+        Ok((session, sink))
+    }
+
+    /// Analyze a file the app wrote into the engine's work files (the browser,
+    /// which has no file paths): `name` is a work-file name such as
+    /// `imports/<id>/<file name>`; it is deleted when the session ends.
+    #[cfg(target_family = "wasm")]
+    pub fn analyze_work_file(
+        &self,
+        name: String,
+        title: String,
+        mode: AnalyzeMode,
+        observer: Arc<dyn SessionObserver>,
+    ) -> Result<Arc<AnalysisSession>> {
+        crate::util::files::check_name(&name)?;
+        let ctx = self.open_session(SessionKind::File, &truncate(&title, TITLE_CHARS), None, observer, true)?;
+        let body_ctx = ctx.clone();
+        let input = AnalyzeInput::File(PathBuf::from(&name));
+        Ok(self.spawn_session(
+            ctx,
+            SessionKind::File,
+            rt::sendable(async move {
+                let files = body_ctx.engine.files.clone();
+                analyze::run(body_ctx, input, mode).await;
+                let _ = files.remove(&name);
+            }),
+        ))
+    }
+
+    /// Browser: reads the installed melody index into memory if it is not
+    /// loaded yet (humming needs it); false when none is installed. Natively the
+    /// index is mapped at start-up, so this only reports whether it is there.
+    pub async fn load_melody_index(&self) -> bool {
+        #[cfg(target_family = "wasm")]
+        return melody_index::load_installed(&self.ctx).await.is_some();
+        #[cfg(not(target_family = "wasm"))]
+        return self.ctx.melody_index().is_some();
+    }
+
+    /// True while the melody index is in memory.
+    pub fn melody_index_loaded(&self) -> bool {
+        self.ctx.melody_index().is_some()
+    }
+
+    /// Browser: drops the melody index from memory (it stays installed and is
+    /// read again for the next hum). Does nothing natively, where it is mapped.
+    pub fn unload_melody_index(&self) {
+        #[cfg(target_family = "wasm")]
+        if !self.index.installing.load(Ordering::SeqCst) {
+            *self.ctx.melody.write() = None;
+        }
     }
 
     /// [`check_melody_index`](Self::check_melody_index) for async callers (the
