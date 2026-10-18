@@ -1,4 +1,4 @@
-import { EngineError, type ActiveSession, type EngineClient, type EngineInfo, type EngineListener } from '../client';
+import { EngineError, type ActiveSession, type CaptureErrorCode, type CaptureStatus, type EngineClient, type EngineInfo, type EngineListener } from '../client';
 import { isTerminal } from '../events';
 import { extractUrl } from '../links';
 import {
@@ -45,7 +45,32 @@ import {
  * reach). Read from `MockEngineOptions.directive` when a session starts; analysis
  * sessions take `mf-mock=<directive>` in the link's query instead.
  */
-export const MOCK_DIRECTIVES = ['match', 'hold', 'nomatch', 'quiet', 'silent', 'ratelimited', 'offline', 'fail', 'mix', 'unsupported'] as const;
+export const MOCK_DIRECTIVES = [
+  'match',
+  'hold',
+  'nomatch',
+  'quiet',
+  'silent',
+  'ratelimited',
+  'offline',
+  'fail',
+  'mix',
+  'unsupported',
+  // Capture that can't start (the host rejects startListening).
+  'busy',
+  'cantlisten',
+  'nothing',
+  'blocked',
+  'micdenied',
+] as const;
+
+const CAPTURE_REJECTIONS: Partial<Record<MockDirective, [CaptureErrorCode, string]>> = {
+  busy: ['CaptureBusy', 'Another capture is using this tab.'],
+  cantlisten: ['CaptureNotAllowed', 'This page can’t be captured.'],
+  nothing: ['NothingPlaying', 'Nothing is playing in this tab.'],
+  blocked: ['CaptureBlocked', 'This tab blocks audio capture.'],
+  micdenied: ['MicDenied', 'The microphone permission is off.'],
+};
 export type MockDirective = (typeof MOCK_DIRECTIVES)[number];
 
 export interface MockEngineOptions {
@@ -188,6 +213,8 @@ export class MockEngine implements EngineClient {
   async startListening(source: CaptureSource, mode: ListenMode, options: ListenOptions): Promise<string> {
     void options;
     const directive = asDirective(this.options.directive?.());
+    const rejection = directive ? CAPTURE_REJECTIONS[directive] : undefined;
+    if (rejection && (source === 'Tab' || rejection[0] === 'MicDenied')) throw new EngineError(rejection[0], rejection[1]);
     const hum = mode === 'Hum';
     const kind: SessionKind = hum ? 'Hum' : source === 'Microphone' ? 'Listen' : 'SystemAudio';
     const title = hum ? 'Hum' : source === 'Microphone' ? 'Microphone' : 'This tab';
@@ -272,7 +299,15 @@ export class MockEngine implements EngineClient {
       const title = pageTitle ?? (track ? `${track.artist} - ${track.title} (Official Video)` : 'Untitled video');
       script = mediaScript(track, url.href, route.service, route.site, title);
     }
-    return this.begin('Link', null, url.hostname.replace(/^www\./, ''), url.href, script);
+    const id = this.begin('Link', null, url.hostname.replace(/^www\./, ''), url.href, script);
+    // A mix plays muted at 4× in its tab while it is analyzed (listen-through).
+    if (shape === 'mix') this.captureStatus(id, { state: 'capturing', rate: 4, muted: true });
+    return id;
+  }
+
+  /** Report a page capture's state, as the capture coordinator does next to the engine. */
+  captureStatus(sessionId: string, status: CaptureStatus): void {
+    this.notify((l) => l.captureStatus?.(sessionId, status));
   }
 
   async searchLyrics(text: string): Promise<string> {

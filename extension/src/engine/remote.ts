@@ -106,6 +106,9 @@ export class RemoteEngineClient implements EngineClient {
     rpc.on('session', ({ sessionId, event }) => {
       for (const listener of this.listeners) listener.sessionEvent?.(sessionId, event);
     });
+    rpc.on('capture', ({ sessionId, status }) => {
+      for (const listener of this.listeners) listener.captureStatus?.(sessionId, status);
+    });
     rpc.on('library:changed', () => {
       for (const listener of this.listeners) listener.libraryChanged?.();
     });

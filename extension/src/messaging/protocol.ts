@@ -1,3 +1,4 @@
+import type { CaptureStatus } from '../engine/client';
 import type { SessionEvent } from '../engine/types';
 
 /** Name of the Port UI pages open to the engine host. */
@@ -7,6 +8,8 @@ export const ENGINE_PORT = 'mf-engine';
 export interface EngineTopics {
   session: { sessionId: string; event: SessionEvent };
   'library:changed': null;
+  /** A page capture's state next to the session's events (listen-through, ads, pauses). */
+  capture: { sessionId: string; status: CaptureStatus };
 }
 
 /**

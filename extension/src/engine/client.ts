@@ -111,6 +111,11 @@ void allMethodsListed;
 
 export interface EngineListener {
   sessionEvent?(sessionId: string, event: SessionEvent): void;
+  /**
+   * How a page capture is going (listen-through rate, ads, pauses, the tab closing).
+   * Browser-only: the capture coordinator reports it next to the engine's events.
+   */
+  captureStatus?(sessionId: string, status: CaptureStatus): void;
   /** Sessions were added, changed or removed; reload library views. */
   libraryChanged?(): void;
   /** The connection to the engine host came up or went away. */
@@ -135,10 +140,37 @@ export interface ActiveSession {
   started_at_ms: number;
 }
 
-/** A rejected engine call. `code` follows the core's `ErrorCode`. */
+/**
+ * Why live capture could not start (extension plan §5.3). The host rejects
+ * `startListening` with one of these as the `EngineError` code:
+ *
+ * - `CaptureNotAllowed`: browser pages, the extension stores, `about:` ("Can't listen to this page");
+ * - `CaptureBusy`: another capture holds the tab;
+ * - `NothingPlaying`: the tab has no audible media (element capture found nothing);
+ * - `CaptureBlocked`: DRM or EME media that can't be captured;
+ * - `MicDenied`: the microphone permission is off.
+ */
+export type CaptureErrorCode = 'CaptureNotAllowed' | 'CaptureBusy' | 'NothingPlaying' | 'CaptureBlocked' | 'MicDenied';
+
+export const CAPTURE_ERROR_CODES: readonly CaptureErrorCode[] = ['CaptureNotAllowed', 'CaptureBusy', 'NothingPlaying', 'CaptureBlocked', 'MicDenied'];
+
+export function isCaptureErrorCode(code: string): code is CaptureErrorCode {
+  return (CAPTURE_ERROR_CODES as readonly string[]).includes(code);
+}
+
+/** A page capture's state, as the capture coordinator sees it (extension plan §5.4). */
+export interface CaptureStatus {
+  state: 'capturing' | 'ad' | 'paused' | 'tabClosed';
+  /** Playback rate of a listen-through (4 = 4×); null for real-time capture. */
+  rate: number | null;
+  /** The tab plays muted while it is analyzed. */
+  muted: boolean;
+}
+
+/** A rejected engine call. `code` follows the core's `ErrorCode`, or a capture problem. */
 export class EngineError extends Error {
   constructor(
-    readonly code: ErrorCode | 'Disconnected' | 'Timeout' | 'Unknown',
+    readonly code: ErrorCode | CaptureErrorCode | 'Disconnected' | 'Timeout' | 'Unknown',
     message: string,
   ) {
     super(message);
