@@ -228,7 +228,10 @@ def ux_dev_name():
 @scenario
 def google(d):
     """Candidates whose best answer is not Strong: Try Google opens Google's song search."""
-    node = d.wait("cand.tryGoogle", 20)
+    d.wait("cand.card.0", 20)
+    # Below the list in landscape.
+    scroll_to(d, "cand.tryGoogle")
+    node = d.wait("cand.tryGoogle", 5)
     d.shot("candidates-try-google")
     d.sh("input tap %d %d" % d.center(node))
     time.sleep(4)
