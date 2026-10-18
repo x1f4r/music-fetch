@@ -77,14 +77,41 @@ Recording queries (modes `Auto` and `Recording`, and all `SystemAudio` sessions)
 Impression rules (mode `Hum`, or `Auto` after the detector says impression):
 
 - `Notice::ImpressionDetected` once (Auto only). Stop issuing recording queries.
-- Auto-stop when voiced ≥ 6 s and the last 1.5 s are unvoiced/silent, or 20 s after the
-  impression started, or on `finish()`.
-- `Notice::KeepGoing` if the user stops with < 3 s voiced.
+- Progressive melody search (below) runs while the user hums.
+- Auto-stop (`ListenOptions.auto_stop`, default on): when the progressive search is
+  confident; when voiced ≥ 8 s and the last 1.5 s are unvoiced/silent; after a 5 s
+  pause once ≥ 1 s was voiced; 30 s after the impression started; or on `finish()`.
+  With `auto_stop` off only `finish()` and the 30 s limit end the capture.
+- `Notice::KeepGoing` once, during a ≥ 1.5 s pause with 1–4 s voiced, and when capture
+  ends with < 4 s voiced.
+
+Progressive melody search (impressions only):
+
+- Every 2 s of captured audio (4 s in low-power mode), once ≥ 4 s are voiced, search the
+  melody index with the streaming pitch frames so far (`hum::search_frames`: the
+  detailed frames → `notes::query_from_details` → `matcher::search`, top 10) on a
+  blocking worker. One search at a time; a search that is due while another runs waits
+  for the next slot. `LiveInput::is_settled` is false while one runs.
+- With `ListenOptions.live_candidates` (default off), each finished search's melody
+  candidates go out as `Candidates { is_final: false }` while the phase is still
+  `Listening` (melody only, not enriched, scores and tiers as in the final fusion).
+- Confident: the top answer scores ≥ 0.9, no other answer scores above 0.1, and the
+  previous search had the same top song. With `auto_stop` on this ends the capture
+  (`Stop::Confident`) and no further searches start.
+- After a confident stop the last search is the final melody answer when nothing was
+  voiced after it. Otherwise the final analysis tracks pitch on the whole capture again:
+  the streaming tracker must choose the whistle path from the frames heard so far and
+  cannot revise it, so an early whistle-like stretch (sibilants, whistles near 1.2 kHz)
+  can put the rest of the capture on the slowed path where the batch analysis, which
+  votes on the whole clip, would not.
 
 Finishing:
 
-- Impression (or Hum) with ≥ 2.5 s voiced → impression analysis (below), session kind
-  becomes `Hum`.
+- Impression (or Hum) with < 4 s voiced → `Notice::KeepGoing` (unless already sent) and
+  `NoMatch(TooShort)`: too little to answer with, so no guess.
+- Impression (or Hum) with ≥ 4 s voiced → impression analysis (below) on the capture
+  (or with the last progressive search after a confident stop), session kind becomes
+  `Hum`.
 - Otherwise: if the last recording query is older than 4 s and there is ≥ 3 s of
   audible audio, run one final query; then `NoMatch` with a reason:
   `CaptureSilent` (silent notice and no audible audio), `TooQuiet` (median RMS < −45
@@ -93,13 +120,16 @@ Finishing:
 
 ## Impression analysis (`pipeline/hum.rs`)
 
-Input: the captured 16 kHz audio (≤ 30 s), its pitch frames, the language. Used by live
-sessions and by `analyze(.., AnalyzeMode::Impression)` on files.
+Input: the captured 16 kHz audio (≤ 30 s), the language, and the melody input
+(`hum::MelodyInput`): track pitch on the audio, pitch frames already tracked, or a
+progressive search that already covered the whole capture. Used by live sessions and by
+`analyze(.., AnalyzeMode::Impression)` on files.
 
 Run concurrently:
 
-1. Melody — `notes::query_from_frames`; if the index is installed,
-   `matcher::search(index, query, 10)`. If not installed, `Notice::MelodyIndexMissing`.
+1. Melody — `notes::query_from_details` on the detailed pitch frames (loudness splits
+   repeated notes); if the index is installed, `matcher::search(index, query, 10)`. If
+   not installed, `Notice::MelodyIndexMissing`.
 2. Lyrics — if a `SpeechToText` is available: write a temp WAV, `transcribe` (timeout
    15 s), drop hypotheses with < 3 real words (filler like "la", "na", "oh", "hmm" does
    not count), then `lyrics::search` (timeout 12 s). Store the best transcript.
