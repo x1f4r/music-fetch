@@ -67,13 +67,23 @@ jobs:
         run: >-
           cargo clippy -p mfcore --target wasm32-unknown-unknown --no-default-features
           --features net,store,decode --lib --test wasm_store --test wasm_decode -- -D warnings
+      - name: Clippy (wasm32, the whole engine and its browser facade)
+        working-directory: core
+        run: cargo clippy -p mfcore-wasm --target wasm32-unknown-unknown --tests -- -D warnings
       - name: wasm-bindgen test runner
         run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
       - name: Tests (wasm32 in Node)
         working-directory: core
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
-        run: cargo test -p mfcore --target wasm32-unknown-unknown --no-default-features --features store,decode --test wasm_decode
+        run: |
+          cargo test -p mfcore --target wasm32-unknown-unknown --no-default-features --features store,decode --test wasm_decode
+          cargo test -p mfcore-wasm --target wasm32-unknown-unknown --profile wasm-dev --test api
+      - name: Browser engine module and a live session in Node
+        working-directory: core
+        run: |
+          crates/mfcore-wasm/build.sh --dev --no-opt
+          node crates/mfcore-wasm/smoke/live-smoke.mjs
       - name: Tests (wasm32 in Chrome and Firefox Workers)
         working-directory: core
         env:
@@ -85,6 +95,7 @@ jobs:
             echo "== $driver"
             env "$driver" cargo test -p mfcore --target wasm32-unknown-unknown --no-default-features \
               --features store,decode --test wasm_store --test wasm_decode
+            env "$driver" cargo test -p mfcore-wasm --target wasm32-unknown-unknown --profile wasm-dev --test api
           done
 
   android:
