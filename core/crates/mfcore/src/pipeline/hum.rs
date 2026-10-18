@@ -48,7 +48,7 @@ const ACR_CLIP_MS: usize = 12_000;
 const ACR_RATE: u32 = 8_000;
 /// Enrichment budget for the final candidates.
 const ENRICH_BUDGET: Duration = Duration::from_secs(4);
-/// A transcript needs this many real words (not "la la", "hmm") to be searched.
+/// A transcript needs this many distinct real words (not "la la", "hmm") to be searched.
 const MIN_REAL_WORDS: usize = 3;
 /// Longest transcript hypothesis searched.
 const MAX_TRANSCRIPT_CHARS: usize = 500;
@@ -553,12 +553,18 @@ const FILLER_SYLLABLES: &[&str] = &[
     "hm", "mm", "mhm", "ha", "ho", "hey", "ya", "yeah", "wo", "whoa", "woo", "eh", "ay", "o",
 ];
 
-/// Words that are not humming filler ("la", "lalala", "hmmm", "da-da").
+/// Distinct words that are not humming filler ("la", "lalala", "hmmm", "da-da"):
+/// a recognizer that hears a whistle or a beep may write one word over and over
+/// ("the the the", "beep beep beep"), which is no lyric either.
 pub(crate) fn real_words(text: &str) -> usize {
-    text.split(|c: char| c.is_whitespace() || c == '-' || c == ',' || c == '.')
+    let mut words: Vec<String> = text
+        .split(|c: char| c.is_whitespace() || c == '-' || c == ',' || c == '.')
         .map(|w| w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>())
         .filter(|w| !w.is_empty() && !is_filler(w))
-        .count()
+        .collect();
+    words.sort_unstable();
+    words.dedup();
+    words.len()
 }
 
 fn is_filler(word: &str) -> bool {
@@ -1053,8 +1059,10 @@ mod tests {
     fn filler_is_not_lyrics() {
         assert_eq!(real_words("la la la lalala na na hmm mmm"), 0);
         assert_eq!(real_words("ooooh da-da-da doo doo"), 0);
-        assert_eq!(real_words("take on me take me on"), 6);
+        assert_eq!(real_words("take on me take me on"), 3);
         assert_eq!(real_words("la la I'm gonna be"), 3);
+        assert_eq!(real_words("BEEP BEEP BEEP BEEP BEEP BEEP"), 1);
+        assert_eq!(real_words("the the the the the the"), 1);
         assert!(!is_filler("love"));
         assert!(!is_filler("do"));
     }

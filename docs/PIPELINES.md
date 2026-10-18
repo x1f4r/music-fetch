@@ -136,7 +136,7 @@ Run concurrently:
    while the user sang (`LiveSession::push_transcript`; with
    `ListenOptions::transcripts` the final one is awaited for up to 2 s after capture),
    or else, if a `SpeechToText` is available, a temp WAV of the capture is transcribed
-   (timeout 15 s). Hypotheses with < 3 real words are dropped (filler like "la", "na",
+   (timeout 15 s). Hypotheses with < 3 distinct real words are dropped (filler like "la", "na",
    "oh", "hmm" does not count), then `lyrics::search` (timeout 12 s); a pushed
    transcript's reported confidence c scales its matches' scores by 0.4 + 0.6·c. Store
    the best transcript.
