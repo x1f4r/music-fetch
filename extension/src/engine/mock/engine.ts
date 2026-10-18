@@ -45,7 +45,7 @@ import {
  * reach). Read from `MockEngineOptions.directive` when a session starts; analysis
  * sessions take `mf-mock=<directive>` in the link's query instead.
  */
-export const MOCK_DIRECTIVES = ['match', 'nomatch', 'quiet', 'silent', 'ratelimited', 'offline', 'fail', 'mix', 'unsupported'] as const;
+export const MOCK_DIRECTIVES = ['match', 'hold', 'nomatch', 'quiet', 'silent', 'ratelimited', 'offline', 'fail', 'mix', 'unsupported'] as const;
 export type MockDirective = (typeof MOCK_DIRECTIVES)[number];
 
 export interface MockEngineOptions {
@@ -218,6 +218,10 @@ export class MockEngine implements EngineClient {
         case 'offline':
           script = waitingScript();
           break;
+        case 'hold':
+          // Keeps listening until stopped, then matches: deterministic for tests.
+          script = { ...matchScript(demoTrack(n), { captureMs: 2000 }), loop: true };
+          break;
         default:
           script = matchScript(demoTrack(n));
       }
@@ -346,7 +350,7 @@ export class MockEngine implements EngineClient {
       this.playOutcome(run);
       return;
     }
-    this.playEvents(run, run.script.capture, () => this.playOutcome(run));
+    this.playEvents(run, run.script.capture, () => (run.script.loop ? this.playCapture(run) : this.playOutcome(run)));
   }
 
   private playOutcome(run: Running) {

@@ -30,6 +30,8 @@ export interface TimedEvent {
 export interface MockScript {
   capture: TimedEvent[];
   outcome: TimedEvent[];
+  /** Repeat `capture` until the UI calls `finishSession` (the user stops). */
+  loop?: boolean;
 }
 
 const at = (wall_ms: number, event: SessionEvent): TimedEvent => ({ wall_ms, event });
