@@ -47,6 +47,11 @@ export interface HeaderRule {
 export interface JsHost {
   /** Every event of every session, in order per session. */
   onEvent(sessionId: string, event: SessionEvent): void;
+  /**
+   * Optional: install header rule `rule` with variant `variant` (the Shazam agent for the
+   * next request, see `headerRules`) and resolve once it is in place.
+   */
+  prepare?(rule: HeaderRule['id'], variant: number): Promise<void> | void;
 }
 "#;
 
@@ -93,6 +98,9 @@ impl WasmEngine {
             .ok()
             .and_then(|f| f.dyn_into().ok())
             .ok_or_else(|| error(&MfError::invalid("the host needs an onEvent function")))?;
+        // Optional: per-request header rule variants (the Shazam agent rotation).
+        let prepare: Option<js_sys::Function> =
+            js_sys::Reflect::get(&host, &"prepare".into()).ok().and_then(|f| f.dyn_into().ok());
         let (store, files, storage, interrupted): (
             Arc<Store>,
             Arc<dyn FileStore>,
@@ -134,7 +142,7 @@ impl WasmEngine {
                 ..QueuePolicy::default()
             }),
             call_budget: fast.map(|spacing| CallBudget::new(1e6, spacing)),
-            ..EngineOptions::default()
+            header_host: prepare.map(|f| host::JsRuleHost::new(f) as Arc<dyn mfcore::util::http::HeaderRuleHost>),
         };
         let engine = js(mfcore::Engine::in_browser(engine_config, store, files, None, config.low_power, options))?;
         Ok(WasmEngine {

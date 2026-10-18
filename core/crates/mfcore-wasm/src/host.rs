@@ -5,7 +5,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use std::future::Future;
+use std::pin::Pin;
+
 use mfcore::platform::SessionObserver;
+use mfcore::util::http::{HeaderRuleHost, HeaderRuleId};
 use mfcore::{AnalysisSession, LiveSession, SessionEvent};
 use send_wrapper::SendWrapper;
 use wasm_bindgen::prelude::*;
@@ -66,6 +70,38 @@ impl SessionObserver for JsObserver {
             }
             Err(e) => web_sys::console::error_2(&"Music Fetch: an event could not be passed on".into(), &e),
         }
+    }
+}
+
+/// `host.prepare(rule, variant)`: installs a header rule variant (the Shazam agent
+/// for the next request) in the extension's declarativeNetRequest rules and
+/// resolves once it is in place.
+pub struct JsRuleHost {
+    prepare: SendWrapper<js_sys::Function>,
+}
+
+impl JsRuleHost {
+    pub fn new(prepare: js_sys::Function) -> Arc<Self> {
+        Arc::new(Self { prepare: SendWrapper::new(prepare) })
+    }
+}
+
+impl HeaderRuleHost for JsRuleHost {
+    fn prepare(&self, rule: HeaderRuleId, variant: usize) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        let name = serde_json::to_value(rule).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+        let result = self.prepare.call2(&JsValue::NULL, &JsValue::from_str(&name), &JsValue::from(variant as u32));
+        Box::pin(SendWrapper::new(async move {
+            match result {
+                Ok(value) => {
+                    if let Ok(promise) = value.dyn_into::<js_sys::Promise>()
+                        && let Err(e) = wasm_bindgen_futures::JsFuture::from(promise).await
+                    {
+                        web_sys::console::warn_2(&"Music Fetch: a header rule was not installed".into(), &e);
+                    }
+                }
+                Err(e) => web_sys::console::warn_2(&"Music Fetch: a header rule was not installed".into(), &e),
+            }
+        }))
     }
 }
 
