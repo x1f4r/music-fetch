@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::future::Future;
 use std::pin::Pin;
 
+use mfcore::pipeline::capture::CaptureSink;
 use mfcore::platform::SessionObserver;
 use mfcore::util::http::{HeaderRuleHost, HeaderRuleId};
 use mfcore::{AnalysisSession, LiveSession, SessionEvent};
@@ -16,17 +17,27 @@ use wasm_bindgen::prelude::*;
 
 use crate::convert::to_js;
 
-/// Sessions the facade can finish or cancel by id, until they end.
+/// Sessions the facade can finish or cancel by id, until they end. These are
+/// the only strong references: the handles JS holds are weak, so a handle the
+/// page never frees cannot keep the library open after its session ended.
 #[derive(Default)]
 pub struct Sessions {
     pub live: RefCell<HashMap<String, Arc<LiveSession>>>,
     pub analyses: RefCell<HashMap<String, Arc<AnalysisSession>>>,
+    pub captures: RefCell<HashMap<String, Arc<CaptureSink>>>,
 }
 
 impl Sessions {
     fn ended(&self, id: &str) {
         self.live.borrow_mut().remove(id);
         self.analyses.borrow_mut().remove(id);
+        self.captures.borrow_mut().remove(id);
+    }
+
+    pub fn clear(&self) {
+        self.live.borrow_mut().clear();
+        self.analyses.borrow_mut().clear();
+        self.captures.borrow_mut().clear();
     }
 }
 

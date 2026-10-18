@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use mfcore::engine::EngineOptions;
@@ -194,8 +194,10 @@ impl WasmEngine {
             if options.is_undefined() { ListenOptions::default() } else { from_js(options, "the options")? };
         let observer = self.observer();
         let session = js(self.engine()?.start_listening_with(source, mode, options, observer.clone()))?;
-        self.sessions.live.borrow_mut().insert(session.id(), session.clone());
-        Ok(LiveSessionHandle { session })
+        let id = session.id();
+        let handle = LiveSessionHandle { id: id.clone(), session: Arc::downgrade(&session) };
+        self.sessions.live.borrow_mut().insert(id, session);
+        Ok(handle)
     }
 
     /// Analyze a link; returns the session id.
@@ -247,8 +249,11 @@ impl WasmEngine {
         let page: PageMedia = from_js(page, "the page")?;
         let mode: AnalyzeMode = from_js(mode, "the mode")?;
         let (session, sink) = js(self.engine()?.analyze_captured(page, mode, self.observer()))?;
-        self.keep(session.clone());
-        Ok(CaptureSessionHandle { session, sink })
+        let handle =
+            CaptureSessionHandle { id: session.id(), session: Arc::downgrade(&session), sink: Arc::downgrade(&sink) };
+        self.sessions.captures.borrow_mut().insert(handle.id.clone(), sink);
+        self.keep(session);
+        Ok(handle)
     }
 
     /// Find songs from typed lyrics; returns the session id.
@@ -534,8 +539,7 @@ impl WasmEngine {
     pub fn close(&self) -> js_sys::Promise {
         let engine = self.engine.borrow_mut().take();
         let storage = self.storage.borrow_mut().take();
-        self.sessions.live.borrow_mut().clear();
-        self.sessions.analyses.borrow_mut().clear();
+        self.sessions.clear();
         future_to_promise(async move {
             drop(engine);
             // Canceled sessions unwind on the event loop before the pool can pause.
@@ -573,37 +577,50 @@ fn file_name(name: &str) -> String {
     if clean.is_empty() { "file".into() } else { clean }
 }
 
-/// A running live session.
+/// A running live session. Once it ended, its methods do nothing (and
+/// `isCapturing` is false, `isSettled` true).
 #[wasm_bindgen(js_name = LiveSession)]
 pub struct LiveSessionHandle {
-    session: Arc<LiveSession>,
+    id: String,
+    session: Weak<LiveSession>,
+}
+
+impl LiveSessionHandle {
+    fn running(&self) -> Option<Arc<LiveSession>> {
+        self.session.upgrade()
+    }
 }
 
 #[wasm_bindgen(js_class = LiveSession)]
 impl LiveSessionHandle {
     #[wasm_bindgen(getter)]
     pub fn id(&self) -> String {
-        self.session.id()
+        self.id.clone()
     }
 
     /// Mono or interleaved f32 PCM. Cheap: queued and analyzed as the Worker
     /// gets to it.
     #[wasm_bindgen(js_name = pushPcm)]
     pub fn push_pcm(&self, samples: &[f32], sample_rate: u32, channels: u32) {
+        let Some(session) = self.running() else { return };
         let mut bytes = Vec::with_capacity(samples.len() * 4);
         for s in samples {
             bytes.extend_from_slice(&s.to_le_bytes());
         }
-        self.session.push_pcm(&bytes, sample_rate, channels);
+        session.push_pcm(&bytes, sample_rate, channels);
     }
 
     /// The user stopped capture: analyze what was heard and finish.
     pub fn finish(&self) {
-        self.session.finish();
+        if let Some(session) = self.running() {
+            session.finish();
+        }
     }
 
     pub fn cancel(&self) {
-        self.session.cancel();
+        if let Some(session) = self.running() {
+            session.cancel();
+        }
     }
 
     /// What the user sang so far, from an on-device recognizer (sessions
@@ -614,75 +631,85 @@ impl LiveSessionHandle {
         #[wasm_bindgen(unchecked_param_type = "SpeechTranscript")] transcript: JsValue,
     ) -> Result<(), JsValue> {
         let transcript: mfcore::SpeechTranscript = from_js(transcript, "the transcript")?;
-        self.session.push_transcript(transcript);
+        if let Some(session) = self.running() {
+            session.push_transcript(transcript);
+        }
         Ok(())
     }
 
     /// False once the session stopped taking audio.
     #[wasm_bindgen(js_name = isCapturing)]
     pub fn is_capturing(&self) -> bool {
-        self.session.is_capturing()
+        self.running().is_some_and(|s| s.is_capturing())
     }
 
     /// Pushed audio not processed yet, in ms.
     #[wasm_bindgen(js_name = backlogMs)]
     pub fn backlog_ms(&self) -> f64 {
-        self.session.backlog_ms() as f64
+        self.running().map_or(0.0, |s| s.backlog_ms() as f64)
     }
 
     /// True when all pushed audio was processed and no recognizer call runs.
     #[wasm_bindgen(js_name = isSettled)]
     pub fn is_settled(&self) -> bool {
-        self.session.is_settled()
+        self.running().is_none_or(|s| s.is_settled())
     }
 }
 
-/// A running analysis of captured media.
+/// A running analysis of captured media. Once it ended, its methods do nothing.
 #[wasm_bindgen(js_name = CaptureSession)]
 pub struct CaptureSessionHandle {
-    session: Arc<AnalysisSession>,
-    sink: Arc<CaptureSink>,
+    id: String,
+    session: Weak<AnalysisSession>,
+    sink: Weak<CaptureSink>,
 }
 
 #[wasm_bindgen(js_class = CaptureSession)]
 impl CaptureSessionHandle {
     #[wasm_bindgen(getter)]
     pub fn id(&self) -> String {
-        self.session.id()
+        self.id.clone()
     }
 
     /// Mono f32 audio captured at `sampleRate` while the media played at
     /// `speed`, from media time `mediaMs`; `continuous` false after a seek, an
     /// ad or a stall.
     pub fn push(&self, media_ms: f64, samples: &[f32], sample_rate: u32, speed: f32, continuous: bool) {
-        self.sink.push(media_ms, samples, sample_rate, speed, continuous);
+        if let Some(sink) = self.sink.upgrade() {
+            sink.push(media_ms, samples, sample_rate, speed, continuous);
+        }
     }
 
     /// The media's length, once known.
     #[wasm_bindgen(js_name = setDuration)]
     pub fn set_duration(&self, duration_ms: f64) {
-        if duration_ms.is_finite() && duration_ms > 0.0 {
-            self.sink.set_duration(duration_ms as u64);
+        if let Some(sink) = self.sink.upgrade().filter(|_| duration_ms.is_finite() && duration_ms > 0.0) {
+            sink.set_duration(duration_ms as u64);
         }
     }
 
     /// The capture is complete: analyze it.
     pub fn finish(&self) {
-        self.sink.finish();
+        if let Some(sink) = self.sink.upgrade() {
+            sink.finish();
+        }
     }
 
     /// The capture failed; the session ends `Failed` with this code and message.
     pub fn fail(&self, code: String, message: String) {
+        let Some(sink) = self.sink.upgrade() else { return };
         let error = match code.as_str() {
             "Network" => MfError::Network { message },
             "InvalidInput" => MfError::InvalidInput { message },
             "Platform" => MfError::Platform { message },
             _ => MfError::MediaUnavailable { message },
         };
-        self.sink.fail(error);
+        sink.fail(error);
     }
 
     pub fn cancel(&self) {
-        self.session.cancel();
+        if let Some(session) = self.session.upgrade() {
+            session.cancel();
+        }
     }
 }

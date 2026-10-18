@@ -13,6 +13,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         super().end_headers()
 
+    def do_OPTIONS(self):
+        # Firefox sends the engine's User-Agent header (Chrome drops it), which needs a
+        # preflight from a web page. The extension itself is exempt from CORS.
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD")
+        self.send_header("Access-Control-Allow-Headers", self.headers.get("Access-Control-Request-Headers", "*"))
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
+
     def log_message(self, *args):
         pass
 
